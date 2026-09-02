@@ -24,6 +24,7 @@ pub mod proto {
     pub mod identitycrypto {
         pub mod v1 {
             include!(concat!(env!("OUT_DIR"), "/identitycrypto.v1.rs"));
+            include!(concat!(env!("OUT_DIR"), "/identitycrypto.v1.serde.rs"));
         }
     }
 }
@@ -79,6 +80,16 @@ mod proto_tests {
     #[test]
     fn key_scheme_unknown_discriminant_errors() {
         assert!(KeyScheme::try_from(99).is_err());
+    }
+
+    #[test]
+    fn key_scheme_round_trips_through_json_serde() {
+        // pbjson gives KeyScheme a real serde impl (JSON-canonical string
+        // form), needed by any consumer storing one of these types as JSON
+        // on disk (e.g. gait's keyring.json).
+        let json = serde_json::to_string(&KeyScheme::Ed25519).unwrap();
+        let back: KeyScheme = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, KeyScheme::Ed25519);
     }
 
     #[test]
