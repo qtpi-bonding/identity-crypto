@@ -9,12 +9,17 @@ batch's authorship, content, and verification outcome can be signed once and
 verified independently by more than one consumer.
 
 **Architecture:** Pure additions to this crate's existing proto file and
-`transcripts.rs` module — no new files, no new dependencies. Follows the
-exact conventions already established by `KeyScheme`/`DelegationCert` and by
-`session_delegation_transcript`.
+`transcripts.rs` module. Follows the exact conventions already established
+by `KeyScheme`/`DelegationCert` and by `session_delegation_transcript`.
 
 **Tech Stack:** `prost`/`prost-build`, `pbjson`/`pbjson-build` (already
-wired in `build.rs`), `ed25519-dalek` (already a dependency).
+wired in `build.rs`), `ed25519-dalek` (already a dependency), `prost-types`
+(**new** — this crate's build.rs does not call `.compile_well_known_types()`
+or `.extern_path(".google.protobuf", ...)`, so a `google.protobuf.Timestamp`
+field generates as `::prost_types::Timestamp` by prost-build's default
+behavior; nothing in this crate has ever used a well-known type before, so
+there is no existing dependency covering this — confirmed against the real
+`Cargo.toml` and `build.rs`, not assumed).
 
 **Spec:** `concordat/2026-09-02-cross-agent-message-attribution-design.md`
 §2, §2a (in the `concordium` monorepo this crate was extracted out of).
@@ -37,9 +42,24 @@ wired in `build.rs`), `ed25519-dalek` (already a dependency).
 ### Task 1: `VerificationOutcome`, `AttestedMessage`, `DeliveryAttestation` proto types
 
 **Files:**
+- Modify: `Cargo.toml` (add `prost-types` — see Step 0, a real compile
+  dependency this crate has never needed before, not optional)
 - Modify: `proto/identitycrypto/v1/identity.proto`
 - Modify: `src/lib.rs:53` (the `pub use` line)
 - Test: `src/lib.rs`'s existing `proto_tests` module
+
+- [ ] **Step 0: Add the `prost-types` dependency**
+
+Add to `[dependencies]` in `Cargo.toml`:
+
+```toml
+prost-types = "0.13"
+```
+
+(Match whatever exact `prost`/`prost-build` minor version this crate is
+already pinned to — check the existing `prost = "0.13"` line and mirror
+it exactly, since `prost-types` and `prost` must be from the same release
+line to interoperate.)
 
 **Interfaces:**
 - Produces: `identitycrypto::v1::VerificationOutcome` (enum, discriminants
@@ -261,6 +281,47 @@ fn delivery_attestation_transcript_binds_delegation_cert_presence() {
         delivery_attestation_transcript(&sample_attestation(vec![delegated])),
     );
 }
+
+#[test]
+fn delivery_attestation_transcript_length_prefixes_delegation_cert_key_bytes() {
+    // Sonnet's review of this plan caught a real bug: session_delegation_transcript
+    // (the function this reuses) takes &[u8; 32] fixed-size arrays, so
+    // concatenating two keys with no delimiter is safe there -- the split
+    // point is fixed by the type system. DelegationCert.device_public_key /
+    // session_public_key are proto `bytes` (Vec<u8>, arbitrary length) at
+    // THIS call site, so without length-prefixing, two different (device,
+    // session) pairs of differing lengths could concatenate to the same
+    // bytes. This test proves that can't happen.
+    let mut a = sample_attested_message("m1");
+    a.delegation_cert = Some(crate::DelegationCert {
+        agent_id: "agent-2".into(),
+        device_public_key: vec![1u8; 31],
+        session_public_key: vec![1u8, 2u8; 33], // 31 + 33 bytes, boundary shifted by one
+        not_before_unix_seconds: 0,
+        not_after_unix_seconds: 100,
+        signature: vec![3u8; 64],
+    });
+    let mut b = sample_attested_message("m1");
+    b.delegation_cert = Some(crate::DelegationCert {
+        agent_id: "agent-2".into(),
+        device_public_key: vec![1u8; 32],
+        session_public_key: {
+            let mut v = vec![1u8, 2u8; 33];
+            v.pop();
+            v
+        }, // 32 + 32 bytes -- same total length and same concatenated byte
+           // sequence as `a` above if the two fields aren't separately
+           // length-delimited
+        not_before_unix_seconds: 0,
+        not_after_unix_seconds: 100,
+        signature: vec![3u8; 64],
+    });
+    assert_ne!(
+        delivery_attestation_transcript(&sample_attestation(vec![a])),
+        delivery_attestation_transcript(&sample_attestation(vec![b])),
+        "differing key-length boundaries must not collide to the same transcript bytes"
+    );
+}
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -296,8 +357,13 @@ pub fn delivery_attestation_transcript(attestation: &crate::DeliveryAttestation)
             Some(cert) => {
                 buf.push(0x01);
                 with_len_prefixed(&mut buf, cert.agent_id.as_bytes());
-                buf.extend_from_slice(&cert.device_public_key);
-                buf.extend_from_slice(&cert.session_public_key);
+                // Sonnet's review caught this: unlike session_delegation_transcript
+                // (which takes &[u8; 32] fixed-size arrays, making concatenation
+                // safe by construction), these are proto `bytes` -- Vec<u8> of
+                // arbitrary length here. Length-prefix both, or two differing-length
+                // key pairs could concatenate to identical bytes.
+                with_len_prefixed(&mut buf, &cert.device_public_key);
+                with_len_prefixed(&mut buf, &cert.session_public_key);
                 buf.extend_from_slice(&cert.not_before_unix_seconds.to_be_bytes());
                 buf.extend_from_slice(&cert.not_after_unix_seconds.to_be_bytes());
             }
