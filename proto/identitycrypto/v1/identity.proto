@@ -15,6 +15,8 @@ syntax = "proto3";
 // stays owned by its one real owner and is NOT part of this package.
 package identitycrypto.v1;
 
+import "google/protobuf/timestamp.proto";
+
 enum KeyScheme {
   KEY_SCHEME_UNSPECIFIED = 0;
   KEY_SCHEME_ED25519 = 1;
@@ -33,5 +35,50 @@ message DelegationCert {
   bytes session_public_key = 3;
   int64 not_before_unix_seconds = 4;
   int64 not_after_unix_seconds = 5;
+  bytes signature = 6;
+}
+
+enum VerificationOutcome {
+  VERIFICATION_OUTCOME_UNSPECIFIED = 0;
+  VERIFICATION_OUTCOME_DIRECT_KEY = 1;
+  VERIFICATION_OUTCOME_DELEGATED_KEY = 2;
+  // No agent key was ever checked -- the attesting service (e.g.
+  // multimatrix's own admit_system path) vouches for this content
+  // directly. Never used for anything an agent actually signed.
+  VERIFICATION_OUTCOME_SYSTEM = 3;
+}
+
+// One message inside a signed delivery batch. `body_text` is authoritative
+// here -- the recipient never separately reconstructs it from anything
+// else, so there is nothing to reconcile a hash against. See
+// concordat/2026-09-02-cross-agent-message-attribution-design.md.
+message AttestedMessage {
+  string message_id = 1;
+  string room_id = 2;
+  string author_agent_id = 3;
+  string body_text = 4;
+  VerificationOutcome verification_outcome = 5;
+  DelegationCert delegation_cert = 6;
+}
+
+// Signed once per delivery batch by the delivering service's own key (not
+// an AgentKey -- a service identity). See
+// identity_crypto::transcripts::delivery_attestation_transcript for the
+// exact canonical byte layout `signature` covers.
+//
+// recipient_device_public_keys is the target agent's current set of
+// DEVICE-purpose key public keys (raw bytes, not hex) -- NOT an agent_id.
+// A verifier checks whether its own device public key is a member of this
+// list, not an equality match against a single value. This deliberately
+// avoids requiring the attesting service to know "which one device is
+// live right now" (unsolved/unsolvable without new dial-time protocol
+// work) and avoids requiring the verifier to know or reason about
+// agent_id at all.
+message DeliveryAttestation {
+  repeated bytes recipient_device_public_keys = 1;
+  string key_id = 2;
+  uint64 batch_sequence = 3;
+  google.protobuf.Timestamp attested_at = 4;
+  repeated AttestedMessage messages = 5;
   bytes signature = 6;
 }

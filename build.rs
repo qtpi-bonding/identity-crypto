@@ -24,6 +24,10 @@ fn main() {
     pbjson_build::Builder::new()
         .register_descriptors(&descriptor_set)
         .expect("register descriptors")
+        .exclude([
+            ".identitycrypto.v1.AttestedMessage",
+            ".identitycrypto.v1.DeliveryAttestation",
+        ])
         .build(&[".identitycrypto"])
         .expect("build pbjson serde");
 }

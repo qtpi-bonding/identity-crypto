@@ -74,9 +74,197 @@ pub fn session_delegation_transcript(
     buf
 }
 
+/// Canonical byte layout for `DeliveryAttestation.signature`. See
+/// concordat/2026-09-02-cross-agent-message-attribution-design.md §2a.
+/// `body_text` travels inside this transcript directly -- there is no
+/// separate hash to reconcile against a differently-transmitted copy.
+pub fn delivery_attestation_transcript(
+    attestation: &crate::DeliveryAttestation,
+) -> Vec<u8> {
+    let mut buf = b"identitycrypto.delivery-attestation.v1\0".to_vec();
+    buf.extend_from_slice(
+        &(attestation.recipient_device_public_keys.len() as u32).to_be_bytes(),
+    );
+    for key in &attestation.recipient_device_public_keys {
+        with_len_prefixed(&mut buf, key);
+    }
+    with_len_prefixed(&mut buf, attestation.key_id.as_bytes());
+    buf.extend_from_slice(&attestation.batch_sequence.to_be_bytes());
+    let (attested_at_secs, attested_at_nanos) = attestation
+        .attested_at
+        .as_ref()
+        .map(|t| (t.seconds, t.nanos))
+        .unwrap_or((0, 0));
+    buf.extend_from_slice(&attested_at_secs.to_be_bytes());
+    buf.extend_from_slice(&attested_at_nanos.to_be_bytes());
+    for message in &attestation.messages {
+        with_len_prefixed(&mut buf, message.message_id.as_bytes());
+        with_len_prefixed(&mut buf, message.room_id.as_bytes());
+        with_len_prefixed(&mut buf, message.author_agent_id.as_bytes());
+        with_len_prefixed(&mut buf, message.body_text.as_bytes());
+        buf.extend_from_slice(&message.verification_outcome.to_be_bytes());
+        match &message.delegation_cert {
+            None => buf.push(0x00),
+            Some(cert) => {
+                buf.push(0x01);
+                with_len_prefixed(&mut buf, cert.agent_id.as_bytes());
+                with_len_prefixed(&mut buf, &cert.device_public_key);
+                with_len_prefixed(&mut buf, &cert.session_public_key);
+                buf.extend_from_slice(&cert.not_before_unix_seconds.to_be_bytes());
+                buf.extend_from_slice(&cert.not_after_unix_seconds.to_be_bytes());
+            }
+        }
+    }
+    buf
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sample_attested_message(id: &str) -> crate::AttestedMessage {
+        crate::AttestedMessage {
+            message_id: id.into(),
+            room_id: "room-general".into(),
+            author_agent_id: "agent-2".into(),
+            body_text: "hello".into(),
+            verification_outcome: crate::VerificationOutcome::DirectKey as i32,
+            delegation_cert: None,
+        }
+    }
+
+    fn sample_attestation(messages: Vec<crate::AttestedMessage>) -> crate::DeliveryAttestation {
+        crate::DeliveryAttestation {
+            recipient_device_public_keys: vec![vec![7u8; 32]],
+            key_id: "mm-key-2026-09".into(),
+            batch_sequence: 1,
+            attested_at: Some(prost_types::Timestamp { seconds: 100, nanos: 0 }),
+            messages,
+            signature: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn delivery_attestation_transcript_has_stable_domain() {
+        let t = delivery_attestation_transcript(&sample_attestation(vec![sample_attested_message("m1")]));
+        assert!(t.starts_with(b"identitycrypto.delivery-attestation.v1\0"));
+    }
+
+    #[test]
+    fn delivery_attestation_transcript_binds_message_order() {
+        let a = sample_attestation(vec![sample_attested_message("m1"), sample_attested_message("m2")]);
+        let b = sample_attestation(vec![sample_attested_message("m2"), sample_attested_message("m1")]);
+        assert_ne!(
+            delivery_attestation_transcript(&a),
+            delivery_attestation_transcript(&b),
+            "reordering the same messages must change the transcript"
+        );
+    }
+
+    #[test]
+    fn delivery_attestation_transcript_binds_body_text() {
+        let mut tampered = sample_attested_message("m1");
+        tampered.body_text = "goodbye".into();
+        assert_ne!(
+            delivery_attestation_transcript(&sample_attestation(vec![sample_attested_message("m1")])),
+            delivery_attestation_transcript(&sample_attestation(vec![tampered])),
+            "a substituted body_text must change the transcript"
+        );
+    }
+
+    #[test]
+    fn delivery_attestation_transcript_binds_recipient_and_sequence() {
+        let msgs = vec![sample_attested_message("m1")];
+        let mut a = sample_attestation(msgs.clone());
+        let mut b = sample_attestation(msgs);
+        b.recipient_device_public_keys = vec![vec![9u8; 32]];
+        assert_ne!(delivery_attestation_transcript(&a), delivery_attestation_transcript(&b));
+        a.batch_sequence = 2;
+        let c = sample_attestation(vec![sample_attested_message("m1")]);
+        assert_ne!(delivery_attestation_transcript(&a), delivery_attestation_transcript(&c));
+    }
+
+    #[test]
+    fn delivery_attestation_transcript_binds_the_full_recipient_list_not_just_membership() {
+        let msgs = vec![sample_attested_message("m1")];
+        let mut one_key = sample_attestation(msgs.clone());
+        one_key.recipient_device_public_keys = vec![vec![7u8; 32]];
+        let mut two_keys = sample_attestation(msgs);
+        two_keys.recipient_device_public_keys = vec![vec![7u8; 32], vec![8u8; 32]];
+        assert_ne!(
+            delivery_attestation_transcript(&one_key),
+            delivery_attestation_transcript(&two_keys),
+            "adding an extra recipient device key must change the transcript"
+        );
+    }
+
+    #[test]
+    fn delivery_attestation_transcript_binds_verification_outcome_without_truncation() {
+        let mut system = sample_attested_message("m1");
+        system.verification_outcome = crate::VerificationOutcome::System as i32;
+        assert_ne!(
+            delivery_attestation_transcript(&sample_attestation(vec![sample_attested_message("m1")])),
+            delivery_attestation_transcript(&sample_attestation(vec![system])),
+        );
+    }
+
+    #[test]
+    fn delivery_attestation_transcript_binds_attested_at_nanos() {
+        let msgs = vec![sample_attested_message("m1")];
+        let mut a = sample_attestation(msgs.clone());
+        let mut b = sample_attestation(msgs);
+        a.attested_at = Some(prost_types::Timestamp { seconds: 100, nanos: 0 });
+        b.attested_at = Some(prost_types::Timestamp { seconds: 100, nanos: 1 });
+        assert_ne!(delivery_attestation_transcript(&a), delivery_attestation_transcript(&b));
+    }
+
+    #[test]
+    fn delivery_attestation_transcript_binds_delegation_cert_presence() {
+        let mut delegated = sample_attested_message("m1");
+        delegated.delegation_cert = Some(crate::DelegationCert {
+            agent_id: "agent-2".into(),
+            device_public_key: vec![1u8; 32],
+            session_public_key: vec![2u8; 32],
+            not_before_unix_seconds: 0,
+            not_after_unix_seconds: 100,
+            signature: vec![3u8; 64],
+        });
+        assert_ne!(
+            delivery_attestation_transcript(&sample_attestation(vec![sample_attested_message("m1")])),
+            delivery_attestation_transcript(&sample_attestation(vec![delegated])),
+        );
+    }
+
+    #[test]
+    fn delivery_attestation_transcript_length_prefixes_delegation_cert_key_bytes() {
+        let mut a = sample_attested_message("m1");
+        a.delegation_cert = Some(crate::DelegationCert {
+            agent_id: "agent-2".into(),
+            device_public_key: vec![1u8; 31],
+            session_public_key: [1u8, 2u8].repeat(33),
+            not_before_unix_seconds: 0,
+            not_after_unix_seconds: 100,
+            signature: vec![3u8; 64],
+        });
+        let mut b = sample_attested_message("m1");
+        b.delegation_cert = Some(crate::DelegationCert {
+            agent_id: "agent-2".into(),
+            device_public_key: vec![1u8; 32],
+            session_public_key: {
+                let mut v = [1u8, 2u8].repeat(33);
+                v.pop();
+                v
+            },
+            not_before_unix_seconds: 0,
+            not_after_unix_seconds: 100,
+            signature: vec![3u8; 64],
+        });
+        assert_ne!(
+            delivery_attestation_transcript(&sample_attestation(vec![a])),
+            delivery_attestation_transcript(&sample_attestation(vec![b])),
+            "differing key-length boundaries must not collide to the same transcript bytes"
+        );
+    }
 
     #[test]
     fn self_proof_transcript_has_stable_domain_and_layout() {

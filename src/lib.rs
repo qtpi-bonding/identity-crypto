@@ -50,7 +50,9 @@ pub mod proto {
     }
 }
 
-pub use proto::identitycrypto::v1::{DelegationCert, KeyScheme};
+pub use proto::identitycrypto::v1::{
+    AttestedMessage, DelegationCert, DeliveryAttestation, KeyScheme, VerificationOutcome,
+};
 
 use anyhow::{anyhow, Context, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
@@ -134,6 +136,37 @@ mod proto_tests {
         let bytes = cert.encode_to_vec();
         let decoded = DelegationCert::decode(bytes.as_slice()).unwrap();
         assert_eq!(cert, decoded);
+    }
+
+    #[test]
+    fn verification_outcome_discriminants_are_pinned() {
+        assert_eq!(VerificationOutcome::Unspecified as i32, 0);
+        assert_eq!(VerificationOutcome::DirectKey as i32, 1);
+        assert_eq!(VerificationOutcome::DelegatedKey as i32, 2);
+        assert_eq!(VerificationOutcome::System as i32, 3);
+    }
+
+    #[test]
+    fn delivery_attestation_round_trips_through_protobuf_bytes() {
+        use prost::Message;
+        let attestation = DeliveryAttestation {
+            recipient_device_public_keys: vec![vec![1u8; 32]],
+            key_id: "mm-key-2026-09".into(),
+            batch_sequence: 42,
+            attested_at: Some(prost_types::Timestamp { seconds: 1_700_000_000, nanos: 0 }),
+            messages: vec![AttestedMessage {
+                message_id: "msg-1".into(),
+                room_id: "room-general".into(),
+                author_agent_id: "agent-2".into(),
+                body_text: "hello".into(),
+                verification_outcome: VerificationOutcome::DirectKey as i32,
+                delegation_cert: None,
+            }],
+            signature: vec![9u8; 64],
+        };
+        let bytes = attestation.encode_to_vec();
+        let decoded = DeliveryAttestation::decode(bytes.as_slice()).unwrap();
+        assert_eq!(attestation, decoded);
     }
 }
 
