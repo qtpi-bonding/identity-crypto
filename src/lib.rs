@@ -10,7 +10,10 @@
 //! of relying on review to catch drift between independently-written
 //! copies.
 
+pub mod key_scheme;
 pub mod transcripts;
+
+pub use key_scheme::KeyScheme;
 
 use anyhow::{anyhow, Context, Result};
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
