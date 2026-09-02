@@ -1,0 +1,37 @@
+syntax = "proto3";
+
+// Canonical, single-source definitions for the two pieces of the
+// grorg/gait/multimatrix agent-identity design that no one of those three
+// repos actually owns: the key-scheme discriminant embedded as a raw byte
+// in every signed transcript, and the session-delegation certificate that
+// travels with every session-signed event/message. Each repo imports this
+// package directly for these two types rather than redefining them --
+// KeyScheme used to be independently (and only accidentally consistently)
+// redefined in all three repos' own protos; DelegationCert is new and is
+// homed here from the start rather than repeating that mistake.
+//
+// Everything else -- Agent/AgentKey and grorg's RPC surface, gait's
+// Event/Provenance log format, multimatrix's RoomMessage/AuthoredMessage --
+// stays owned by its one real owner and is NOT part of this package.
+package identitycrypto.v1;
+
+enum KeyScheme {
+  KEY_SCHEME_UNSPECIFIED = 0;
+  KEY_SCHEME_ED25519 = 1;
+  KEY_SCHEME_SECP256K1_SCHNORR = 2;
+}
+
+// A device key's authorization for a session key to sign on its behalf,
+// for a bounded time window. Minted purely locally by whichever harness
+// produced it (gait today; not gait-specific) and never registered with
+// grorg -- it travels WITH every event/message the session key signs.
+// See identity_crypto::transcripts::session_delegation_transcript for the
+// exact canonical byte layout its `signature` field covers.
+message DelegationCert {
+  string agent_id = 1;
+  bytes device_public_key = 2;
+  bytes session_public_key = 3;
+  int64 not_before_unix_seconds = 4;
+  int64 not_after_unix_seconds = 5;
+  bytes signature = 6;
+}
