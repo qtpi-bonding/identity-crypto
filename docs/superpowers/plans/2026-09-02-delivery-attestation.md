@@ -30,12 +30,24 @@ there is no existing dependency covering this — confirmed against the real
   **big-endian** `u32` (`with_len_prefixed`, already defined in
   `transcripts.rs` — reuse it, don't redefine it).
 - Fixed-width scalars use `.to_be_bytes()`, matching every existing
-  transcript function in this file.
+  transcript function in this file. **Never truncate a fixed-width scalar
+  to a narrower type when encoding it** (an earlier draft encoded
+  `verification_outcome` as `as u8`, silently truncating an `i32` proto
+  enum discriminant — fixed below in Task 2 to encode the full 4 bytes).
 - Every new transcript function gets its own NUL-terminated ASCII domain
   separator, never reusing another function's domain string.
 - `identity-crypto` must never depend on multimatrix's or gait's own proto
   packages — `VerificationOutcome` is defined here even though multimatrix
   is its only producer today, exactly like `DelegationCert`.
+- **No field on `DeliveryAttestation` may ever carry an agent_id-shaped
+  value.** An earlier draft used `recipient_agent_id: string`; this was
+  replaced with `recipient_device_public_keys: repeated bytes` after
+  finding multimatrix has no reliable way to resolve "the one live device"
+  for an agent_id, and gait deliberately doesn't reason about agent_id at
+  all (see the design doc's revision history). A verifier checks whether
+  its own device public key is a *member* of this list, not an equality
+  match against a single value — this also correctly supports an agent
+  running from multiple devices with no extra work.
 
 ---
 
@@ -63,15 +75,21 @@ line to interoperate.)
 
 **Interfaces:**
 - Produces: `identitycrypto::v1::VerificationOutcome` (enum, discriminants
-  `Unspecified = 0`, `DirectKey = 1`, `DelegatedKey = 2`),
+  `Unspecified = 0`, `DirectKey = 1`, `DelegatedKey = 2`, `System = 3` — the
+  third value is for a delivering service's own unsigned system-originated
+  content, e.g. multimatrix's `admit_system` messages: no agent key is
+  ever checked for these, so `DirectKey`/`DelegatedKey` would be a false
+  claim; `System` honestly says "no agent signature applies here, the
+  attesting service vouches for this directly"),
   `identitycrypto::v1::AttestedMessage` (fields: `message_id: String`,
   `room_id: String`, `author_agent_id: String`, `body_text: String`,
   `verification_outcome: i32`, `delegation_cert: Option<DelegationCert>`),
-  `identitycrypto::v1::DeliveryAttestation` (fields: `recipient_agent_id:
-  String`, `key_id: String`, `batch_sequence: u64`, `attested_at: Option<
-  prost_types::Timestamp>`, `messages: Vec<AttestedMessage>`, `signature:
-  Vec<u8>`). All re-exported at the crate root: `identity_crypto::{
-  AttestedMessage, DeliveryAttestation, VerificationOutcome}`.
+  `identitycrypto::v1::DeliveryAttestation` (fields:
+  `recipient_device_public_keys: Vec<Vec<u8>>`, `key_id: String`,
+  `batch_sequence: u64`, `attested_at: Option<prost_types::Timestamp>`,
+  `messages: Vec<AttestedMessage>`, `signature: Vec<u8>`). All re-exported
+  at the crate root: `identity_crypto::{AttestedMessage, DeliveryAttestation,
+  VerificationOutcome}`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -83,13 +101,14 @@ fn verification_outcome_discriminants_are_pinned() {
     assert_eq!(VerificationOutcome::Unspecified as i32, 0);
     assert_eq!(VerificationOutcome::DirectKey as i32, 1);
     assert_eq!(VerificationOutcome::DelegatedKey as i32, 2);
+    assert_eq!(VerificationOutcome::System as i32, 3);
 }
 
 #[test]
 fn delivery_attestation_round_trips_through_protobuf_bytes() {
     use prost::Message;
     let attestation = DeliveryAttestation {
-        recipient_agent_id: "agent-1".into(),
+        recipient_device_public_keys: vec![vec![1u8; 32]],
         key_id: "mm-key-2026-09".into(),
         batch_sequence: 42,
         attested_at: Some(prost_types::Timestamp { seconds: 1_700_000_000, nanos: 0 }),
@@ -124,6 +143,10 @@ enum VerificationOutcome {
   VERIFICATION_OUTCOME_UNSPECIFIED = 0;
   VERIFICATION_OUTCOME_DIRECT_KEY = 1;
   VERIFICATION_OUTCOME_DELEGATED_KEY = 2;
+  // No agent key was ever checked -- the attesting service (e.g.
+  // multimatrix's own admit_system path) vouches for this content
+  // directly. Never used for anything an agent actually signed.
+  VERIFICATION_OUTCOME_SYSTEM = 3;
 }
 
 // One message inside a signed delivery batch. `body_text` is authoritative
@@ -143,8 +166,17 @@ message AttestedMessage {
 // an AgentKey -- a service identity). See
 // identity_crypto::transcripts::delivery_attestation_transcript for the
 // exact canonical byte layout `signature` covers.
+//
+// recipient_device_public_keys is the target agent's current set of
+// DEVICE-purpose key public keys (raw bytes, not hex) -- NOT an agent_id.
+// A verifier checks whether its own device public key is a member of this
+// list, not an equality match against a single value. This deliberately
+// avoids requiring the attesting service to know "which one device is
+// live right now" (unsolved/unsolvable without new dial-time protocol
+// work) and avoids requiring the verifier to know or reason about
+// agent_id at all.
 message DeliveryAttestation {
-  string recipient_agent_id = 1;
+  repeated bytes recipient_device_public_keys = 1;
   string key_id = 2;
   uint64 batch_sequence = 3;
   google.protobuf.Timestamp attested_at = 4;
@@ -216,7 +248,7 @@ fn sample_attested_message(id: &str) -> crate::AttestedMessage {
 
 fn sample_attestation(messages: Vec<crate::AttestedMessage>) -> crate::DeliveryAttestation {
     crate::DeliveryAttestation {
-        recipient_agent_id: "agent-1".into(),
+        recipient_device_public_keys: vec![vec![7u8; 32]],
         key_id: "mm-key-2026-09".into(),
         batch_sequence: 1,
         attested_at: Some(prost_types::Timestamp { seconds: 100, nanos: 0 }),
@@ -258,11 +290,60 @@ fn delivery_attestation_transcript_binds_recipient_and_sequence() {
     let msgs = vec![sample_attested_message("m1")];
     let mut a = sample_attestation(msgs.clone());
     let mut b = sample_attestation(msgs);
-    b.recipient_agent_id = "agent-99".into();
+    b.recipient_device_public_keys = vec![vec![9u8; 32]];
     assert_ne!(delivery_attestation_transcript(&a), delivery_attestation_transcript(&b));
     a.batch_sequence = 2;
     let c = sample_attestation(vec![sample_attested_message("m1")]);
     assert_ne!(delivery_attestation_transcript(&a), delivery_attestation_transcript(&c));
+}
+
+#[test]
+fn delivery_attestation_transcript_binds_the_full_recipient_list_not_just_membership() {
+    // A verifier checks list MEMBERSHIP at the application layer, but the
+    // transcript itself must still bind the exact list content and count --
+    // otherwise a relay could add/remove unrelated device keys from the
+    // list without invalidating the signature.
+    let msgs = vec![sample_attested_message("m1")];
+    let mut one_key = sample_attestation(msgs.clone());
+    one_key.recipient_device_public_keys = vec![vec![7u8; 32]];
+    let mut two_keys = sample_attestation(msgs);
+    two_keys.recipient_device_public_keys = vec![vec![7u8; 32], vec![8u8; 32]];
+    assert_ne!(
+        delivery_attestation_transcript(&one_key),
+        delivery_attestation_transcript(&two_keys),
+        "adding an extra recipient device key must change the transcript"
+    );
+}
+
+#[test]
+fn delivery_attestation_transcript_binds_verification_outcome_without_truncation() {
+    // Fixes a real bug an earlier draft had: encoding verification_outcome
+    // as `as u8` would make e.g. discriminant 3 and discriminant 259
+    // collide. There's no real discriminant that high today, but the fix
+    // is to never truncate a fixed-width scalar at all -- encode the full
+    // i32, not a narrowed byte.
+    let mut system = sample_attested_message("m1");
+    system.verification_outcome = crate::VerificationOutcome::System as i32;
+    assert_ne!(
+        delivery_attestation_transcript(&sample_attestation(vec![sample_attested_message("m1")])),
+        delivery_attestation_transcript(&sample_attestation(vec![system])),
+    );
+}
+
+#[test]
+fn delivery_attestation_transcript_binds_attested_at_nanos() {
+    // An earlier draft only signed `attested_at.seconds`, leaving `nanos`
+    // mutable without invalidating the signature.
+    let msgs = vec![sample_attested_message("m1")];
+    let mut a = sample_attestation(msgs.clone());
+    let mut b = sample_attestation(msgs);
+    a.attested_at = Some(prost_types::Timestamp { seconds: 100, nanos: 0 });
+    b.attested_at = Some(prost_types::Timestamp { seconds: 100, nanos: 1 });
+    assert_ne!(
+        delivery_attestation_transcript(&a),
+        delivery_attestation_transcript(&b),
+        "a different nanos value must change the transcript"
+    );
 }
 
 #[test]
@@ -341,17 +422,32 @@ Append to `src/transcripts.rs`, before the `#[cfg(test)]` module:
 /// separate hash to reconcile against a differently-transmitted copy.
 pub fn delivery_attestation_transcript(attestation: &crate::DeliveryAttestation) -> Vec<u8> {
     let mut buf = b"identitycrypto.delivery-attestation.v1\0".to_vec();
-    with_len_prefixed(&mut buf, attestation.recipient_agent_id.as_bytes());
+    // recipient_device_public_keys: an explicit 4-byte big-endian count,
+    // then each entry length-prefixed. The count is required, not just
+    // relying on each entry's own length prefix, so the decoder knows
+    // where the list ends -- a sequence of length-prefixed strings alone
+    // is self-describing per-entry but not self-terminating.
+    buf.extend_from_slice(&(attestation.recipient_device_public_keys.len() as u32).to_be_bytes());
+    for key in &attestation.recipient_device_public_keys {
+        with_len_prefixed(&mut buf, key);
+    }
     with_len_prefixed(&mut buf, attestation.key_id.as_bytes());
     buf.extend_from_slice(&attestation.batch_sequence.to_be_bytes());
-    let attested_at_secs = attestation.attested_at.as_ref().map(|t| t.seconds).unwrap_or(0);
+    let (attested_at_secs, attested_at_nanos) = attestation
+        .attested_at
+        .as_ref()
+        .map(|t| (t.seconds, t.nanos))
+        .unwrap_or((0, 0));
     buf.extend_from_slice(&attested_at_secs.to_be_bytes());
+    buf.extend_from_slice(&attested_at_nanos.to_be_bytes());
     for message in &attestation.messages {
         with_len_prefixed(&mut buf, message.message_id.as_bytes());
         with_len_prefixed(&mut buf, message.room_id.as_bytes());
         with_len_prefixed(&mut buf, message.author_agent_id.as_bytes());
         with_len_prefixed(&mut buf, message.body_text.as_bytes());
-        buf.push(message.verification_outcome as u8);
+        // Full 4 bytes, never truncated -- an earlier draft used `as u8`,
+        // which would silently collide discriminants 256 apart.
+        buf.extend_from_slice(&message.verification_outcome.to_be_bytes());
         match &message.delegation_cert {
             None => buf.push(0x00),
             Some(cert) => {
@@ -376,7 +472,7 @@ pub fn delivery_attestation_transcript(attestation: &crate::DeliveryAttestation)
 - [ ] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p identity-crypto`
-Expected: PASS, all tests including the five new ones.
+Expected: PASS, all tests including the nine new ones.
 
 - [ ] **Step 5: Commit**
 
