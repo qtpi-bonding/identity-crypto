@@ -12,6 +12,27 @@
 
 pub mod transcripts;
 
+/// The absolute path to this crate's `proto/` directory, valid regardless
+/// of whether a consumer depends on this crate via a local path or a git
+/// rev -- resolved via `CARGO_MANIFEST_DIR` baked in at THIS crate's own
+/// compile time, so it's always correct for wherever Cargo actually
+/// checked this crate out to (a hardcoded path string in a downstream
+/// `build.rs` breaks the moment this stops being a path dependency, since
+/// Cargo checks a git dependency out to an unpredictable, per-machine
+/// location under `~/.cargo/git/checkouts/...`).
+///
+/// A consumer that needs `import "identitycrypto/v1/identity.proto";` to
+/// resolve from its own `.proto` files must list `identity-crypto` under
+/// its `[build-dependencies]` (not just `[dependencies]`) to call this
+/// from its own `build.rs`:
+///
+/// ```ignore
+/// .compile_protos(&[my_proto], &[my_proto_root, identity_crypto::proto_include_dir().into()])
+/// ```
+pub fn proto_include_dir() -> &'static str {
+    concat!(env!("CARGO_MANIFEST_DIR"), "/proto")
+}
+
 /// Generated from `proto/identitycrypto/v1/identity.proto` -- the two
 /// pieces of this design nobody repo owns: `KeyScheme` (the discriminant
 /// every transcript embeds as a raw byte, previously and accidentally
@@ -59,6 +80,13 @@ pub fn verify_ed25519(public_key_hex: &str, message: &[u8], signature: &[u8]) ->
 #[cfg(test)]
 mod proto_tests {
     use super::*;
+
+    #[test]
+    fn proto_include_dir_points_at_the_real_proto_file() {
+        let path = std::path::Path::new(proto_include_dir())
+            .join("identitycrypto/v1/identity.proto");
+        assert!(path.exists(), "{} should exist", path.display());
+    }
 
     #[test]
     fn key_scheme_discriminants_are_pinned() {
