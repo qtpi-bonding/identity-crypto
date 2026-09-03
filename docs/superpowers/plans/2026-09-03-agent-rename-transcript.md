@@ -39,11 +39,24 @@ endpoint")
 - Modify: `src/transcripts.rs`
 
 **Interfaces:**
-- Produces: `pub fn rename_transcript(agent_id: &str, new_name: &str) -> Vec<u8>` —
+- Produces: `pub fn rename_transcript(nonce: &[u8], agent_id: &str, new_name: &str) -> Vec<u8>` —
   grorg's `rename_agent` ops-layer function (a different repo's plan)
-  will call this exactly the way `delegation_transcript`/
-  `revocation_transcript` are called today: build the transcript, then
+  will call this the way `self_proof_transcript` is called today: consume
+  a fresh challenge nonce via `issue_key_challenge`/`consume_key_challenge`,
+  build the transcript with that nonce, then
   `verify_ed25519(&current_root.public_key, &transcript, &signature)`.
+
+**Revision note (post-review, 2026-09-03):** the first draft of this plan
+omitted the nonce — `rename_transcript(agent_id, new_name)`, matching
+`delegation_transcript`'s challenge-free shape. An independent review
+(gait/gpt-sol) correctly flagged this as a replay vulnerability: unlike
+delegation/revocation/rotation (which authorize a *specific new key*,
+making the transcript itself effectively single-use once that key exists),
+a rename transcript's inputs can repeat — the same agent renaming back to
+a name it held before produces byte-identical transcripts across time, so
+a captured signature could be replayed indefinitely with no key-based
+"already happened" bound. Fixed below by embedding a challenge nonce,
+matching `self_proof_transcript`'s anti-replay shape instead.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -54,34 +67,41 @@ the style of every other transcript's test pair):
 ```rust
     #[test]
     fn rename_transcript_has_stable_domain_and_layout() {
-        let t = rename_transcript("agent-a", "new-name");
+        let t = rename_transcript(b"nonce", "agent-a", "new-name");
         assert!(t.starts_with(b"grorg.agent-rename.v1\0"));
-        // domain(22) + len-prefix(4) + "agent-a"(7) + len-prefix(4) + "new-name"(8)
-        assert_eq!(t.len(), 22 + 4 + 7 + 4 + 8);
+        // domain(22) + len-prefix(4) + "nonce"(5) + len-prefix(4) + "agent-a"(7) + len-prefix(4) + "new-name"(8)
+        assert_eq!(t.len(), 22 + 4 + 5 + 4 + 7 + 4 + 8);
+    }
+
+    #[test]
+    fn rename_transcript_binds_nonce() {
+        let a = rename_transcript(b"nonce-a", "agent-a", "same-name");
+        let b = rename_transcript(b"nonce-b", "agent-a", "same-name");
+        assert_ne!(a, b, "different nonce must produce a different transcript -- this is what makes replay impossible");
     }
 
     #[test]
     fn rename_transcript_binds_agent_id() {
-        let a = rename_transcript("agent-a", "same-name");
-        let b = rename_transcript("agent-b", "same-name");
+        let a = rename_transcript(b"nonce", "agent-a", "same-name");
+        let b = rename_transcript(b"nonce", "agent-b", "same-name");
         assert_ne!(a, b, "different agent_id must produce a different transcript");
     }
 
     #[test]
     fn rename_transcript_binds_new_name() {
-        let a = rename_transcript("agent-a", "old-name");
-        let b = rename_transcript("agent-a", "new-name");
+        let a = rename_transcript(b"nonce", "agent-a", "old-name");
+        let b = rename_transcript(b"nonce", "agent-a", "new-name");
         assert_ne!(a, b, "different new_name must produce a different transcript");
     }
 
     #[test]
-    fn rename_transcript_domain_never_collides_with_delegation_transcript() {
-        // Same agent_id happens to be embedded in both; different domains
-        // and different trailing shapes must still never collide.
+    fn rename_transcript_domain_never_collides_with_self_proof_transcript() {
+        // Both embed a nonce; different domains and different trailing
+        // shapes must still never collide.
         let key = [3u8; 32];
-        let delegation = delegation_transcript("agent-x", &key, 1);
-        let rename = rename_transcript("agent-x", "agent-x");
-        assert_ne!(delegation, rename);
+        let self_proof = self_proof_transcript(b"nonce", &key, 1);
+        let rename = rename_transcript(b"nonce", "agent-x", "agent-x");
+        assert_ne!(self_proof, rename);
     }
 ```
 
@@ -92,18 +112,22 @@ Expected: FAIL with "cannot find function `rename_transcript` in this scope"
 
 - [ ] **Step 3: Implement `rename_transcript`**
 
-Add to `src/transcripts.rs`, directly after `delegation_transcript` (keeps
-the file's existing ordering: self-proof, delegation, revocation,
-rotation, then this one logically belongs beside delegation since both
-are "an existing root authorizes a change to this agent's record"):
+Add to `src/transcripts.rs`, directly after `self_proof_transcript` (keeps
+the file's existing ordering grouped by shape: this transcript embeds a
+nonce exactly like `self_proof_transcript` does, unlike the challenge-free
+delegation/revocation/rotation transcripts below it):
 
 ```rust
 /// `RenameAgent`'s authorization signature: the agent's current root key
-/// vouching for a new human-facing name. No self-proof half needed here
-/// (unlike `AddAgentKey`) -- there's no new key being introduced, only an
-/// existing root re-asserting its own agent's label.
-pub fn rename_transcript(agent_id: &str, new_name: &str) -> Vec<u8> {
+/// vouching for a new human-facing name, bound to a single-use challenge
+/// nonce so a captured signature can never be replayed (unlike
+/// delegation/revocation/rotation, a rename's inputs can repeat --
+/// renaming back to a prior name -- so it needs the same nonce-based
+/// anti-replay `self_proof_transcript` uses, not the challenge-free shape
+/// those other three use).
+pub fn rename_transcript(nonce: &[u8], agent_id: &str, new_name: &str) -> Vec<u8> {
     let mut buf = b"grorg.agent-rename.v1\0".to_vec();
+    with_len_prefixed(&mut buf, nonce);
     with_len_prefixed(&mut buf, agent_id.as_bytes());
     with_len_prefixed(&mut buf, new_name.as_bytes());
     buf
