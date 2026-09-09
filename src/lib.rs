@@ -67,8 +67,41 @@ pub fn hex_decode_32(public_key_hex: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow!("ed25519 public key must be 32 bytes"))
 }
 
+/// Proof that a signature was verified against a specific public key.
+/// Deliberately has no public constructor -- the only way to obtain one
+/// is [`verify_ed25519`] succeeding. Code that must not run on an
+/// unchecked or discarded verification result (applying a
+/// `DelegationCert`, honoring a `RenameAgent`, accepting a `RotateRoot`)
+/// can require `&VerifiedSignature` as a parameter, making it a compile
+/// error to skip or ignore the check -- the same trick as
+/// `access-control`'s `ReadGrant`, applied to signature verification
+/// instead of resource access.
+///
+/// ```compile_fail
+/// use identity_crypto::VerifiedSignature;
+/// let _v: VerifiedSignature = VerifiedSignature {};
+/// ```
+#[derive(Debug)]
+pub struct VerifiedSignature<'a> {
+    public_key_hex: &'a str,
+}
+
+impl<'a> VerifiedSignature<'a> {
+    /// The public key the signature was verified against.
+    pub fn public_key_hex(&self) -> &str {
+        self.public_key_hex
+    }
+}
+
 /// Verify a raw ed25519 signature against a hex-encoded public key.
-pub fn verify_ed25519(public_key_hex: &str, message: &[u8], signature: &[u8]) -> Result<bool> {
+/// Returns a [`VerifiedSignature`] witness on success -- there is no
+/// bare `bool` to accidentally discard, negate wrong, or forget to
+/// check.
+pub fn verify_ed25519<'a>(
+    public_key_hex: &'a str,
+    message: &[u8],
+    signature: &[u8],
+) -> Result<VerifiedSignature<'a>> {
     let public_bytes = hex_decode_32(public_key_hex)?;
     let verifying_key = VerifyingKey::from_bytes(&public_bytes)
         .map_err(|e| anyhow!("invalid ed25519 public key: {e}"))?;
@@ -76,7 +109,10 @@ pub fn verify_ed25519(public_key_hex: &str, message: &[u8], signature: &[u8]) ->
         .try_into()
         .map_err(|_| anyhow!("ed25519 signature must be 64 bytes"))?;
     let signature = Signature::from_bytes(&sig_bytes);
-    Ok(verifying_key.verify(message, &signature).is_ok())
+    verifying_key
+        .verify(message, &signature)
+        .map_err(|_| anyhow!("signature does not verify"))?;
+    Ok(VerifiedSignature { public_key_hex })
 }
 
 #[cfg(test)]
@@ -182,7 +218,8 @@ mod verify_tests {
         let hex_pub = hex::encode(signing_key.verifying_key().to_bytes());
         let msg = b"hello";
         let sig = signing_key.sign(msg);
-        assert!(verify_ed25519(&hex_pub, msg, &sig.to_bytes()).unwrap());
+        let verified = verify_ed25519(&hex_pub, msg, &sig.to_bytes()).unwrap();
+        assert_eq!(verified.public_key_hex(), hex_pub);
     }
 
     #[test]
@@ -190,7 +227,7 @@ mod verify_tests {
         let signing_key = SigningKey::generate(&mut OsRng);
         let hex_pub = hex::encode(signing_key.verifying_key().to_bytes());
         let sig = signing_key.sign(b"hello");
-        assert!(!verify_ed25519(&hex_pub, b"goodbye", &sig.to_bytes()).unwrap());
+        assert!(verify_ed25519(&hex_pub, b"goodbye", &sig.to_bytes()).is_err());
     }
 
     #[test]
