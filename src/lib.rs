@@ -10,6 +10,7 @@
 //! of relying on review to catch drift between independently-written
 //! copies.
 
+pub mod agent_key;
 pub mod transcripts;
 
 /// The absolute path to this crate's `proto/` directory, valid regardless
@@ -93,6 +94,24 @@ impl<'a> VerifiedSignature<'a> {
     }
 }
 
+/// Decode a hex-encoded ed25519 public key into a [`VerifyingKey`].
+/// Shared by [`verify_ed25519`] and [`agent_key`]'s own raw verifier so
+/// the two never drift on how a key is parsed -- only on what they do
+/// with a parse failure.
+pub(crate) fn decode_verifying_key(public_key_hex: &str) -> Result<VerifyingKey> {
+    let public_bytes = hex_decode_32(public_key_hex)?;
+    VerifyingKey::from_bytes(&public_bytes).map_err(|e| anyhow!("invalid ed25519 public key: {e}"))
+}
+
+/// Decode a raw ed25519 signature. Shared for the same reason as
+/// [`decode_verifying_key`].
+pub(crate) fn decode_signature(signature: &[u8]) -> Result<Signature> {
+    let sig_bytes: [u8; 64] = signature
+        .try_into()
+        .map_err(|_| anyhow!("ed25519 signature must be 64 bytes"))?;
+    Ok(Signature::from_bytes(&sig_bytes))
+}
+
 /// Verify a raw ed25519 signature against a hex-encoded public key.
 /// Returns a [`VerifiedSignature`] witness on success -- there is no
 /// bare `bool` to accidentally discard, negate wrong, or forget to
@@ -102,13 +121,8 @@ pub fn verify_ed25519<'a>(
     message: &[u8],
     signature: &[u8],
 ) -> Result<VerifiedSignature<'a>> {
-    let public_bytes = hex_decode_32(public_key_hex)?;
-    let verifying_key = VerifyingKey::from_bytes(&public_bytes)
-        .map_err(|e| anyhow!("invalid ed25519 public key: {e}"))?;
-    let sig_bytes: [u8; 64] = signature
-        .try_into()
-        .map_err(|_| anyhow!("ed25519 signature must be 64 bytes"))?;
-    let signature = Signature::from_bytes(&sig_bytes);
+    let verifying_key = decode_verifying_key(public_key_hex)?;
+    let signature = decode_signature(signature)?;
     verifying_key
         .verify(message, &signature)
         .map_err(|_| anyhow!("signature does not verify"))?;
