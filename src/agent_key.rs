@@ -148,8 +148,17 @@ pub fn verify_delegated(
             return Ok(false);
         }
     }
+    // No clock-skew tolerance here, unlike the bounds below: revoked_at is
+    // grorg's own record, read back from grorg via ListAgentKeys -- there
+    // is no second, possibly-skewed clock to reconcile it against, unlike
+    // not_before/not_after (issued by whoever minted the cert) or
+    // created_at (also grorg's, but see the deliberate legacy exception
+    // for keys with none set). A revoked key is the emergency stop; it
+    // must take effect the instant grorg records it, not up to
+    // CLOCK_SKEW_TOLERANCE_SECONDS later. Matches verify()'s equally
+    // strict revoked_at check on the direct-key path.
     if let Some(revoked_at) = &device_key.revoked_at {
-        if upper_bound_ok(revoked_at.seconds, t, receipt_seconds) != Some(true) {
+        if timestamp_before_or_eq(revoked_at, &msg_timestamp) {
             return Ok(false);
         }
     }
@@ -552,6 +561,31 @@ mod verify_delegated_tests {
         )
         .unwrap();
         assert!(!result, "a device key revoked before the message's receipt time must invalidate delegated messages, even mid-cert-window");
+    }
+
+    #[test]
+    fn a_device_key_revoked_one_second_before_receipt_is_rejected_with_no_grace_period() {
+        // Pins the fix: revoked_at must NOT get the same
+        // CLOCK_SKEW_TOLERANCE_SECONDS grace period not_before/not_after
+        // get. Before the fix, a revocation at T still authorized a
+        // delegated message received at T+1s (well inside the 30s
+        // tolerance window) -- this must now fail immediately.
+        let device_signing = SigningKey::generate(&mut OsRng);
+        let session_signing = SigningKey::generate(&mut OsRng);
+        let device_pub_hex = hex::encode(device_signing.verifying_key().to_bytes());
+        let session_pub_hex = hex::encode(session_signing.verifying_key().to_bytes());
+        let cert = make_cert(&device_signing, &session_signing, "agent-1", 500, 2_000);
+        let msg = b"session message one second after revocation";
+        let sig = session_signing.sign(msg).to_bytes().to_vec();
+
+        let mut revoked = device_key(&device_pub_hex);
+        revoked.revoked_at = Some(Timestamp { seconds: 999, nanos: 0 });
+        let result = verify_delegated(
+            &[revoked], "agent-1", &cert, &session_pub_hex, msg, &sig,
+            Timestamp { seconds: 1_000, nanos: 0 }, // 1s after revocation -- inside the old 30s tolerance
+        )
+        .unwrap();
+        assert!(!result, "revocation must take effect immediately, with no clock-skew grace period, unlike not_before/not_after");
     }
 
     #[test]
