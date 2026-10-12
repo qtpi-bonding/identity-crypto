@@ -11,6 +11,9 @@ mod public_key;
 mod signature;
 pub mod transcripts;
 
+#[cfg(test)]
+pub(crate) mod testkit;
+
 pub use error::{Error, Result};
 pub use principal::{PrincipalId, ShortId};
 pub use public_key::{PublicKey, PublicKeyDuo};
