@@ -130,6 +130,7 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
             revoked: key(&i["revoked"]),
             issued_at_unix_seconds: int(&i["issued_at"]),
             signature: vec![],
+            document_id: bytes(&i["document_id"]),
         }),
         "delivery_attestation" => delivery_attestation_transcript(&pb::DeliveryAttestation {
             recipient_devices: i["recipient_devices"].as_array().unwrap().iter().map(|k| key(k).unwrap()).collect(),
@@ -205,7 +206,7 @@ fn transcripts_match_the_independent_generator() {
         }
         checked += 1;
     }
-    assert_eq!(checked, 92, "transcripts.json case count changed");
+    assert_eq!(checked, 93, "transcripts.json case count changed");
 }
 
 #[test]

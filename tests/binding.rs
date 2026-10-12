@@ -228,7 +228,7 @@ fn signed_document_approval_and_peer_revocation_bind_every_field() {
     );
     let base = pb::PeerRevocation {
         revoker_genesis: pk(), approval_key: pk(), target_genesis: pk(), revoked: None,
-        issued_at_unix_seconds: 1, signature: vec![],
+        issued_at_unix_seconds: 1, signature: vec![], document_id: vec![7; 32],
     };
     assert_binds(
         "peer_revocation",
@@ -240,6 +240,7 @@ fn signed_document_approval_and_peer_revocation_bind_every_field() {
             ("target_genesis", Box::new(|p| p.target_genesis = pk())),
             ("revoked", Box::new(|p| p.revoked = pk())),
             ("issued_at", Box::new(|p| p.issued_at_unix_seconds += 1)),
+            ("document_id", Box::new(|p| p.document_id[0] ^= 1)),
         ],
     );
 }

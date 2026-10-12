@@ -1,6 +1,8 @@
-//! The crate's one error type. 1b adds variants (hence `non_exhaustive`).
+//! The crate's one error type (non_exhaustive, so variants can be added).
 //! `field` strings are the proto field path, or the Rust parameter name for
 //! non-proto inputs.
+
+use crate::PrincipalId;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -36,6 +38,52 @@ pub enum Error {
     EmptySignature,
     #[error("signature does not verify")]
     BadSignature,
+    #[error("document type is not the expected one")]
+    WrongDocumentType,
+    #[error("the signer is not the authority")]
+    NotAuthority,
+    #[error("signed by a retired root")]
+    StaleRoot,
+    #[error("root chain of {principal} forks from the accepted one")]
+    RootFork { principal: PrincipalId },
+    #[error("kind of {principal} changed")]
+    KindChanged { principal: PrincipalId },
+    #[error("a rotation chain repeats a key")]
+    RotationCycle,
+    #[error("signing key is not the current root")]
+    NotCurrentRoot,
+    #[error("invalid registry: {field}: {reason}")]
+    InvalidRegistry { field: &'static str, reason: &'static str },
+    #[error("unknown principal")]
+    UnknownPrincipal,
+    #[error("wrong principal kind")]
+    WrongKind,
+    #[error("principal is frozen")]
+    Frozen,
+    #[error("the device's host daemon is frozen")]
+    HostFrozen,
+    #[error("chain mismatch: {0}")]
+    ChainMismatch(&'static str),
+    #[error("key is revoked")]
+    KeyRevoked,
+    #[error("{0} has expired")]
+    Expired(&'static str),
+    #[error("{0} is not yet valid")]
+    NotYetValid(&'static str),
+    #[error("key is not bound to this principal's device")]
+    NotBound,
+    #[error("this host may not vouch for this agent")]
+    NotVouched,
+    #[error("wrong audience")]
+    WrongAudience,
+    #[error("issued_at is outside the 30-second window")]
+    Skew,
+    #[error("request id or digest does not match")]
+    DigestMismatch,
+    #[error("peer revocation is not allowed by the registry")]
+    PeerRevocationDisabled,
+    #[error("peer revocation is for another document")]
+    StalePeerRevocation,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

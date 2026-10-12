@@ -56,7 +56,7 @@ message KeyDelegation {                // root → device duo, or root → appro
   PublicKey delegated = 4;             // the signing half / the approval key
   optional PublicKey delegated_encryption = 8;  // DEVICE: the duo's encryption half, covered by the same signature
   int64 issued_at_unix_seconds = 5;
-  int64 not_after_unix_seconds = 6;    // 0 = none; only when signing_root is the ultimate key's current root
+  int64 not_after_unix_seconds = 6;    // never 0; i64::MAX = no expiry, only on delegations carried in a DeviceBinding
   bytes signature = 7;
 }
 
@@ -71,7 +71,7 @@ message RootRotation {
 message KeyRevocation {
   PublicKey principal_genesis = 1;
   PublicKey revoked = 2;
-  PublicKey revoked_by = 3;            // the current root, or the revoked key itself (concordium allows self-revoke)
+  PublicKey revoked_by = 3;            // any root in the principal's chain, or the revoked key itself
   int64 revoked_at_unix_seconds = 4;
   bytes signature = 5;
 }
@@ -104,19 +104,19 @@ message SignedMessage {
 }
 
 message SignedDocument {
-  PublicKey signer_genesis = 1;        // the ultimate key's genesis key, for owner documents
+  PublicKey signer_genesis = 1;        // the authority's genesis key
   PublicKey signing = 2;               // must be the signer's current root
   string document_type = 3;            // type URL
   uint64 version = 4;
   int64 issued_at_unix_seconds = 5;
-  int64 expires_at_unix_seconds = 6;   // 0 = never
+  int64 expires_at_unix_seconds = 6;   // never 0; i64::MAX = never
   bytes body = 7;
   bytes signature = 8;
-  repeated RootRotation signer_rotations = 9;   // the ultimate key's chain from genesis
+  repeated RootRotation signer_rotations = 9;   // the authority's chain from genesis
 }
 
-message Approval {                     // owner, present, decides one pending request
-  PublicKey principal_genesis = 1;     // the owner
+message Approval {                     // a human, present, decides one pending request
+  PublicKey principal_genesis = 1;     // the approving human
   PublicKey approval_key = 2;
   PublicKey device = 3;                // the session's device key; must share a DeviceBinding with approval_key
   string audience = 4;                 // structmux:<target daemon short_id>
@@ -127,13 +127,14 @@ message Approval {                     // owner, present, decides one pending re
   bytes signature = 9;                 // approval key over approval.v1
 }
 
-message PeerRevocation {               // owner, present, freezes a principal or one key without the ultimate key
-  PublicKey revoker_genesis = 1;       // the owner
+message PeerRevocation {               // the authority, present, freezes a principal or revokes one key
+  PublicKey revoker_genesis = 1;       // the authority
   PublicKey approval_key = 2;
   PublicKey target_genesis = 3;
   optional PublicKey revoked = 4;      // absent = freeze the whole principal
   int64 issued_at_unix_seconds = 5;
   bytes signature = 6;
+  bytes document_id = 7;               // 32 bytes: the id of the document in force (SHA-256 of its signed-document.v1 transcript)
 }
 
 enum VerificationOutcome {
@@ -167,4 +168,64 @@ message DeliveryAttestation {
   repeated AttestedMessage messages = 5;
   bytes signature = 6;
   repeated PublicKey recipient_devices = 7; // the target's DEVICE keys
+}
+
+enum PrincipalKind {
+  PRINCIPAL_KIND_UNSPECIFIED = 0;
+  PRINCIPAL_KIND_HUMAN = 1;
+  PRINCIPAL_KIND_AGENT = 2;
+  PRINCIPAL_KIND_DAEMON = 3;
+}
+
+// Who exists and what keys they hold. Carried in a SignedDocument body,
+// signed by the authority. Every field added later may only grant: its
+// absence must be the strict side (1b spec 2.2).
+message PrincipalRegistry {
+  repeated RegistryEntry entries = 1;
+  bool allow_peer_revocation = 2;      // the authority may revoke with an approval key
+  reserved 3;                          // future: groups of principals; grant-only (a group confers standing or is a grant target, never confines)
+}
+
+// A document body that carries a registry puts it at field 1, exactly once.
+// identity-crypto decodes the verified body as RegistryCarrier; every other
+// field belongs to the carrying product and is skipped.
+message RegistryCarrier {
+  PrincipalRegistry registry = 1;
+}
+
+message RegistryEntry {
+  string principal_id = 1;             // canonical p256:<hex>
+  PrincipalKind kind = 2;              // an unknown kind is skipped: it grants nothing
+  optional string name = 3;            // non-empty; unique among non-frozen entries; never 16 hex chars
+  bool frozen = 4;
+  // Self-rooted (HUMAN, DAEMON; an AGENT is self-rooted or host-vouched, never both):
+  PublicKeyDuo current_root = 5;       // delegations use its signing half
+  repeated RootRotation rotations = 6; // genesis -> ... -> current_root.signing; empty for the authority
+  repeated KeyRevocation revocations = 7;
+  reserved 8;
+  // HUMAN:
+  repeated DeviceBinding devices = 9;
+  // AGENT (host-vouched):
+  repeated string allowed_hosts = 10;  // DAEMON principal ids, or "*"
+  reserved 11;                         // future: steward, the HUMAN responsible for a DAEMON or AGENT; grant-only
+}
+
+message DeviceBinding {                // one human device
+  KeyDelegation device = 1;            // the entry's root -> device duo
+  optional KeyDelegation approval = 2; // the entry's root -> approval key (hardware)
+  reserved 3;
+  optional string host_daemon_id = 4;  // the DAEMON on this device; absent = hostless
+}
+
+// Every principal a receiver has ever accepted, so a removed and re-added
+// entry is checked against the chain it had (1b spec 4.5). The receiver
+// persists it; the authority is not in it.
+message AcceptedChains {
+  repeated AcceptedPrincipal principals = 1;
+}
+
+message AcceptedPrincipal {
+  string principal_id = 1;
+  PrincipalKind kind = 2;
+  repeated RootRotation rotations = 3; // empty: the chain is the genesis key alone
 }

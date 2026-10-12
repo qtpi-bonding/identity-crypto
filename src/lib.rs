@@ -59,6 +59,10 @@ mod proto_tests {
         assert_eq!(pb::KeyPurpose::Device as i32, 2);
         assert_eq!(pb::KeyPurpose::Approval as i32, 3);
         assert_eq!(pb::KeyPurpose::Encryption as i32, 4);
+        assert_eq!(pb::PrincipalKind::Unspecified as i32, 0);
+        assert_eq!(pb::PrincipalKind::Human as i32, 1);
+        assert_eq!(pb::PrincipalKind::Agent as i32, 2);
+        assert_eq!(pb::PrincipalKind::Daemon as i32, 3);
         assert_eq!(pb::VerificationOutcome::Unspecified as i32, 0);
         assert_eq!(pb::VerificationOutcome::DirectKey as i32, 1);
         assert_eq!(pb::VerificationOutcome::DelegatedKey as i32, 2);
@@ -99,9 +103,19 @@ mod proto_tests {
             in_reply_to_nonce: Some(vec![2; 16]), body_type: "type.googleapis.com/x.Y".into(), body: vec![1, 2, 3], signature: vec![3; 64],
         });
         round_trip(pb::SignerChain { chain: Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched { host_device: Some(delegation()), session: Some(cert()) })) });
-        round_trip(pb::SignedDocument { signer_genesis: Some(key(1)), signing: Some(key(1)), document_type: "t".into(), version: u64::MAX, issued_at_unix_seconds: 1, expires_at_unix_seconds: 0, body: vec![1], signature: vec![2; 64], signer_rotations: vec![] });
+        round_trip(pb::SignedDocument { signer_genesis: Some(key(1)), signing: Some(key(1)), document_type: "t".into(), version: u64::MAX, issued_at_unix_seconds: 1, expires_at_unix_seconds: 7, body: vec![1], signature: vec![2; 64], signer_rotations: vec![] });
         round_trip(pb::Approval { principal_genesis: Some(key(1)), approval_key: Some(key(2)), device: Some(key(3)), audience: "a".into(), request_id: "r1".into(), request_digest: vec![0; 32], accept: true, issued_at_unix_seconds: 1, signature: vec![1; 64] });
-        round_trip(pb::PeerRevocation { revoker_genesis: Some(key(1)), approval_key: Some(key(2)), target_genesis: Some(key(3)), revoked: None, issued_at_unix_seconds: 1, signature: vec![1; 64] });
+        round_trip(pb::PeerRevocation { revoker_genesis: Some(key(1)), approval_key: Some(key(2)), target_genesis: Some(key(3)), revoked: None, issued_at_unix_seconds: 1, signature: vec![1; 64], document_id: vec![5; 32] });
+        let entry = pb::RegistryEntry {
+            principal_id: "p256:04".into(), kind: pb::PrincipalKind::Daemon as i32,
+            name: Some("laptop".into()), frozen: true,
+            current_root: Some(pb::PublicKeyDuo { signing: Some(key(1)), encryption: Some(key(2)) }),
+            rotations: vec![], revocations: vec![],
+            devices: vec![pb::DeviceBinding { device: Some(delegation()), approval: Some(delegation()), host_daemon_id: Some("p256:05".into()) }],
+            allowed_hosts: vec!["*".into()],
+        };
+        round_trip(pb::RegistryCarrier { registry: Some(pb::PrincipalRegistry { entries: vec![entry], allow_peer_revocation: true }) });
+        round_trip(pb::AcceptedChains { principals: vec![pb::AcceptedPrincipal { principal_id: "p256:04".into(), kind: 3, rotations: vec![] }] });
         round_trip(pb::DeliveryAttestation { key_id: "k".into(), batch_sequence: 1, attested_at: Some(prost_types::Timestamp { seconds: 1, nanos: 2 }), messages: vec![pb::AttestedMessage { message_id: "m".into(), room_id: "r".into(), body_text: "b".into(), verification_outcome: pb::VerificationOutcome::DelegatedKey as i32, delegation_cert: Some(cert()), author_genesis: Some(key(1)) }], signature: vec![1; 64], recipient_devices: vec![key(5), key(6)] });
     }
 

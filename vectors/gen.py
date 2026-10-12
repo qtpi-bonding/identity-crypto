@@ -256,7 +256,8 @@ def peer_revocation(i):
     target = key(i["target_genesis"], "target_genesis")
     revoked = i["revoked"]
     revoked_b = b"\x00" if revoked is None else b"\x01" + key(revoked, "revoked")
-    return tag("peer_revocation") + revoker + approval_key + target + revoked_b + i64(i["issued_at"])
+    document_id = fixed("document_id", bytes.fromhex(i["document_id"]), 32)
+    return tag("peer_revocation") + revoker + approval_key + target + revoked_b + i64(i["issued_at"]) + document_id
 
 
 def delivery_attestation(i):
@@ -358,7 +359,7 @@ def cases():
           "delegated_encryption": K(3), "issued_at": "1700000000", "not_after": "1702592000"}
     ok("key_delegation device", "key_delegation", kd)
     ok("key_delegation approval", "key_delegation", with_(kd, purpose="3", delegated_encryption=None))
-    ok("key_delegation no expiry", "key_delegation", with_(kd, not_after="0"))
+    ok("key_delegation zero not_after (rejected at verification)", "key_delegation", with_(kd, not_after="0"))
     ok("key_delegation extremes", "key_delegation", with_(kd, issued_at=str(I64_MIN), not_after=str(I64_MAX)))
     ok("key_delegation purpose root", "key_delegation", with_(kd, purpose="1"))
     ok("key_delegation purpose unspecified", "key_delegation", with_(kd, purpose="0"))
@@ -414,7 +415,7 @@ def cases():
     sd = {"signer_genesis": K(1), "signing": K(4), "document_type": "type.googleapis.com/structmux.v1.OwnerDocument",
           "version": "3", "issued_at": "1700000000", "expires_at": "1707776000", "body": "0102"}
     ok("signed_document", "signed_document", sd)
-    ok("signed_document max version never expires", "signed_document", with_(sd, version=str(U64_MAX), expires_at="0"))
+    ok("signed_document max version zero expires_at (rejected at verification)", "signed_document", with_(sd, version=str(U64_MAX), expires_at="0"))
     ok("signed_document empty type", "signed_document", with_(sd, document_type=""))
 
     ap = {"principal_genesis": K(1), "approval_key": K(11), "device": K(12), "audience": "structmux:3b6a27bcceb6a42d",
@@ -426,10 +427,11 @@ def cases():
     ok("approval empty audience", "approval", with_(ap, audience=""))
 
     pv = {"revoker_genesis": K(1), "approval_key": K(11), "target_genesis": K(13), "revoked": None,
-          "issued_at": "1700000000"}
+          "issued_at": "1700000000", "document_id": "33" * 32}
     ok("peer_revocation whole principal", "peer_revocation", pv)
     ok("peer_revocation one key", "peer_revocation", with_(pv, revoked=K(14)))
     ok("peer_revocation missing target", "peer_revocation", with_(pv, target_genesis=None))
+    ok("peer_revocation 31-byte document id", "peer_revocation", with_(pv, document_id="33" * 31))
 
     def message(outcome, author=None, delegation=None, body="hi"):
         return {"message_id": "m1", "room_id": "!room", "author_genesis": author, "body_text": body,

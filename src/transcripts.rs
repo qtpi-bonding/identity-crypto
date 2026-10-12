@@ -267,7 +267,7 @@ pub fn approval_transcript(a: &pb::Approval) -> Result<Vec<u8>> {
 }
 
 /// `peer-revocation.v1 := tag ‖ PRINCIPAL(revoker) ‖ KEY(approval) ‖ PRINCIPAL(target)
-/// ‖ opt(KEY(revoked)) ‖ issued_at`.
+/// ‖ opt(KEY(revoked)) ‖ issued_at ‖ document_id[32]`.
 pub fn peer_revocation_transcript(p: &pb::PeerRevocation) -> Result<Vec<u8>> {
     let revoker = req(p.revoker_genesis.as_ref(), "revoker_genesis")?;
     let approval_key = req(p.approval_key.as_ref(), "approval_key")?;
@@ -276,6 +276,7 @@ pub fn peer_revocation_transcript(p: &pb::PeerRevocation) -> Result<Vec<u8>> {
     let mut e = Enc::new(PEER_REVOCATION_TAG);
     e.principal(&revoker)?; e.key(&approval_key)?; e.principal(&target)?;
     e.opt_key(revoked.as_ref())?; e.i64(p.issued_at_unix_seconds);
+    e.fixed("document_id", &p.document_id, 32)?;
     Ok(e.finish())
 }
 
@@ -796,7 +797,7 @@ mod tests {
     pub(crate) fn peer_revocation() -> pb::PeerRevocation {
         pb::PeerRevocation {
             revoker_genesis: pk(&k()), approval_key: pk(&k()), target_genesis: pk(&k()),
-            revoked: None, issued_at_unix_seconds: 4, signature: vec![],
+            revoked: None, issued_at_unix_seconds: 4, signature: vec![], document_id: vec![0x22; 32],
         }
     }
 
@@ -825,12 +826,14 @@ mod tests {
         let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
         let mut want = b"identitycrypto.peer-revocation.v1\0".to_vec();
         want.extend(key(&p.revoker_genesis)); want.extend(key(&p.approval_key)); want.extend(key(&p.target_genesis));
-        want.push(0); want.extend(4i64.to_be_bytes());
+        want.push(0); want.extend(4i64.to_be_bytes()); want.extend([0x22; 32]);
         assert_eq!(peer_revocation_transcript(&p).unwrap(), want);
         let one_key = pb::PeerRevocation { revoked: pk(&k()), ..peer_revocation() };
         let t = peer_revocation_transcript(&one_key).unwrap(); assert_eq!(t.len(), want.len() + 70);
         let missing = pb::PeerRevocation { target_genesis: None, ..peer_revocation() };
         assert_eq!(peer_revocation_transcript(&missing), Err(Error::MissingField("target_genesis")));
+        let short = pb::PeerRevocation { document_id: vec![0x22; 31], ..peer_revocation() };
+        assert_eq!(peer_revocation_transcript(&short), Err(Error::BadLength { field: "document_id", expected: 32, actual: 31 }));
     }
 
     #[test]
