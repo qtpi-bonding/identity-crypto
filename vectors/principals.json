@@ -1,0 +1,93 @@
+{
+  "invalid": [
+    {
+      "input": "p256:046B17D1F2E12C4247F8BCE6E563A440F277037D812DEB33A0F4A13945D898C2964FE342E2FE1A7F9B8EE7EB4A7C0F9E162BCE33576B315ECECBB6406837BF51F5",
+      "parse": {
+        "ok": "p256:046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"
+      },
+      "parse_canonical": {
+        "error": "NonCanonicalPrincipal"
+      }
+    },
+    {
+      "input": "P256:046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+      "parse": {
+        "ok": "p256:046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"
+      },
+      "parse_canonical": {
+        "error": "NonCanonicalPrincipal"
+      }
+    },
+    {
+      "input": "p384:046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+      "parse": {
+        "error": "MalformedPrincipal"
+      },
+      "parse_canonical": {
+        "error": "MalformedPrincipal"
+      }
+    },
+    {
+      "input": "p256:046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f",
+      "parse": {
+        "error": "MalformedPrincipal"
+      },
+      "parse_canonical": {
+        "error": "MalformedPrincipal"
+      }
+    },
+    {
+      "input": "p256:046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f50",
+      "parse": {
+        "error": "MalformedPrincipal"
+      },
+      "parse_canonical": {
+        "error": "MalformedPrincipal"
+      }
+    },
+    {
+      "input": "p256:0400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+      "parse": {
+        "error": "InvalidKey"
+      },
+      "parse_canonical": {
+        "error": "InvalidKey"
+      }
+    },
+    {
+      "input": "p256:036b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296",
+      "parse": {
+        "error": "MalformedPrincipal"
+      },
+      "parse_canonical": {
+        "error": "MalformedPrincipal"
+      }
+    },
+    {
+      "input": "p256:00",
+      "parse": {
+        "error": "MalformedPrincipal"
+      },
+      "parse_canonical": {
+        "error": "MalformedPrincipal"
+      }
+    }
+  ],
+  "valid": [
+    {
+      "genesis_hex": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+      "principal_id": "p256:046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+      "short_id": "698bea63dc44a344"
+    },
+    {
+      "genesis_hex": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+      "principal_id": "p256:047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+      "short_id": "a9f300eb5960e891"
+    },
+    {
+      "genesis_hex": "045ecbe4d1a6330a44c8f7ef951d4bf165e6c6b721efada985fb41661bc6e7fd6c8734640c4998ff7e374b06ce1a64a2ecd82ab036384fb83d9a79b127a27d5032",
+      "principal_id": "p256:045ecbe4d1a6330a44c8f7ef951d4bf165e6c6b721efada985fb41661bc6e7fd6c8734640c4998ff7e374b06ce1a64a2ecd82ab036384fb83d9a79b127a27d5032",
+      "short_id": "89896264c58fca55"
+    }
+  ]
+}
