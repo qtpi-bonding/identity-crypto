@@ -315,6 +315,17 @@ mod tests {
         f.owner_revocations = vec![f.owner.revoke(&f.owner.root().public(), T0)];
         invalid(f.try_resolver(), "revocations.revoked");
         f.owner_revocations.clear();
+        // a revocation naming another principal
+        let mut other = f.daemon.revoke(&unlisted, T0);
+        other.principal_genesis = pk(&f.owner.genesis());
+        f.daemon_revocations = vec![other];
+        invalid(f.try_resolver(), "revocations.principal_genesis");
+        // a revocation whose signature is broken
+        let mut broken = f.daemon.revoke(&unlisted, T0);
+        broken.signature[0] ^= 1;
+        f.daemon_revocations = vec![broken];
+        invalid(f.try_resolver(), "revocations");
+        f.daemon_revocations.clear();
         // survives a rotation: signed by the old root, still valid after
         let mut g = Fleet::new();
         let k = Signer::new().public();
