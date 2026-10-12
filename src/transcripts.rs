@@ -250,6 +250,75 @@ pub fn signed_document_transcript(d: &pb::SignedDocument) -> Result<Vec<u8>> {
     Ok(e.finish())
 }
 
+/// `approval.v1 := tag ‖ PRINCIPAL ‖ KEY(approval) ‖ KEY(device) ‖ len(audience)
+/// ‖ len(request_id) ‖ request_digest[32] ‖ accept u8 ‖ issued_at`.
+pub fn approval_transcript(a: &pb::Approval) -> Result<Vec<u8>> {
+    let principal = req(a.principal_genesis.as_ref(), "principal_genesis")?;
+    let approval_key = req(a.approval_key.as_ref(), "approval_key")?;
+    let device = req(a.device.as_ref(), "device")?;
+    if approval_key == device { return Err(Error::NotDistinct("approval_key, device")); }
+    non_empty("audience", a.audience.as_bytes())?;
+    let mut e = Enc::new(APPROVAL_TAG);
+    e.principal(&principal)?; e.key(&approval_key)?; e.key(&device)?;
+    e.var(a.audience.as_bytes())?; e.var(a.request_id.as_bytes())?;
+    e.fixed("request_digest", &a.request_digest, 32)?;
+    e.u8("accept", i64::from(a.accept))?; e.i64(a.issued_at_unix_seconds);
+    Ok(e.finish())
+}
+
+/// `peer-revocation.v1 := tag ‖ PRINCIPAL(revoker) ‖ KEY(approval) ‖ PRINCIPAL(target)
+/// ‖ opt(KEY(revoked)) ‖ issued_at`.
+pub fn peer_revocation_transcript(p: &pb::PeerRevocation) -> Result<Vec<u8>> {
+    let revoker = req(p.revoker_genesis.as_ref(), "revoker_genesis")?;
+    let approval_key = req(p.approval_key.as_ref(), "approval_key")?;
+    let target = req(p.target_genesis.as_ref(), "target_genesis")?;
+    let revoked = opt_key(p.revoked.as_ref())?;
+    let mut e = Enc::new(PEER_REVOCATION_TAG);
+    e.principal(&revoker)?; e.key(&approval_key)?; e.principal(&target)?;
+    e.opt_key(revoked.as_ref())?; e.i64(p.issued_at_unix_seconds);
+    Ok(e.finish())
+}
+
+/// What an `Approval` covers (schema 5.2).
+#[derive(Clone, Copy)]
+pub struct RequestDigestInput<'a> {
+    pub requester: &'a PrincipalId,
+    pub host: &'a PrincipalId,
+    pub subject: Option<&'a str>,
+    pub instance_id: &'a str,
+    pub action_id: &'a str,
+    pub parameters: &'a [u8],
+    pub request_id: &'a str,
+    pub target: &'a PrincipalId,
+}
+
+/// `request-digest.v1 := tag ‖ PRINCIPAL(requester) ‖ PRINCIPAL(host) ‖ opt(len(subject))
+/// ‖ len(instance_id) ‖ len(action_id) ‖ len(parameters) ‖ len(request_id) ‖ PRINCIPAL(target)`.
+pub fn request_digest_transcript(i: &RequestDigestInput<'_>) -> Result<Vec<u8>> {
+    if let Some(subject) = i.subject { non_empty("subject", subject.as_bytes())?; }
+    non_empty("instance_id", i.instance_id.as_bytes())?;
+    non_empty("action_id", i.action_id.as_bytes())?;
+    non_empty("request_id", i.request_id.as_bytes())?;
+    let mut e = Enc::new(REQUEST_DIGEST_TAG);
+    e.principal(i.requester.genesis())?; e.principal(i.host.genesis())?;
+    match i.subject {
+        Some(s) => { e.present(); e.var(s.as_bytes())?; }
+        None => e.absent(),
+    }
+    e.var(i.instance_id.as_bytes())?; e.var(i.action_id.as_bytes())?;
+    e.var(i.parameters)?; e.var(i.request_id.as_bytes())?;
+    e.principal(i.target.genesis())?;
+    Ok(e.finish())
+}
+
+/// `Approval.request_digest`: SHA-256 of `request_digest_transcript`.
+pub fn request_digest(i: &RequestDigestInput<'_>) -> Result<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&Sha256::digest(request_digest_transcript(i)?));
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -530,5 +599,81 @@ mod tests {
         assert_eq!(root_rotation_transcript(&rot).unwrap(), want);
         let same = pb::RootRotation { new_root: pk(&old), ..rot };
         assert_eq!(root_rotation_transcript(&same), Err(Error::NotDistinct("old_root, new_root")));
+    }
+
+    pub(crate) fn approval() -> pb::Approval {
+        pb::Approval {
+            principal_genesis: pk(&k()), approval_key: pk(&k()), device: pk(&k()),
+            audience: "structmux:3b6a27bcceb6a42d".into(), request_id: "r4".into(),
+            request_digest: vec![0x11; 32], accept: true, issued_at_unix_seconds: 3, signature: vec![],
+        }
+    }
+
+    pub(crate) fn peer_revocation() -> pb::PeerRevocation {
+        pb::PeerRevocation {
+            revoker_genesis: pk(&k()), approval_key: pk(&k()), target_genesis: pk(&k()),
+            revoked: None, issued_at_unix_seconds: 4, signature: vec![],
+        }
+    }
+
+    #[test]
+    fn approval_layout_and_checks() {
+        let a = approval();
+        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let mut want = b"identitycrypto.approval.v1\0".to_vec();
+        want.extend(key(&a.principal_genesis)); want.extend(key(&a.approval_key)); want.extend(key(&a.device));
+        want.extend((a.audience.len() as u32).to_be_bytes()); want.extend(a.audience.as_bytes());
+        want.extend([0, 0, 0, 2, b'r', b'4']); want.extend([0x11; 32]); want.push(1); want.extend(3i64.to_be_bytes());
+        assert_eq!(approval_transcript(&a).unwrap(), want);
+        let rejected = pb::Approval { accept: false, ..approval() };
+        assert_eq!(approval_transcript(&rejected).unwrap()[want.len() - 9], 0);
+        let short = pb::Approval { request_digest: vec![0; 31], ..approval() };
+        assert_eq!(approval_transcript(&short), Err(Error::BadLength { field: "request_digest", expected: 32, actual: 31 }));
+        let a = approval(); let same = pb::Approval { device: a.approval_key.clone(), ..a };
+        assert_eq!(approval_transcript(&same), Err(Error::NotDistinct("approval_key, device")));
+        let empty = pb::Approval { audience: String::new(), ..approval() };
+        assert_eq!(approval_transcript(&empty), Err(Error::InvalidField { field: "audience", reason: "empty" }));
+    }
+
+    #[test]
+    fn peer_revocation_layout_and_checks() {
+        let p = peer_revocation();
+        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let mut want = b"identitycrypto.peer-revocation.v1\0".to_vec();
+        want.extend(key(&p.revoker_genesis)); want.extend(key(&p.approval_key)); want.extend(key(&p.target_genesis));
+        want.push(0); want.extend(4i64.to_be_bytes());
+        assert_eq!(peer_revocation_transcript(&p).unwrap(), want);
+        let one_key = pb::PeerRevocation { revoked: pk(&k()), ..peer_revocation() };
+        let t = peer_revocation_transcript(&one_key).unwrap(); assert_eq!(t.len(), want.len() + 70);
+        let missing = pb::PeerRevocation { target_genesis: None, ..peer_revocation() };
+        assert_eq!(peer_revocation_transcript(&missing), Err(Error::MissingField("target_genesis")));
+    }
+
+    #[test]
+    fn request_digest_layout() {
+        let (r, h, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
+        let input = RequestDigestInput { requester: &r, host: &h, subject: Some("s/i1"), instance_id: "s/i1", action_id: "run", parameters: &[9, 9], request_id: "r4", target: &t };
+        let mut want = b"identitycrypto.request-digest.v1\0".to_vec();
+        want.extend(key_bytes(r.genesis())); want.extend(key_bytes(h.genesis())); want.extend([1, 0, 0, 0, 4]); want.extend(b"s/i1");
+        want.extend([0, 0, 0, 4]); want.extend(b"s/i1"); want.extend([0, 0, 0, 3]); want.extend(b"run");
+        want.extend([0, 0, 0, 2, 9, 9]); want.extend([0, 0, 0, 2, b'r', b'4']); want.extend(key_bytes(t.genesis()));
+        assert_eq!(request_digest_transcript(&input).unwrap(), want);
+        use sha2::{Digest, Sha256}; assert_eq!(request_digest(&input).unwrap().as_slice(), Sha256::digest(&want).as_slice());
+        let no_subject = RequestDigestInput { subject: None, parameters: &[], ..input };
+        assert_eq!(request_digest_transcript(&no_subject).unwrap()[KEY_BYTES_OFFSET_AFTER_TWO_PRINCIPALS], 0);
+    }
+
+    const KEY_BYTES_OFFSET_AFTER_TWO_PRINCIPALS: usize = REQUEST_DIGEST_TAG.len() + 1 + 70 + 70;
+
+    #[test]
+    fn request_digest_checks() {
+        let (r, h, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
+        let base = RequestDigestInput { requester: &r, host: &h, subject: None, instance_id: "s/i1", action_id: "run", parameters: &[], request_id: "r4", target: &t };
+        let empty = |field: &'static str| -> Result<Vec<u8>> { Err(Error::InvalidField { field, reason: "empty" }) };
+        assert_eq!(request_digest_transcript(&RequestDigestInput { subject: Some(""), ..base }), empty("subject"));
+        assert_eq!(request_digest_transcript(&RequestDigestInput { instance_id: "", ..base }), empty("instance_id"));
+        assert_eq!(request_digest_transcript(&RequestDigestInput { action_id: "", ..base }), empty("action_id"));
+        assert_eq!(request_digest_transcript(&RequestDigestInput { request_id: "", ..base }), empty("request_id"));
+        assert!(request_digest_transcript(&base).is_ok(), "empty parameters are allowed");
     }
 }
