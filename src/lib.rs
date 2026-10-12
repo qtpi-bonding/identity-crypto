@@ -6,6 +6,7 @@
 //! and validation.
 
 mod authority;
+mod accepted;
 mod error;
 mod principal;
 mod registry;
@@ -18,6 +19,7 @@ pub mod transcripts;
 pub(crate) mod testkit;
 
 pub use authority::{verify_signed_document, AuthorityChain, VerifiedDocument};
+pub use accepted::AcceptedChains;
 pub use error::{Error, Result};
 pub use principal::{PrincipalId, ShortId};
 pub use public_key::{PublicKey, PublicKeyDuo};
