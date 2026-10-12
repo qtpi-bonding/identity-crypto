@@ -1,9 +1,32 @@
 # identity-crypto
 
-P-256 key types, principal ids, canonical transcripts and the signature
-check for the concordium/structmux identity design (structmux
-`docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md`). Pure: no
-I/O, no runtime, no key storage. Product-agnostic.
+P-256 key types, principal ids, canonical transcripts, the principal
+registry and verification for the concordium/structmux identity design
+(structmux `docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md`;
+verification: `2026-10-12-fleet-phase1b-identity-verification-design.md`).
+Pure: no I/O, no clock, no key storage. Every primitive comes from
+`rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
+validation and verification.
+
+## Verification (0.3.0)
+
+History is checked once; messages are checked against it.
+
+1. `verify_signed_document(doc, type, &accepted_chain)` checks the
+   authority's signature and root chain. Its `id()` is the SHA-256 of the
+   signed transcript, the same for every encoding.
+2. `Resolver::from_document(&verified, registry_type)` checks the
+   `PrincipalRegistry` inside (field 1 of the body) and builds the lookups.
+   `resolver.check_successor(&accepted_chains)` rejects a version that forks
+   or rewinds any principal's root chain; persist the returned set.
+3. `verify_chain`, `verify_signed_message`, `verify_approval` and
+   `verify_peer_revocation` check one input against a resolver at a time
+   given as `When::Live { now }` (adds the ±30 s skew) or
+   `When::Accepted(AcceptedAt::from_receiver_record(t))`.
+
+Absence always means less access: fields added later may only grant, and
+`0` is never "no expiry" (write `i64::MAX`). Nonce replay, document
+versions, persistence and policy are the caller's.
 
 ## What it owns
 

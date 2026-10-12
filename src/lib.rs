@@ -1,9 +1,32 @@
-//! P-256 key types, principal ids, canonical transcripts and the one
-//! signature check for the concordium/structmux identity design
-//! (structmux `docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md`).
-//! Pure: no I/O, no runtime, no key storage. Every primitive comes from
-//! `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts
-//! and validation.
+//! P-256 key types, principal ids, canonical transcripts, the principal
+//! registry and verification for the concordium/structmux identity design
+//! (structmux `docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md`;
+//! verification: `2026-10-12-fleet-phase1b-identity-verification-design.md`).
+//! Pure: no I/O, no clock, no key storage. Every primitive comes from
+//! `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
+//! validation and verification.
+//!
+//! Verified types have no public constructor, so code that needs one
+//! cannot skip the check that produces it:
+//!
+//! ```compile_fail,E0451
+//! fn forge(r: identity_crypto::Resolver) -> identity_crypto::Resolver { identity_crypto::Resolver { ..r } }
+//! ```
+//! ```compile_fail,E0451
+//! fn forge(d: identity_crypto::VerifiedDocument) -> identity_crypto::VerifiedDocument { identity_crypto::VerifiedDocument { ..d } }
+//! ```
+//! ```compile_fail,E0451
+//! fn forge(c: identity_crypto::VerifiedChain) -> identity_crypto::VerifiedChain { identity_crypto::VerifiedChain { ..c } }
+//! ```
+//! ```compile_fail,E0451
+//! fn forge(p: identity_crypto::VerifiedPeerRevocation) -> identity_crypto::VerifiedPeerRevocation { identity_crypto::VerifiedPeerRevocation { ..p } }
+//! ```
+//! ```compile_fail,E0451
+//! fn forge(a: identity_crypto::VerifiedApproval) -> identity_crypto::VerifiedApproval { identity_crypto::VerifiedApproval { ..a } }
+//! ```
+//! ```compile_fail,E0451
+//! fn forge(e: identity_crypto::VerifiedEntry) -> identity_crypto::VerifiedEntry { identity_crypto::VerifiedEntry { ..e } }
+//! ```
 
 mod authority;
 mod accepted;
