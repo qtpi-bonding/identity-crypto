@@ -122,6 +122,71 @@ pub fn principal_rename_transcript(nonce: &[u8], principal: &PrincipalId, new_na
     Ok(e.finish())
 }
 
+/// `key-delegation.v1 := tag ‖ PRINCIPAL ‖ KEY(signing_root) ‖ purpose u8 ‖ KEY(delegated)
+/// ‖ opt(KEY(delegated_encryption)) ‖ issued_at ‖ not_after`.
+pub fn key_delegation_transcript(d: &pb::KeyDelegation) -> Result<Vec<u8>> {
+    let principal = req(d.principal_genesis.as_ref(), "principal_genesis")?;
+    let root = req(d.signing_root.as_ref(), "signing_root")?;
+    let purpose = match pb::KeyPurpose::try_from(d.purpose) {
+        Ok(p @ (pb::KeyPurpose::Device | pb::KeyPurpose::Approval)) => p,
+        _ => return Err(Error::InvalidField { field: "purpose", reason: "must be DEVICE or APPROVAL" }),
+    };
+    let delegated = req(d.delegated.as_ref(), "delegated")?;
+    let encryption = match (purpose, d.delegated_encryption.as_ref()) {
+        (pb::KeyPurpose::Device, None) => return Err(Error::MissingField("delegated_encryption")),
+        (pb::KeyPurpose::Approval, Some(_)) => {
+            return Err(Error::InvalidField { field: "delegated_encryption", reason: "forbidden for APPROVAL" })
+        }
+        (_, k) => opt_key(k)?,
+    };
+    let encryption_clash = match &encryption {
+        Some(e) => e == &root || e == &delegated,
+        None => false,
+    };
+    if root == delegated || encryption_clash {
+        return Err(Error::NotDistinct("signing_root, delegated, delegated_encryption"));
+    }
+    let mut e = Enc::new(KEY_DELEGATION_TAG);
+    e.principal(&principal)?;
+    e.key(&root)?;
+    e.u8("purpose", i64::from(d.purpose))?;
+    e.key(&delegated)?;
+    e.opt_key(encryption.as_ref())?;
+    e.i64(d.issued_at_unix_seconds);
+    e.i64(d.not_after_unix_seconds);
+    Ok(e.finish())
+}
+
+/// `key-revocation.v1 := tag ‖ PRINCIPAL ‖ KEY(revoked) ‖ KEY(revoked_by) ‖ revoked_at`.
+/// `revoked == revoked_by` (self-revocation) is legitimate.
+pub fn key_revocation_transcript(r: &pb::KeyRevocation) -> Result<Vec<u8>> {
+    let principal = req(r.principal_genesis.as_ref(), "principal_genesis")?;
+    let revoked = req(r.revoked.as_ref(), "revoked")?;
+    let revoked_by = req(r.revoked_by.as_ref(), "revoked_by")?;
+    let mut e = Enc::new(KEY_REVOCATION_TAG);
+    e.principal(&principal)?;
+    e.key(&revoked)?;
+    e.key(&revoked_by)?;
+    e.i64(r.revoked_at_unix_seconds);
+    Ok(e.finish())
+}
+
+/// `root-rotation.v1 := tag ‖ PRINCIPAL ‖ KEY(old_root) ‖ KEY(new_root) ‖ issued_at`.
+pub fn root_rotation_transcript(r: &pb::RootRotation) -> Result<Vec<u8>> {
+    let principal = req(r.principal_genesis.as_ref(), "principal_genesis")?;
+    let old_root = req(r.old_root.as_ref(), "old_root")?;
+    let new_root = req(r.new_root.as_ref(), "new_root")?;
+    if old_root == new_root {
+        return Err(Error::NotDistinct("old_root, new_root"));
+    }
+    let mut e = Enc::new(ROOT_ROTATION_TAG);
+    e.principal(&principal)?;
+    e.key(&old_root)?;
+    e.key(&new_root)?;
+    e.i64(r.issued_at_unix_seconds);
+    Ok(e.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,5 +275,111 @@ mod tests {
             principal_rename_transcript(&[], &p, "x"),
             Err(Error::InvalidField { field: "nonce", reason: "empty" })
         );
+    }
+
+    /// Genesis and current root differ (a rotated principal), so the field
+    /// order of the two is pinned by the layout tests.
+    pub(crate) fn delegation(purpose: pb::KeyPurpose) -> pb::KeyDelegation {
+        pb::KeyDelegation {
+            principal_genesis: pk(&k()),
+            signing_root: pk(&k()),
+            purpose: purpose as i32,
+            delegated: pk(&k()),
+            delegated_encryption: (purpose == pb::KeyPurpose::Device).then(|| pb::PublicKey::from(&k())),
+            issued_at_unix_seconds: 1_700_000_000,
+            not_after_unix_seconds: 1_702_592_000,
+            signature: vec![],
+        }
+    }
+
+    #[test]
+    fn key_delegation_layout() {
+        let d = delegation(pb::KeyPurpose::Device);
+        let t = key_delegation_transcript(&d).unwrap();
+        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let mut want = b"identitycrypto.key-delegation.v1\0".to_vec();
+        want.extend(key(&d.principal_genesis));
+        want.extend(key(&d.signing_root));
+        want.push(2);
+        want.extend(key(&d.delegated));
+        want.push(1);
+        want.extend(key(&d.delegated_encryption));
+        want.extend(1_700_000_000i64.to_be_bytes());
+        want.extend(1_702_592_000i64.to_be_bytes());
+        assert_eq!(t, want);
+        let a = delegation(pb::KeyPurpose::Approval);
+        assert!(key_delegation_transcript(&a).is_ok());
+    }
+
+    #[test]
+    fn key_delegation_checks() {
+        let purpose = |p: i32| {
+            let mut d = delegation(pb::KeyPurpose::Device);
+            d.purpose = p;
+            key_delegation_transcript(&d)
+        };
+        let bad_purpose = Err(Error::InvalidField { field: "purpose", reason: "must be DEVICE or APPROVAL" });
+        for p in [0, 1, 4, 99] {
+            assert_eq!(purpose(p), bad_purpose, "purpose {p}");
+        }
+        let mut d = delegation(pb::KeyPurpose::Device);
+        d.delegated_encryption = None;
+        assert_eq!(key_delegation_transcript(&d), Err(Error::MissingField("delegated_encryption")));
+        let mut a = delegation(pb::KeyPurpose::Approval);
+        a.delegated_encryption = pk(&k());
+        assert_eq!(
+            key_delegation_transcript(&a),
+            Err(Error::InvalidField { field: "delegated_encryption", reason: "forbidden for APPROVAL" })
+        );
+        let not_distinct = Err(Error::NotDistinct("signing_root, delegated, delegated_encryption"));
+        let mut d = delegation(pb::KeyPurpose::Device);
+        d.delegated = d.signing_root.clone();
+        assert_eq!(key_delegation_transcript(&d), not_distinct);
+        let mut d = delegation(pb::KeyPurpose::Device);
+        d.delegated_encryption = d.delegated.clone();
+        assert_eq!(key_delegation_transcript(&d), not_distinct);
+        let mut d = delegation(pb::KeyPurpose::Device);
+        d.delegated_encryption = d.signing_root.clone();
+        assert_eq!(key_delegation_transcript(&d), not_distinct);
+        let mut d = delegation(pb::KeyPurpose::Device);
+        d.principal_genesis = None;
+        assert_eq!(key_delegation_transcript(&d), Err(Error::MissingField("principal_genesis")));
+    }
+
+    #[test]
+    fn key_revocation_layout_and_self_revocation() {
+        let (p, r, by) = (k(), k(), k());
+        let rev = pb::KeyRevocation {
+            principal_genesis: pk(&p), revoked: pk(&r), revoked_by: pk(&by),
+            revoked_at_unix_seconds: -5, signature: vec![],
+        };
+        let t = key_revocation_transcript(&rev).unwrap();
+        let mut want = b"identitycrypto.key-revocation.v1\0".to_vec();
+        want.extend(key_bytes(&p));
+        want.extend(key_bytes(&r));
+        want.extend(key_bytes(&by));
+        want.extend((-5i64).to_be_bytes());
+        assert_eq!(t, want);
+        let own = pb::KeyRevocation { revoked_by: pk(&r), ..rev.clone() };
+        assert!(key_revocation_transcript(&own).is_ok());
+        let missing = pb::KeyRevocation { revoked_by: None, ..rev };
+        assert_eq!(key_revocation_transcript(&missing), Err(Error::MissingField("revoked_by")));
+    }
+
+    #[test]
+    fn root_rotation_layout_and_distinctness() {
+        let (p, old, new) = (k(), k(), k());
+        let rot = pb::RootRotation {
+            principal_genesis: pk(&p), old_root: pk(&old), new_root: pk(&new),
+            issued_at_unix_seconds: 9, signature: vec![],
+        };
+        let mut want = b"identitycrypto.root-rotation.v1\0".to_vec();
+        want.extend(key_bytes(&p));
+        want.extend(key_bytes(&old));
+        want.extend(key_bytes(&new));
+        want.extend(9i64.to_be_bytes());
+        assert_eq!(root_rotation_transcript(&rot).unwrap(), want);
+        let same = pb::RootRotation { new_root: pk(&old), ..rot };
+        assert_eq!(root_rotation_transcript(&same), Err(Error::NotDistinct("old_root, new_root")));
     }
 }
