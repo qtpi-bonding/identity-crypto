@@ -6,9 +6,11 @@
 //! and validation.
 
 mod error;
+mod public_key;
 pub mod transcripts;
 
 pub use error::{Error, Result};
+pub use public_key::{PublicKey, PublicKeyDuo};
 pub use rust_jwk_duo as jwk_duo;
 
 /// The absolute path to this crate's `proto/` directory, resolved at this
