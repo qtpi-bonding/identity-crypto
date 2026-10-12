@@ -8,11 +8,13 @@
 mod error;
 mod principal;
 mod public_key;
+mod signature;
 pub mod transcripts;
 
 pub use error::{Error, Result};
 pub use principal::{PrincipalId, ShortId};
 pub use public_key::{PublicKey, PublicKeyDuo};
+pub use signature::{verify_p256, VerifiedSignature};
 pub use rust_jwk_duo as jwk_duo;
 
 /// The absolute path to this crate's `proto/` directory, resolved at this
