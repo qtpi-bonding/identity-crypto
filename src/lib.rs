@@ -27,7 +27,8 @@ pub use public_key::{PublicKey, PublicKeyDuo};
 pub use registry::{AllowedHost, PrincipalKind, VerifiedBinding, VerifiedEntry};
 pub use resolver::{Resolver, VerifiedPeerRevocation};
 pub use verify::{
-    verify_chain, verify_signed_message, AcceptedAt, Host, VerifiedChain, VerifiedMessage, When,
+    verify_approval, verify_chain, verify_peer_revocation, verify_signed_message, AcceptedAt, Host,
+    VerifiedApproval, VerifiedChain, VerifiedMessage, When,
     MAX_SESSION_SECONDS, MAX_UNLISTED_DELEGATION_SECONDS, SKEW_SECONDS,
 };
 pub use signature::{verify_p256, VerifiedSignature};

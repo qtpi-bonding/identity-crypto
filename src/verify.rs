@@ -4,6 +4,8 @@
 
 use crate::registry::{AllowedHost, VerifiedEntry};
 use crate::transcripts::{key_delegation_transcript, session_delegation_transcript, signed_message_transcript};
+use crate::transcripts::{approval_transcript, peer_revocation_transcript};
+use crate::VerifiedPeerRevocation;
 use crate::{pb, verify_p256, Error, PrincipalId, PrincipalKind, PublicKey, Resolver, Result};
 
 pub const SKEW_SECONDS: i64 = 30;
@@ -268,10 +270,140 @@ pub fn verify_signed_message(msg: &pb::SignedMessage, expected_audience: &str, r
     })
 }
 
+#[derive(Clone, Debug)]
+pub struct VerifiedApproval {
+    principal: PrincipalId,
+    approval_key: PublicKey,
+    request_id: String,
+    accept: bool,
+    issued_at: i64,
+}
+
+impl VerifiedApproval {
+    pub fn principal(&self) -> &PrincipalId { &self.principal }
+    pub fn approval_key(&self) -> &PublicKey { &self.approval_key }
+    pub fn request_id(&self) -> &str { &self.request_id }
+    pub fn accept(&self) -> bool { self.accept }
+    pub fn issued_at(&self) -> i64 { self.issued_at }
+}
+
+/// Verify a human's presence-key approval for the device and session shown.
+pub fn verify_approval(
+    a: &pb::Approval,
+    expected_audience: &str,
+    expected_request_id: &str,
+    session: &VerifiedChain,
+    digest: &[u8; 32],
+    r: &Resolver,
+    when: When,
+) -> Result<VerifiedApproval> {
+    if a.signature.is_empty() {
+        return Err(Error::EmptySignature);
+    }
+    let at = when.at();
+    let principal = PrincipalId::from_genesis(key(&a.principal_genesis, "principal_genesis")?);
+    if &principal != session.principal() {
+        return Err(Error::ChainMismatch("approval.principal_genesis"));
+    }
+    if session.kind() != PrincipalKind::Human {
+        return Err(Error::WrongKind);
+    }
+    if r.is_frozen(&principal, at) {
+        return Err(Error::Frozen);
+    }
+    let device = key(&a.device, "device")?;
+    if &device != session.device() {
+        return Err(Error::ChainMismatch("approval.device"));
+    }
+    let approval_key = key(&a.approval_key, "approval_key")?;
+    let binding = r.binding(&principal, &device).ok_or(Error::NotBound)?;
+    if binding.approval_key() != Some(&approval_key) {
+        return Err(Error::NotBound);
+    }
+    let delegation = binding.approval_delegation().expect("approval key implies a delegation");
+    if at > delegation.not_after_unix_seconds {
+        return Err(Error::Expired("approval delegation"));
+    }
+    if r.is_revoked(&principal, &approval_key, at) {
+        return Err(Error::KeyRevoked);
+    }
+    if a.audience != expected_audience {
+        return Err(Error::WrongAudience);
+    }
+    if a.request_id != expected_request_id || a.request_digest.as_slice() != digest {
+        return Err(Error::DigestMismatch);
+    }
+    verify_p256(&approval_key, &approval_transcript(a)?, &a.signature)?;
+    when.check_skew(a.issued_at_unix_seconds)?;
+    Ok(VerifiedApproval {
+        principal,
+        approval_key,
+        request_id: a.request_id.clone(),
+        accept: a.accept,
+        issued_at: a.issued_at_unix_seconds,
+    })
+}
+
+/// Verify an authority presence-key peer revocation against this document.
+pub fn verify_peer_revocation(
+    rev: &pb::PeerRevocation,
+    r: &Resolver,
+    when: When,
+) -> Result<VerifiedPeerRevocation> {
+    if rev.signature.is_empty() {
+        return Err(Error::EmptySignature);
+    }
+    let at = when.at();
+    if !r.allow_peer_revocation() {
+        return Err(Error::PeerRevocationDisabled);
+    }
+    if rev.document_id.as_slice() != r.document_id() {
+        return Err(Error::StalePeerRevocation);
+    }
+    let revoker = PrincipalId::from_genesis(key(&rev.revoker_genesis, "revoker_genesis")?);
+    if &revoker != r.authority() {
+        return Err(Error::NotAuthority);
+    }
+    if r.is_frozen(&revoker, at) {
+        return Err(Error::Frozen);
+    }
+    let approval_key = key(&rev.approval_key, "approval_key")?;
+    let entry = r.entry(&revoker).expect("the authority always has an entry");
+    let binding = entry
+        .bindings()
+        .iter()
+        .find(|b| b.approval_key() == Some(&approval_key))
+        .ok_or(Error::NotBound)?;
+    let delegation = binding.approval_delegation().expect("approval key implies a delegation");
+    if at > delegation.not_after_unix_seconds {
+        return Err(Error::Expired("approval delegation"));
+    }
+    if r.is_revoked(&revoker, &approval_key, at)
+        || r.is_revoked(&revoker, binding.device_key(), at)
+    {
+        return Err(Error::KeyRevoked);
+    }
+    let target = PrincipalId::from_genesis(key(&rev.target_genesis, "target_genesis")?);
+    let target_entry = r.entry(&target).ok_or(Error::UnknownPrincipal)?;
+    let revoked = rev.revoked.as_ref().map(PublicKey::try_from).transpose()?;
+    if revoked.is_some() && !target_entry.is_self_rooted() {
+        return Err(Error::WrongKind);
+    }
+    verify_p256(&approval_key, &peer_revocation_transcript(rev)?, &rev.signature)?;
+    when.check_skew(rev.issued_at_unix_seconds)?;
+    Ok(VerifiedPeerRevocation {
+        target,
+        revoked,
+        accepted_at: at,
+        document_id: *r.document_id(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::testkit::*;
+    use crate::{verify_signed_document, AuthorityChain};
 
     const AUD: &str = "structmux:3b6a27bcceb6a42d";
 
@@ -544,5 +676,196 @@ mod tests {
         let late = signed_message(&s, c, AUD, T0 + 60 + 31);
         assert_eq!(verify_signed_message(&late, AUD, &r, LIVE).unwrap_err(), Error::Skew);
         assert!(verify_signed_message(&late, AUD, &r, accepted(T0 + 60)).is_ok());
+    }
+
+    const DIGEST: [u8; 32] = [9; 32];
+
+    fn laptop_session(f: &Fleet, r: &Resolver) -> VerifiedChain {
+        let (_, chain) = owner_chain(f, T0, T0 + 3600);
+        verify_chain(&chain, r, LIVE).unwrap()
+    }
+
+    #[test]
+    fn approvals() {
+        let f = Fleet::new();
+        let r = f.resolver();
+        let session = laptop_session(&f, &r);
+        let a = approval(
+            &f.presence,
+            &f.owner.genesis(),
+            &f.laptop.public(),
+            AUD,
+            "r1",
+            DIGEST,
+            T0 + 60,
+        );
+        let verified = verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap();
+        assert_eq!((verified.principal(), verified.request_id(), verified.accept()), (&f.owner.id(), "r1", true));
+        assert_eq!(verify_approval(&a, "structmux:other", "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::WrongAudience);
+        assert_eq!(verify_approval(&a, AUD, "r2", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::DigestMismatch);
+        assert_eq!(verify_approval(&a, AUD, "r1", &session, &[8; 32], &r, LIVE).unwrap_err(), Error::DigestMismatch);
+        let late = approval(&f.presence, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 100);
+        assert_eq!(verify_approval(&late, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::Skew);
+        assert!(verify_approval(&late, AUD, "r1", &session, &DIGEST, &r, accepted(T0 + 100)).is_ok());
+        let stranger = Signer::new();
+        let forged = approval(&stranger, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 60);
+        assert_eq!(verify_approval(&forged, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::NotBound);
+        let mut empty = a.clone();
+        empty.signature.clear();
+        assert_eq!(verify_approval(&empty, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::EmptySignature);
+    }
+
+    #[test]
+    fn a_phones_presence_key_cannot_approve_a_laptop_session() {
+        let f = Fleet::new();
+        let (_, phone_device) = f.owner.delegate_device(T0, i64::MAX);
+        let (phone_presence, phone_approval) = f.owner.delegate_approval(T0, i64::MAX);
+        let mut registry = f.registry();
+        registry.entries[0].devices.push(pb::DeviceBinding {
+            device: Some(phone_device),
+            approval: Some(phone_approval),
+            host_daemon_id: None,
+        });
+        let r = resolver_for(&f.owner, registry).unwrap();
+        let session = laptop_session(&f, &r);
+        let a = approval(&phone_presence, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 60);
+        assert_eq!(verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::NotBound);
+    }
+
+    #[test]
+    fn agents_and_daemons_cannot_approve() {
+        let f = Fleet::new();
+        let r = f.resolver();
+        let (_, chain) = daemon_chain(&f.daemon, T0, T0 + DAY, T0, T0 + 3600);
+        let session = verify_chain(&chain, &r, LIVE).unwrap();
+        let a = approval(&f.presence, &f.daemon.genesis(), session.device(), AUD, "r1", DIGEST, T0 + 60);
+        assert_eq!(verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::WrongKind);
+    }
+
+    #[test]
+    fn revoked_presence_key_cannot_approve() {
+        let mut f = Fleet::new();
+        f.owner_revocations = vec![f.owner.revoke(&f.presence.public(), T0)];
+        let r = f.resolver();
+        let session = laptop_session(&f, &r);
+        let a = approval(&f.presence, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 60);
+        assert_eq!(verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::KeyRevoked);
+    }
+
+    #[test]
+    fn peer_freeze_applies_from_its_acceptance() {
+        let f = Fleet::new();
+        let r = f.resolver();
+        let p = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
+        let verified = verify_peer_revocation(&p, &r, LIVE).unwrap();
+        assert_eq!((verified.target(), verified.revoked(), verified.accepted_at()), (&f.daemon.id(), None, T0 + 60));
+        let r2 = r.with_peer_revocation(verified).unwrap();
+        let (_, chain) = daemon_chain(&f.daemon, T0, T0 + DAY, T0, T0 + 3600);
+        assert!(verify_chain(&chain, &r2, accepted(T0 + 59)).is_ok(), "history before the freeze stands");
+        assert_eq!(verify_chain(&chain, &r2, accepted(T0 + 60)).unwrap_err(), Error::Frozen);
+    }
+
+    #[test]
+    fn peer_revoked_root_freezes_the_daemon() {
+        let f = Fleet::new();
+        let r = f.resolver();
+        let p = peer_revocation(&f, &r, &f.daemon.genesis(), Some(&f.daemon.root().public()), T0 + 60);
+        let verified = verify_peer_revocation(&p, &r, LIVE).unwrap();
+        let r2 = r.with_peer_revocation(verified).unwrap();
+        let (_, chain) = daemon_chain(&f.daemon, T0 + 61, T0 + 61 + DAY, T0 + 61, T0 + 3600);
+        assert_eq!(verify_chain(&chain, &r2, accepted(T0 + 62)).unwrap_err(), Error::Frozen);
+    }
+
+    #[test]
+    fn peer_revocation_rejections() {
+        let mut f = Fleet::new();
+        let r = f.resolver();
+        let p = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
+        let mut registry = f.registry();
+        registry.entries[1].name = Some("server".into());
+        let document = sign_document(&f.owner, 2, carrier_body(&registry));
+        let authority = AuthorityChain::genesis(f.owner.genesis());
+        let r2 = Resolver::from_document(
+            &verify_signed_document(&document, DOC_TYPE, &authority).unwrap(),
+            DOC_TYPE,
+        )
+        .unwrap();
+        assert_eq!(verify_peer_revocation(&p, &r2, LIVE).unwrap_err(), Error::StalePeerRevocation);
+        assert_eq!(verify_peer_revocation(&p, &r2, accepted(T0 + 60)).unwrap_err(), Error::StalePeerRevocation);
+        let verified = verify_peer_revocation(&p, &r, LIVE).unwrap();
+        assert_eq!(r2.with_peer_revocation(verified).unwrap_err(), Error::StalePeerRevocation);
+
+        f.allow_peer_revocation = false;
+        let disabled = f.resolver();
+        let p = peer_revocation(&f, &disabled, &f.daemon.genesis(), None, T0 + 60);
+        assert_eq!(verify_peer_revocation(&p, &disabled, LIVE).unwrap_err(), Error::PeerRevocationDisabled);
+
+        f.allow_peer_revocation = true;
+        let r = f.resolver();
+        let p = peer_revocation(&f, &r, &Signer::new().public(), None, T0 + 60);
+        assert_eq!(verify_peer_revocation(&p, &r, LIVE).unwrap_err(), Error::UnknownPrincipal);
+        let p = peer_revocation(&f, &r, &f.agent.public(), Some(&Signer::new().public()), T0 + 60);
+        assert_eq!(verify_peer_revocation(&p, &r, LIVE).unwrap_err(), Error::WrongKind);
+
+        let p = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 200);
+        assert_eq!(verify_peer_revocation(&p, &r, LIVE).unwrap_err(), Error::Skew);
+        assert_eq!(verify_peer_revocation(&p, &r, accepted(T0 + 500)).unwrap().accepted_at(), T0 + 500);
+
+        let mut q = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
+        let other = Signer::new();
+        q.approval_key = pk(&other.public());
+        q.signature = other.sign(&crate::transcripts::peer_revocation_transcript(&q).unwrap());
+        assert_eq!(verify_peer_revocation(&q, &r, LIVE).unwrap_err(), Error::NotBound);
+        let mut q = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
+        q.revoker_genesis = pk(&f.daemon.genesis());
+        q.signature = f.presence.sign(&crate::transcripts::peer_revocation_transcript(&q).unwrap());
+        assert_eq!(verify_peer_revocation(&q, &r, LIVE).unwrap_err(), Error::NotAuthority);
+    }
+
+    #[test]
+    fn a_peer_revocation_applies_to_every_copy_of_its_document() {
+        use prost::Message;
+        let f = Fleet::new();
+        let doc = f.document(1);
+        let mut appended = doc.encode_to_vec();
+        appended.extend([0xa0, 0x06, 0x01]);
+        let mut reordered = Vec::new();
+        prost::encoding::bytes::encode(7, &doc.body, &mut reordered);
+        let mut rest = doc.clone();
+        rest.body.clear();
+        reordered.extend(rest.encode_to_vec());
+        let accept = AuthorityChain::genesis(f.owner.genesis());
+        let build = |bytes: &[u8]| {
+            let document = pb::SignedDocument::decode(bytes).unwrap();
+            Resolver::from_document(
+                &verify_signed_document(&document, DOC_TYPE, &accept).unwrap(),
+                DOC_TYPE,
+            )
+            .unwrap()
+        };
+        let (r1, r2) = (build(&appended), build(&reordered));
+        assert_eq!(r1.document_id(), r2.document_id());
+        let p = peer_revocation(&f, &r1, &f.daemon.genesis(), None, T0 + 60);
+        assert!(verify_peer_revocation(&p, &r2, LIVE).is_ok());
+    }
+
+    #[test]
+    fn a_peer_frozen_host_denies_its_bound_humans() {
+        let f = Fleet::new();
+        let r = f.resolver();
+        let p = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
+        let r2 = r.with_peer_revocation(verify_peer_revocation(&p, &r, LIVE).unwrap()).unwrap();
+        let (_, chain) = owner_chain(&f, T0, T0 + 3600);
+        assert_eq!(verify_chain(&chain, &r2, accepted(T0 + 61)).unwrap_err(), Error::HostFrozen);
+    }
+
+    #[test]
+    fn the_authority_may_peer_freeze_itself() {
+        let f = Fleet::new();
+        let r = f.resolver();
+        let p = peer_revocation(&f, &r, &f.owner.genesis(), None, T0 + 60);
+        let r2 = r.with_peer_revocation(verify_peer_revocation(&p, &r, LIVE).unwrap()).unwrap();
+        let again = peer_revocation(&f, &r2, &f.daemon.genesis(), None, T0 + 61);
+        assert_eq!(verify_peer_revocation(&again, &r2, When::Live { now: T0 + 61 }).unwrap_err(), Error::Frozen);
     }
 }

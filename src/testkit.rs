@@ -443,3 +443,50 @@ pub fn signed_message(
 pub fn subject_on(d: &Principal, local: &str) -> String {
     format!("{}/{local}", d.id().short_id())
 }
+
+pub fn approval(
+    signer: &Signer,
+    principal: &PublicKey,
+    device: &PublicKey,
+    audience: &str,
+    request_id: &str,
+    digest: [u8; 32],
+    issued_at: i64,
+) -> pb::Approval {
+    let mut approval = pb::Approval {
+        principal_genesis: pk(principal),
+        approval_key: pk(&signer.public()),
+        device: pk(device),
+        audience: audience.into(),
+        request_id: request_id.into(),
+        request_digest: digest.to_vec(),
+        accept: true,
+        issued_at_unix_seconds: issued_at,
+        signature: vec![],
+    };
+    approval.signature = signer.sign(&approval_transcript(&approval).unwrap());
+    approval
+}
+
+/// A peer revocation by the fleet owner's presence key against `r`'s document.
+pub fn peer_revocation(
+    f: &Fleet,
+    r: &Resolver,
+    target: &PublicKey,
+    revoked: Option<&PublicKey>,
+    issued_at: i64,
+) -> pb::PeerRevocation {
+    let mut revocation = pb::PeerRevocation {
+        revoker_genesis: pk(&f.owner.genesis()),
+        approval_key: pk(&f.presence.public()),
+        target_genesis: pk(target),
+        revoked: revoked.and_then(pk),
+        issued_at_unix_seconds: issued_at,
+        signature: vec![],
+        document_id: r.document_id().to_vec(),
+    };
+    revocation.signature = f
+        .presence
+        .sign(&peer_revocation_transcript(&revocation).unwrap());
+    revocation
+}
