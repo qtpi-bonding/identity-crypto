@@ -232,6 +232,108 @@ pub fn sign_cert(device: &Signer, cert: &mut pb::DelegationCert) {
         .sign(&session_delegation_transcript(cert).unwrap());
 }
 
+use crate::{verify_signed_document, AuthorityChain, Resolver, Result};
+
+/// The standard registry: the authority (owner) with a laptop binding
+/// (device + presence key, hosted on `daemon`), the daemon, and a
+/// host-vouched agent allowed on the daemon.
+pub struct Fleet {
+    pub owner: Principal,
+    pub laptop: Signer,
+    pub laptop_deleg: pb::KeyDelegation,
+    pub presence: Signer,
+    pub presence_deleg: pb::KeyDelegation,
+    pub daemon: Principal,
+    pub agent: Signer,
+    pub allow_peer_revocation: bool,
+    pub owner_revocations: Vec<pb::KeyRevocation>,
+    pub daemon_revocations: Vec<pb::KeyRevocation>,
+    pub extra: Vec<pb::RegistryEntry>,
+}
+
+impl Fleet {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        let owner = Principal::new();
+        let (laptop, laptop_deleg) = owner.delegate_device(T0, i64::MAX);
+        let (presence, presence_deleg) = owner.delegate_approval(T0, i64::MAX);
+        Self {
+            owner,
+            laptop,
+            laptop_deleg,
+            presence,
+            presence_deleg,
+            daemon: Principal::new(),
+            agent: Signer::new(),
+            allow_peer_revocation: true,
+            owner_revocations: vec![],
+            daemon_revocations: vec![],
+            extra: vec![],
+        }
+    }
+
+    pub fn agent_id(&self) -> PrincipalId {
+        PrincipalId::from_genesis(self.agent.public())
+    }
+
+    pub fn registry(&self) -> pb::PrincipalRegistry {
+        let mut owner = entry(&self.owner, pb::PrincipalKind::Human);
+        owner.rotations.clear();
+        owner.revocations = self.owner_revocations.clone();
+        owner.devices = vec![pb::DeviceBinding {
+            device: Some(self.laptop_deleg.clone()),
+            approval: Some(self.presence_deleg.clone()),
+            host_daemon_id: Some(self.daemon.id().to_string()),
+        }];
+        let mut daemon = entry(&self.daemon, pb::PrincipalKind::Daemon);
+        daemon.revocations = self.daemon_revocations.clone();
+        let agent = pb::RegistryEntry {
+            principal_id: self.agent_id().to_string(),
+            kind: pb::PrincipalKind::Agent as i32,
+            allowed_hosts: vec![self.daemon.id().to_string()],
+            ..Default::default()
+        };
+        let mut entries = vec![owner, daemon, agent];
+        entries.extend(self.extra.clone());
+        pb::PrincipalRegistry {
+            entries,
+            allow_peer_revocation: self.allow_peer_revocation,
+        }
+    }
+
+    pub fn document(&self, version: u64) -> pb::SignedDocument {
+        sign_document(&self.owner, version, carrier_body(&self.registry()))
+    }
+
+    pub fn try_resolver(&self) -> Result<Resolver> {
+        resolver_for(&self.owner, self.registry())
+    }
+
+    pub fn resolver(&self) -> Resolver {
+        self.try_resolver().unwrap()
+    }
+}
+
+/// Signs `reg` as `authority`'s version 1 and builds a resolver from it.
+pub fn resolver_for(authority: &Principal, reg: pb::PrincipalRegistry) -> Result<Resolver> {
+    let doc = sign_document(authority, 1, carrier_body(&reg));
+    let verified = verify_signed_document(
+        &doc,
+        DOC_TYPE,
+        &AuthorityChain::genesis(authority.genesis()),
+    )?;
+    Resolver::from_document(&verified, DOC_TYPE)
+}
+
+/// Asserts `r` failed with `InvalidRegistry` for `field`.
+#[track_caller]
+pub fn invalid(r: Result<Resolver>, field: &str) {
+    match r {
+        Err(crate::Error::InvalidRegistry { field: got, .. }) => assert_eq!(got, field),
+        other => panic!("expected InvalidRegistry({field}), got {other:?}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

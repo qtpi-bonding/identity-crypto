@@ -8,6 +8,8 @@
 mod authority;
 mod error;
 mod principal;
+mod registry;
+mod resolver;
 mod public_key;
 mod signature;
 pub mod transcripts;
@@ -19,6 +21,8 @@ pub use authority::{verify_signed_document, AuthorityChain, VerifiedDocument};
 pub use error::{Error, Result};
 pub use principal::{PrincipalId, ShortId};
 pub use public_key::{PublicKey, PublicKeyDuo};
+pub use registry::{AllowedHost, PrincipalKind, VerifiedBinding, VerifiedEntry};
+pub use resolver::{Resolver, VerifiedPeerRevocation};
 pub use signature::{verify_p256, VerifiedSignature};
 pub use rust_jwk_duo as jwk_duo;
 
