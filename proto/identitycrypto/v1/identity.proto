@@ -1,40 +1,138 @@
 syntax = "proto3";
 
-// Canonical, single-source definitions for the two pieces of the
-// grorg/gait/multimatrix agent-identity design that no one of those three
-// repos actually owns: the key-scheme discriminant embedded as a raw byte
-// in every signed transcript, and the session-delegation certificate that
-// travels with every session-signed event/message. Each repo imports this
-// package directly for these two types rather than redefining them --
-// KeyScheme used to be independently (and only accidentally consistently)
-// redefined in all three repos' own protos; DelegationCert is new and is
-// homed here from the start rather than repeating that mistake.
-//
-// Everything else -- Agent/AgentKey and grorg's RPC surface, gait's
-// Event/Provenance log format, multimatrix's RoomMessage/AuthoredMessage --
-// stays owned by its one real owner and is NOT part of this package.
+// The shared identity schema of the concordium/structmux identity design
+// (structmux docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md,
+// section 3.2): P-256 keys, principal ids, key delegations, signer chains,
+// signed messages and documents, approvals and revocations, and the
+// delivery attestation. Every signature covers a canonical transcript built
+// by identity_crypto::transcripts, never these encoded bytes.
 package identitycrypto.v1;
 
 import "google/protobuf/timestamp.proto";
 
 enum KeyScheme {
   KEY_SCHEME_UNSPECIFIED = 0;
-  KEY_SCHEME_ED25519 = 1;
-  KEY_SCHEME_SECP256K1_SCHNORR = 2;
+  reserved 1, 2;
+  reserved "KEY_SCHEME_ED25519", "KEY_SCHEME_SECP256K1_SCHNORR";
+  KEY_SCHEME_ECDSA_P256 = 3;           // the scheme for every key
 }
 
-// A device key's authorization for a session key to sign on its behalf,
-// for a bounded time window. Minted purely locally by whichever harness
-// produced it (gait today; not gait-specific) and never registered with
-// grorg -- it travels WITH every event/message the session key signs.
-// See identity_crypto::transcripts::session_delegation_transcript for the
-// exact canonical byte layout its `signature` field covers.
-message DelegationCert {
-  string agent_id = 1;
-  bytes device_public_key = 2;
-  bytes session_public_key = 3;
+enum KeyPurpose {                      // numbering matches grorg's ROOT=1, DEVICE=2
+  KEY_PURPOSE_UNSPECIFIED = 0;
+  KEY_PURPOSE_ROOT = 1;
+  KEY_PURPOSE_DEVICE = 2;
+  KEY_PURPOSE_APPROVAL = 3;
+  KEY_PURPOSE_ENCRYPTION = 4;          // marks an encryption half in records; delegated inside a DEVICE duo
+}
+
+message PublicKey {
+  KeyScheme scheme = 1;
+  bytes key = 2;                       // P-256: SEC1 uncompressed, 65 bytes
+}
+
+message DelegationCert {               // device → session
+  reserved 1;                          // was: string agent_id
+  reserved 2, 3;                       // were: fixed 32-byte device/session keys
   int64 not_before_unix_seconds = 4;
   int64 not_after_unix_seconds = 5;
+  bytes signature = 6;                 // device key over session-delegation.v1
+  PublicKey principal_genesis = 7;     // for an agent: its discarded genesis key
+  uint32 mode = 8;                     // 0 self-rooted, 1 host-vouched
+  PublicKey device = 9;
+  PublicKey session = 10;
+  optional PublicKey host_genesis = 11;  // mode 1: the vouching daemon
+  optional string subject = 12;          // mode 1: the instance's global id
+}
+
+message PublicKeyDuo {                 // anonaccred's PublicKeyDuo: both halves, registered together
+  PublicKey signing = 1;
+  PublicKey encryption = 2;            // must differ from signing
+}
+
+message KeyDelegation {                // root → device duo, or root → approval key
+  PublicKey principal_genesis = 1;
+  PublicKey signing_root = 2;          // must equal the principal's current root
+  KeyPurpose purpose = 3;              // DEVICE (with encryption half) or APPROVAL (without)
+  PublicKey delegated = 4;             // the signing half / the approval key
+  optional PublicKey delegated_encryption = 8;  // DEVICE: the duo's encryption half, covered by the same signature
+  int64 issued_at_unix_seconds = 5;
+  int64 not_after_unix_seconds = 6;    // 0 = none; only when signing_root is the ultimate key's current root
+  bytes signature = 7;
+}
+
+message RootRotation {
+  PublicKey principal_genesis = 1;
+  PublicKey old_root = 2;
+  PublicKey new_root = 3;
+  int64 issued_at_unix_seconds = 4;
+  bytes signature = 5;                 // old root over root-rotation.v1
+}
+
+message KeyRevocation {
+  PublicKey principal_genesis = 1;
+  PublicKey revoked = 2;
+  PublicKey revoked_by = 3;            // the current root, or the revoked key itself (concordium allows self-revoke)
+  int64 revoked_at_unix_seconds = 4;
+  bytes signature = 5;
+}
+
+message SignerChain {
+  oneof chain {
+    SelfRooted self_rooted = 1;
+    HostVouched host_vouched = 2;
+  }
+}
+message SelfRooted {                   // humans, daemons
+  KeyDelegation device = 1;            // root → device
+  DelegationCert session = 2;          // device → session, mode 0
+}
+message HostVouched {                  // agent identities
+  KeyDelegation host_device = 1;       // daemon root → daemon device
+  DelegationCert session = 2;          // daemon device → agent session, mode 1
+}
+
+message SignedMessage {
+  SignerChain signer = 1;
+  string audience = 2;
+  bytes nonce = 3;                     // 16 bytes
+  int64 issued_at_unix_seconds = 4;
+  optional bytes in_reply_to_nonce = 5;
+  string body_type = 6;                // type URL
+  bytes body = 7;                      // signed exactly as carried
+  bytes signature = 8;                 // session key over signed-message.v1, 64-byte r‖s
+  reserved 9;                          // future: signer_chain_sha256 (a cached-chain reference)
+}
+
+message SignedDocument {
+  PublicKey signer_genesis = 1;        // the ultimate key's genesis key, for owner documents
+  PublicKey signing = 2;               // must be the signer's current root
+  string document_type = 3;            // type URL
+  uint64 version = 4;
+  int64 issued_at_unix_seconds = 5;
+  int64 expires_at_unix_seconds = 6;   // 0 = never
+  bytes body = 7;
+  bytes signature = 8;
+  repeated RootRotation signer_rotations = 9;   // the ultimate key's chain from genesis
+}
+
+message Approval {                     // owner, present, decides one pending request
+  PublicKey principal_genesis = 1;     // the owner
+  PublicKey approval_key = 2;
+  PublicKey device = 3;                // the session's device key; must share a DeviceBinding with approval_key
+  string audience = 4;                 // structmux:<target daemon short_id>
+  string request_id = 5;
+  bytes request_digest = 6;            // 32 bytes, schema section 5.2
+  bool accept = 7;
+  int64 issued_at_unix_seconds = 8;
+  bytes signature = 9;                 // approval key over approval.v1
+}
+
+message PeerRevocation {               // owner, present, freezes a principal or one key without the ultimate key
+  PublicKey revoker_genesis = 1;       // the owner
+  PublicKey approval_key = 2;
+  PublicKey target_genesis = 3;
+  optional PublicKey revoked = 4;      // absent = freeze the whole principal
+  int64 issued_at_unix_seconds = 5;
   bytes signature = 6;
 }
 
@@ -42,43 +140,31 @@ enum VerificationOutcome {
   VERIFICATION_OUTCOME_UNSPECIFIED = 0;
   VERIFICATION_OUTCOME_DIRECT_KEY = 1;
   VERIFICATION_OUTCOME_DELEGATED_KEY = 2;
-  // No agent key was ever checked -- the attesting service (e.g.
-  // multimatrix's own admit_system path) vouches for this content
-  // directly. Never used for anything an agent actually signed.
+  // No agent key was checked: the attesting service vouches for this
+  // content itself (e.g. multimatrix's admit_system path).
   VERIFICATION_OUTCOME_SYSTEM = 3;
 }
 
-// One message inside a signed delivery batch. `body_text` is authoritative
-// here -- the recipient never separately reconstructs it from anything
-// else, so there is nothing to reconcile a hash against. See
-// concordat/2026-09-02-cross-agent-message-attribution-design.md.
+// One message inside a signed delivery batch. body_text is authoritative.
 message AttestedMessage {
   string message_id = 1;
   string room_id = 2;
-  string author_agent_id = 3;
+  reserved 3;                               // was: string author_agent_id
   string body_text = 4;
   VerificationOutcome verification_outcome = 5;
-  DelegationCert delegation_cert = 6;
+  DelegationCert delegation_cert = 6;       // present iff outcome is DELEGATED_KEY
+  optional PublicKey author_genesis = 7;    // absent iff outcome is SYSTEM
 }
 
-// Signed once per delivery batch by the delivering service's own key (not
-// an AgentKey -- a service identity). See
-// identity_crypto::transcripts::delivery_attestation_transcript for the
-// exact canonical byte layout `signature` covers.
-//
-// recipient_device_public_keys is the target agent's current set of
-// DEVICE-purpose key public keys (raw bytes, not hex) -- NOT an agent_id.
-// A verifier checks whether its own device public key is a member of this
-// list, not an equality match against a single value. This deliberately
-// avoids requiring the attesting service to know "which one device is
-// live right now" (unsolved/unsolvable without new dial-time protocol
-// work) and avoids requiring the verifier to know or reason about
-// agent_id at all.
+// Signed once per delivery batch by the delivering service's own key.
+// recipient_devices is the target's set of DEVICE keys; a verifier checks
+// that its own device key is a member.
 message DeliveryAttestation {
-  repeated bytes recipient_device_public_keys = 1;
+  reserved 1;                               // was: repeated bytes recipient_device_public_keys
   string key_id = 2;
   uint64 batch_sequence = 3;
-  google.protobuf.Timestamp attested_at = 4;
+  google.protobuf.Timestamp attested_at = 4;  // required
   repeated AttestedMessage messages = 5;
   bytes signature = 6;
+  repeated PublicKey recipient_devices = 7; // the target's DEVICE keys
 }
