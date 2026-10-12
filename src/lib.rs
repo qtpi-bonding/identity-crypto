@@ -6,10 +6,12 @@
 //! and validation.
 
 mod error;
+mod principal;
 mod public_key;
 pub mod transcripts;
 
 pub use error::{Error, Result};
+pub use principal::{PrincipalId, ShortId};
 pub use public_key::{PublicKey, PublicKeyDuo};
 pub use rust_jwk_duo as jwk_duo;
 
