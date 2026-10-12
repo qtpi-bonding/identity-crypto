@@ -5,6 +5,7 @@
 //! `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts
 //! and validation.
 
+mod authority;
 mod error;
 mod principal;
 mod public_key;
@@ -14,6 +15,7 @@ pub mod transcripts;
 #[cfg(test)]
 pub(crate) mod testkit;
 
+pub use authority::{verify_signed_document, AuthorityChain, VerifiedDocument};
 pub use error::{Error, Result};
 pub use principal::{PrincipalId, ShortId};
 pub use public_key::{PublicKey, PublicKeyDuo};
