@@ -187,6 +187,69 @@ pub fn root_rotation_transcript(r: &pb::RootRotation) -> Result<Vec<u8>> {
     Ok(e.finish())
 }
 
+/// `session-delegation.v1 := tag ‖ mode u8 ‖ PRINCIPAL ‖ opt(PRINCIPAL host) ‖ opt(len(subject))
+/// ‖ KEY(device) ‖ KEY(session) ‖ not_before ‖ not_after`.
+pub fn session_delegation_transcript(c: &pb::DelegationCert) -> Result<Vec<u8>> {
+    let mut e = Enc::new(SESSION_DELEGATION_TAG);
+    encode_cert_body(&mut e, c)?;
+    Ok(e.finish())
+}
+
+fn encode_cert_body(e: &mut Enc, c: &pb::DelegationCert) -> Result<()> {
+    if c.mode > 1 { return Err(Error::InvalidField { field: "mode", reason: "must be 0 or 1" }); }
+    let principal = req(c.principal_genesis.as_ref(), "principal_genesis")?;
+    let (host, subject) = if c.mode == 0 {
+        if c.host_genesis.is_some() { return Err(Error::InvalidField { field: "host_genesis", reason: "forbidden in mode 0" }); }
+        if c.subject.is_some() { return Err(Error::InvalidField { field: "subject", reason: "forbidden in mode 0" }); }
+        (None, None)
+    } else {
+        let host = req(c.host_genesis.as_ref(), "host_genesis")?;
+        let subject = c.subject.as_deref().ok_or(Error::MissingField("subject"))?;
+        non_empty("subject", subject.as_bytes())?;
+        (Some(host), Some(subject))
+    };
+    let device = req(c.device.as_ref(), "device")?;
+    let session = req(c.session.as_ref(), "session")?;
+    if device == session { return Err(Error::NotDistinct("device, session")); }
+    e.u8("mode", i64::from(c.mode))?;
+    e.principal(&principal)?;
+    match &host { Some(h) => { e.present(); e.principal(h)?; }, None => e.absent() }
+    match subject { Some(s) => { e.present(); e.var(s.as_bytes())?; }, None => e.absent() }
+    e.key(&device)?; e.key(&session)?;
+    e.i64(c.not_before_unix_seconds); e.i64(c.not_after_unix_seconds);
+    Ok(())
+}
+
+pub fn signed_message_transcript(m: &pb::SignedMessage) -> Result<Vec<u8>> {
+    use pb::signer_chain::Chain;
+    let chain = m.signer.as_ref().ok_or(Error::MissingField("signer"))?.chain.as_ref().ok_or(Error::MissingField("signer.chain"))?;
+    let (cert, paths) = match chain {
+        Chain::SelfRooted(s) => (s.session.as_ref(), ["signer.self_rooted.session", "signer.self_rooted.session.principal_genesis", "signer.self_rooted.session.session"]),
+        Chain::HostVouched(h) => (h.session.as_ref(), ["signer.host_vouched.session", "signer.host_vouched.session.principal_genesis", "signer.host_vouched.session.session"]),
+    };
+    let cert = cert.ok_or(Error::MissingField(paths[0]))?;
+    let principal = req(cert.principal_genesis.as_ref(), paths[1])?;
+    let session = req(cert.session.as_ref(), paths[2])?;
+    non_empty("audience", m.audience.as_bytes())?;
+    non_empty("body_type", m.body_type.as_bytes())?;
+    let mut e = Enc::new(SIGNED_MESSAGE_TAG);
+    e.principal(&principal)?; e.key(&session)?; e.var(m.audience.as_bytes())?;
+    e.fixed("nonce", &m.nonce, 16)?; e.i64(m.issued_at_unix_seconds);
+    match &m.in_reply_to_nonce { Some(n) => { e.present(); e.fixed("in_reply_to_nonce", n, 16)?; }, None => e.absent() }
+    e.var(m.body_type.as_bytes())?; e.var(&m.body)?;
+    Ok(e.finish())
+}
+
+pub fn signed_document_transcript(d: &pb::SignedDocument) -> Result<Vec<u8>> {
+    let signer = req(d.signer_genesis.as_ref(), "signer_genesis")?;
+    let signing = req(d.signing.as_ref(), "signing")?;
+    non_empty("document_type", d.document_type.as_bytes())?;
+    let mut e = Enc::new(SIGNED_DOCUMENT_TAG);
+    e.principal(&signer)?; e.key(&signing)?; e.var(d.document_type.as_bytes())?;
+    e.u64(d.version); e.i64(d.issued_at_unix_seconds); e.i64(d.expires_at_unix_seconds); e.var(&d.body)?;
+    Ok(e.finish())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,6 +353,92 @@ mod tests {
             not_after_unix_seconds: 1_702_592_000,
             signature: vec![],
         }
+    }
+
+    pub(crate) fn cert0() -> pb::DelegationCert {
+        let device = k();
+        pb::DelegationCert {
+            principal_genesis: pk(&device), mode: 0, device: pk(&device), session: pk(&k()),
+            host_genesis: None, subject: None, not_before_unix_seconds: 1,
+            not_after_unix_seconds: 2, signature: vec![0xab; 64],
+        }
+    }
+
+    pub(crate) fn cert1() -> pb::DelegationCert {
+        pb::DelegationCert {
+            principal_genesis: pk(&k()), mode: 1, host_genesis: pk(&k()),
+            subject: Some("3b6a27bcceb6a42d/i5".into()), ..cert0()
+        }
+    }
+
+    pub(crate) fn message() -> pb::SignedMessage {
+        pb::SignedMessage {
+            signer: Some(pb::SignerChain { chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: Some(delegation(pb::KeyPurpose::Device)), session: Some(cert0()),
+            }))}), audience: "structmux-fleet:3b6a27bcceb6a42d".into(), nonce: vec![5; 16],
+            issued_at_unix_seconds: 7, in_reply_to_nonce: None,
+            body_type: "type.googleapis.com/structmux.v1.FleetRequest".into(), body: vec![1,2,3], signature: vec![],
+        }
+    }
+
+    #[test]
+    fn session_delegation_layouts() {
+        let c = cert0();
+        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let mut want = b"identitycrypto.session-delegation.v1\0".to_vec(); want.push(0);
+        want.extend(key(&c.principal_genesis)); want.extend([0,0]); want.extend(key(&c.device)); want.extend(key(&c.session));
+        want.extend(1i64.to_be_bytes()); want.extend(2i64.to_be_bytes());
+        assert_eq!(session_delegation_transcript(&c).unwrap(), want);
+        let c = cert1(); let mut want = b"identitycrypto.session-delegation.v1\0".to_vec(); want.push(1);
+        want.extend(key(&c.principal_genesis)); want.push(1); want.extend(key(&c.host_genesis)); want.push(1);
+        want.extend([0,0,0,19]); want.extend(b"3b6a27bcceb6a42d/i5"); want.extend(key(&c.device)); want.extend(key(&c.session));
+        want.extend(1i64.to_be_bytes()); want.extend(2i64.to_be_bytes());
+        assert_eq!(session_delegation_transcript(&c).unwrap(), want);
+    }
+
+    #[test]
+    fn session_delegation_checks() {
+        let run = |f: &dyn Fn(&mut pb::DelegationCert), base: fn() -> pb::DelegationCert| { let mut c=base(); f(&mut c); session_delegation_transcript(&c) };
+        assert_eq!(run(&|c| c.mode=2, cert0), Err(Error::InvalidField{field:"mode",reason:"must be 0 or 1"}));
+        assert_eq!(run(&|c| c.host_genesis=pk(&k()), cert0), Err(Error::InvalidField{field:"host_genesis",reason:"forbidden in mode 0"}));
+        assert_eq!(run(&|c| c.subject=Some(String::new()), cert0), Err(Error::InvalidField{field:"subject",reason:"forbidden in mode 0"}));
+        assert_eq!(run(&|c| c.host_genesis=None, cert1), Err(Error::MissingField("host_genesis")));
+        assert_eq!(run(&|c| c.subject=None, cert1), Err(Error::MissingField("subject")));
+        assert_eq!(run(&|c| c.subject=Some(String::new()), cert1), Err(Error::InvalidField{field:"subject",reason:"empty"}));
+        assert_eq!(run(&|c| c.session=c.device.clone(), cert0), Err(Error::NotDistinct("device, session")));
+        assert_eq!(run(&|c| c.session=c.device.clone(), cert1), Err(Error::NotDistinct("device, session")));
+        assert_eq!(run(&|c| c.device=None, cert0), Err(Error::MissingField("device")));
+    }
+
+    #[test]
+    fn signed_message_layout() {
+        let mut m=message(); m.in_reply_to_nonce=Some(vec![6;16]); let cert=cert0();
+        if let Some(pb::signer_chain::Chain::SelfRooted(s))=m.signer.as_mut().and_then(|s|s.chain.as_mut()) { s.session=Some(cert.clone()); }
+        let key=|p:&Option<pb::PublicKey>|key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let mut want=b"identitycrypto.signed-message.v1\0".to_vec(); want.extend(key(&cert.principal_genesis)); want.extend(key(&cert.session));
+        want.extend((m.audience.len() as u32).to_be_bytes()); want.extend(m.audience.as_bytes()); want.extend([5;16]); want.extend(7i64.to_be_bytes());
+        want.push(1); want.extend([6;16]); want.extend((m.body_type.len() as u32).to_be_bytes()); want.extend(m.body_type.as_bytes()); want.extend([0,0,0,3,1,2,3]);
+        assert_eq!(signed_message_transcript(&m).unwrap(),want);
+    }
+
+    #[test]
+    fn signed_message_checks() {
+        let mut m=message(); m.signer=None; assert_eq!(signed_message_transcript(&m),Err(Error::MissingField("signer")));
+        let mut m=message(); m.signer=Some(pb::SignerChain{chain:None}); assert_eq!(signed_message_transcript(&m),Err(Error::MissingField("signer.chain")));
+        let mut m=message(); m.signer=Some(pb::SignerChain{chain:Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched{host_device:None,session:None}))}); assert_eq!(signed_message_transcript(&m),Err(Error::MissingField("signer.host_vouched.session")));
+        let mut m=message(); m.signer=Some(pb::SignerChain{chain:Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched{host_device:None,session:Some(cert1())}))}); assert!(signed_message_transcript(&m).is_ok());
+        let mut m=message(); m.nonce=vec![5;15]; assert_eq!(signed_message_transcript(&m),Err(Error::BadLength{field:"nonce",expected:16,actual:15}));
+        let mut m=message(); m.in_reply_to_nonce=Some(vec![]); assert_eq!(signed_message_transcript(&m),Err(Error::BadLength{field:"in_reply_to_nonce",expected:16,actual:0}));
+        let mut m=message(); m.audience.clear(); assert_eq!(signed_message_transcript(&m),Err(Error::InvalidField{field:"audience",reason:"empty"}));
+        let mut m=message(); m.body_type.clear(); assert_eq!(signed_message_transcript(&m),Err(Error::InvalidField{field:"body_type",reason:"empty"}));
+    }
+
+    #[test]
+    fn signed_document_layout_and_checks() {
+        let (g,s)=(k(),k()); let d=pb::SignedDocument{signer_genesis:pk(&g),signing:pk(&s),document_type:"t".into(),version:u64::MAX,issued_at_unix_seconds:1,expires_at_unix_seconds:0,body:vec![9],signature:vec![],signer_rotations:vec![]};
+        let mut want=b"identitycrypto.signed-document.v1\0".to_vec(); want.extend(key_bytes(&g)); want.extend(key_bytes(&s)); want.extend([0,0,0,1,b't']); want.extend(u64::MAX.to_be_bytes()); want.extend(1i64.to_be_bytes()); want.extend(0i64.to_be_bytes()); want.extend([0,0,0,1,9]);
+        assert_eq!(signed_document_transcript(&d).unwrap(),want);
+        let empty=pb::SignedDocument{document_type:String::new(),..d}; assert_eq!(signed_document_transcript(&empty),Err(Error::InvalidField{field:"document_type",reason:"empty"}));
     }
 
     #[test]
