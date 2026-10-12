@@ -205,7 +205,7 @@ fn transcripts_match_the_independent_generator() {
         }
         checked += 1;
     }
-    assert!(checked >= 70, "only {checked} cases");
+    assert_eq!(checked, 92, "transcripts.json case count changed");
 }
 
 #[test]

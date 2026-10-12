@@ -253,7 +253,8 @@ fn delivery_attestation_binds_every_field() {
     };
     let base = pb::DeliveryAttestation {
         recipient_devices: vec![pb::PublicKey::from(&k())], key_id: "k".into(), batch_sequence: 1,
-        attested_at: Some(prost_types::Timestamp { seconds: 1, nanos: 1 }), messages: vec![message],
+        attested_at: Some(prost_types::Timestamp { seconds: 1, nanos: 1 }),
+        messages: vec![message.clone(), pb::AttestedMessage { message_id: "n".into(), ..message }],
         signature: vec![],
     };
     assert_binds(
@@ -276,11 +277,7 @@ fn delivery_attestation_binds_every_field() {
             })),
             ("messages.delegation_cert", Box::new(|a| a.messages[0].delegation_cert.as_mut().unwrap().not_after_unix_seconds += 1)),
             ("messages.delegation_cert.signature", Box::new(|a| a.messages[0].delegation_cert.as_mut().unwrap().signature[0] = 2)),
-            ("message order", Box::new(|a| {
-                let mut second = a.messages[0].clone();
-                second.message_id = "n".into();
-                a.messages.insert(0, second);
-            })),
+            ("message order", Box::new(|a| a.messages.swap(0, 1))),
         ],
     );
 }
