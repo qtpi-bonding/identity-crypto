@@ -1,48 +1,27 @@
-//! Cryptographic identity primitives for the grorg/gait/multimatrix
-//! agent-identity design (`concordat/2026-09-01-agent-identity-model-design.md`
-//! in the `concordium` monorepo). This crate is deliberately narrow: it
-//! builds the canonical signed transcripts and verifies raw ed25519
-//! signatures. It does not do RPC calls, storage, or key generation/storage
-//! -- those stay in each consumer's own repo. The point of pulling this
-//! specific ~150 lines out on its own is that a single wrong byte in a
-//! transcript layout breaks every cross-repo signature; having exactly one
-//! implementation removes that whole class of bug by construction instead
-//! of relying on review to catch drift between independently-written
-//! copies.
+//! P-256 key types, principal ids, canonical transcripts and the one
+//! signature check for the concordium/structmux identity design
+//! (structmux `docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md`).
+//! Pure: no I/O, no runtime, no key storage. Every primitive comes from
+//! `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts
+//! and validation.
 
-pub mod agent_key;
+mod error;
 pub mod transcripts;
 
-/// The absolute path to this crate's `proto/` directory, valid regardless
-/// of whether a consumer depends on this crate via a local path or a git
-/// rev -- resolved via `CARGO_MANIFEST_DIR` baked in at THIS crate's own
-/// compile time, so it's always correct for wherever Cargo actually
-/// checked this crate out to (a hardcoded path string in a downstream
-/// `build.rs` breaks the moment this stops being a path dependency, since
-/// Cargo checks a git dependency out to an unpredictable, per-machine
-/// location under `~/.cargo/git/checkouts/...`).
-///
-/// A consumer that needs `import "identitycrypto/v1/identity.proto";` to
-/// resolve from its own `.proto` files must list `identity-crypto` under
-/// its `[build-dependencies]` (not just `[dependencies]`) to call this
-/// from its own `build.rs`:
-///
-/// ```ignore
-/// .compile_protos(&[my_proto], &[my_proto_root, identity_crypto::proto_include_dir().into()])
-/// ```
+pub use error::{Error, Result};
+pub use rust_jwk_duo as jwk_duo;
+
+/// The absolute path to this crate's `proto/` directory, resolved at this
+/// crate's compile time so it is right for path and git dependencies alike.
+/// A consumer importing `identitycrypto/v1/identity.proto` lists this crate
+/// under `[build-dependencies]` and passes this to `compile_protos`.
 pub fn proto_include_dir() -> &'static str {
     concat!(env!("CARGO_MANIFEST_DIR"), "/proto")
 }
 
-/// Generated from `proto/identitycrypto/v1/identity.proto` -- the two
-/// pieces of this design nobody repo owns: `KeyScheme` (the discriminant
-/// every transcript embeds as a raw byte, previously and accidentally
-/// re-defined identically in grorg/gait/multimatrix's own protos) and
-/// `DelegationCert` (session-delegation, minted locally, never owned by
-/// any one repo's storage). Everything else -- Agent/AgentKey and grorg's
-/// RPC surface, gait's Event/Provenance log, multimatrix's RoomMessage --
-/// stays defined in its one real owner's own proto, not here.
-pub mod proto {
+/// Generated from `proto/identitycrypto/v1/identity.proto`. Private: the
+/// only public path to these types is [`pb`].
+mod proto {
     pub mod identitycrypto {
         pub mod v1 {
             include!(concat!(env!("OUT_DIR"), "/identitycrypto.v1.rs"));
@@ -51,83 +30,9 @@ pub mod proto {
     }
 }
 
-pub use proto::identitycrypto::v1::{
-    AttestedMessage, DelegationCert, DeliveryAttestation, KeyScheme, VerificationOutcome,
-};
-
-use anyhow::{anyhow, Context, Result};
-use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-
-/// Decode a hex-encoded ed25519 public key (grorg's `AgentKey.public_key`
-/// wire type) into its raw 32 bytes. Never hex-encode a value that's
-/// already gone through this.
-pub fn hex_decode_32(public_key_hex: &str) -> Result<[u8; 32]> {
-    let bytes = hex::decode(public_key_hex).context("public_key is not valid hex")?;
-    bytes
-        .try_into()
-        .map_err(|_| anyhow!("ed25519 public key must be 32 bytes"))
-}
-
-/// Proof that a signature was verified against a specific public key.
-/// Deliberately has no public constructor -- the only way to obtain one
-/// is [`verify_ed25519`] succeeding. Code that must not run on an
-/// unchecked or discarded verification result (applying a
-/// `DelegationCert`, honoring a `RenameAgent`, accepting a `RotateRoot`)
-/// can require `&VerifiedSignature` as a parameter, making it a compile
-/// error to skip or ignore the check -- the same trick as
-/// `access-control`'s `ReadGrant`, applied to signature verification
-/// instead of resource access.
-///
-/// ```compile_fail
-/// use identity_crypto::VerifiedSignature;
-/// let _v: VerifiedSignature = VerifiedSignature {};
-/// ```
-#[derive(Debug)]
-pub struct VerifiedSignature<'a> {
-    public_key_hex: &'a str,
-}
-
-impl<'a> VerifiedSignature<'a> {
-    /// The public key the signature was verified against.
-    pub fn public_key_hex(&self) -> &str {
-        self.public_key_hex
-    }
-}
-
-/// Decode a hex-encoded ed25519 public key into a [`VerifyingKey`].
-/// Shared by [`verify_ed25519`] and [`agent_key`]'s own raw verifier so
-/// the two never drift on how a key is parsed -- only on what they do
-/// with a parse failure.
-pub(crate) fn decode_verifying_key(public_key_hex: &str) -> Result<VerifyingKey> {
-    let public_bytes = hex_decode_32(public_key_hex)?;
-    VerifyingKey::from_bytes(&public_bytes).map_err(|e| anyhow!("invalid ed25519 public key: {e}"))
-}
-
-/// Decode a raw ed25519 signature. Shared for the same reason as
-/// [`decode_verifying_key`].
-pub(crate) fn decode_signature(signature: &[u8]) -> Result<Signature> {
-    let sig_bytes: [u8; 64] = signature
-        .try_into()
-        .map_err(|_| anyhow!("ed25519 signature must be 64 bytes"))?;
-    Ok(Signature::from_bytes(&sig_bytes))
-}
-
-/// Verify a raw ed25519 signature against a hex-encoded public key.
-/// Returns a [`VerifiedSignature`] witness on success -- there is no
-/// bare `bool` to accidentally discard, negate wrong, or forget to
-/// check.
-pub fn verify_ed25519<'a>(
-    public_key_hex: &'a str,
-    message: &[u8],
-    signature: &[u8],
-) -> Result<VerifiedSignature<'a>> {
-    let verifying_key = decode_verifying_key(public_key_hex)?;
-    let signature = decode_signature(signature)?;
-    verifying_key
-        .verify(message, &signature)
-        .map_err(|_| anyhow!("signature does not verify"))?;
-    Ok(VerifiedSignature { public_key_hex })
-}
+/// The wire types. `PublicKey` at the crate root is the validated Rust type;
+/// `pb::PublicKey` is the proto.
+pub use proto::identitycrypto::v1 as pb;
 
 #[cfg(test)]
 mod proto_tests {
@@ -135,117 +40,7 @@ mod proto_tests {
 
     #[test]
     fn proto_include_dir_points_at_the_real_proto_file() {
-        let path = std::path::Path::new(proto_include_dir())
-            .join("identitycrypto/v1/identity.proto");
+        let path = std::path::Path::new(proto_include_dir()).join("identitycrypto/v1/identity.proto");
         assert!(path.exists(), "{} should exist", path.display());
-    }
-
-    #[test]
-    fn key_scheme_discriminants_are_pinned() {
-        // Load-bearing: every transcript in this crate serializes a scheme
-        // as a raw byte. Changing any of these numbers is a breaking
-        // change for every repo that depends on this crate.
-        assert_eq!(KeyScheme::Unspecified as i32, 0);
-        assert_eq!(KeyScheme::Ed25519 as i32, 1);
-        assert_eq!(KeyScheme::Secp256k1Schnorr as i32, 2);
-    }
-
-    #[test]
-    fn key_scheme_try_from_round_trips_every_known_value() {
-        assert_eq!(KeyScheme::try_from(0).unwrap(), KeyScheme::Unspecified);
-        assert_eq!(KeyScheme::try_from(1).unwrap(), KeyScheme::Ed25519);
-        assert_eq!(KeyScheme::try_from(2).unwrap(), KeyScheme::Secp256k1Schnorr);
-    }
-
-    #[test]
-    fn key_scheme_unknown_discriminant_errors() {
-        assert!(KeyScheme::try_from(99).is_err());
-    }
-
-    #[test]
-    fn key_scheme_round_trips_through_json_serde() {
-        // pbjson gives KeyScheme a real serde impl (JSON-canonical string
-        // form), needed by any consumer storing one of these types as JSON
-        // on disk (e.g. gait's keyring.json).
-        let json = serde_json::to_string(&KeyScheme::Ed25519).unwrap();
-        let back: KeyScheme = serde_json::from_str(&json).unwrap();
-        assert_eq!(back, KeyScheme::Ed25519);
-    }
-
-    #[test]
-    fn delegation_cert_round_trips_through_protobuf_bytes() {
-        use prost::Message;
-        let cert = DelegationCert {
-            agent_id: "agent-1".into(),
-            device_public_key: vec![1u8; 32],
-            session_public_key: vec![2u8; 32],
-            not_before_unix_seconds: 100,
-            not_after_unix_seconds: 200,
-            signature: vec![3u8; 64],
-        };
-        let bytes = cert.encode_to_vec();
-        let decoded = DelegationCert::decode(bytes.as_slice()).unwrap();
-        assert_eq!(cert, decoded);
-    }
-
-    #[test]
-    fn verification_outcome_discriminants_are_pinned() {
-        assert_eq!(VerificationOutcome::Unspecified as i32, 0);
-        assert_eq!(VerificationOutcome::DirectKey as i32, 1);
-        assert_eq!(VerificationOutcome::DelegatedKey as i32, 2);
-        assert_eq!(VerificationOutcome::System as i32, 3);
-    }
-
-    #[test]
-    fn delivery_attestation_round_trips_through_protobuf_bytes() {
-        use prost::Message;
-        let attestation = DeliveryAttestation {
-            recipient_device_public_keys: vec![vec![1u8; 32]],
-            key_id: "mm-key-2026-09".into(),
-            batch_sequence: 42,
-            attested_at: Some(prost_types::Timestamp { seconds: 1_700_000_000, nanos: 0 }),
-            messages: vec![AttestedMessage {
-                message_id: "msg-1".into(),
-                room_id: "room-general".into(),
-                author_agent_id: "agent-2".into(),
-                body_text: "hello".into(),
-                verification_outcome: VerificationOutcome::DirectKey as i32,
-                delegation_cert: None,
-            }],
-            signature: vec![9u8; 64],
-        };
-        let bytes = attestation.encode_to_vec();
-        let decoded = DeliveryAttestation::decode(bytes.as_slice()).unwrap();
-        assert_eq!(attestation, decoded);
-    }
-}
-
-#[cfg(test)]
-mod verify_tests {
-    use super::*;
-    use ed25519_dalek::{Signer, SigningKey};
-    use rand::rngs::OsRng;
-
-    #[test]
-    fn genuine_signature_verifies() {
-        let signing_key = SigningKey::generate(&mut OsRng);
-        let hex_pub = hex::encode(signing_key.verifying_key().to_bytes());
-        let msg = b"hello";
-        let sig = signing_key.sign(msg);
-        let verified = verify_ed25519(&hex_pub, msg, &sig.to_bytes()).unwrap();
-        assert_eq!(verified.public_key_hex(), hex_pub);
-    }
-
-    #[test]
-    fn tampered_message_does_not_verify() {
-        let signing_key = SigningKey::generate(&mut OsRng);
-        let hex_pub = hex::encode(signing_key.verifying_key().to_bytes());
-        let sig = signing_key.sign(b"hello");
-        assert!(verify_ed25519(&hex_pub, b"goodbye", &sig.to_bytes()).is_err());
-    }
-
-    #[test]
-    fn malformed_hex_errors_rather_than_panics() {
-        assert!(verify_ed25519("not-hex", b"msg", &[0u8; 64]).is_err());
     }
 }

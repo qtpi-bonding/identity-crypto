@@ -1,13 +1,14 @@
 [package]
 name = "identity-crypto"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Canonical transcript encoding and ed25519 verification for the grorg/gait/multimatrix agent-identity design"
+description = "P-256 key types, principal ids, canonical transcripts and the signature check for the concordium/structmux identity design"
 
 [dependencies]
-anyhow = "1"
-ed25519-dalek = "2"
+rust_jwk_duo = { git = "https://github.com/qtpi-bonding-org/rust_jwk_duo.git", rev = "489985d719539a6d8f841561728eb33cda82601e" }
+sha2 = "0.11"
 hex = "0.4"
+thiserror = "2"
 prost = "0.13"
 prost-types = "0.13"
 pbjson = "0.7"
@@ -19,6 +20,4 @@ pbjson-build = "0.7"
 protoc-bin-vendored = "3"
 
 [dev-dependencies]
-ed25519-dalek = { version = "2", features = ["rand_core"] }
-rand = "0.8"
 serde_json = "1"
