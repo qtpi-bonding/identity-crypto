@@ -11,6 +11,7 @@ mod error;
 mod principal;
 mod registry;
 mod resolver;
+mod verify;
 mod public_key;
 mod signature;
 pub mod transcripts;
@@ -25,6 +26,10 @@ pub use principal::{PrincipalId, ShortId};
 pub use public_key::{PublicKey, PublicKeyDuo};
 pub use registry::{AllowedHost, PrincipalKind, VerifiedBinding, VerifiedEntry};
 pub use resolver::{Resolver, VerifiedPeerRevocation};
+pub use verify::{
+    verify_chain, verify_signed_message, AcceptedAt, Host, VerifiedChain, VerifiedMessage, When,
+    MAX_SESSION_SECONDS, MAX_UNLISTED_DELEGATION_SECONDS, SKEW_SECONDS,
+};
 pub use signature::{verify_p256, VerifiedSignature};
 pub use rust_jwk_duo as jwk_duo;
 

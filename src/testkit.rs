@@ -360,3 +360,86 @@ mod tests {
         assert_eq!(document.signer_rotations.len(), 1);
     }
 }
+
+use crate::{AcceptedAt, When};
+
+pub const LIVE: When = When::Live { now: T0 + 60 };
+
+pub fn accepted(at: i64) -> When {
+    When::Accepted(AcceptedAt::from_receiver_record(at))
+}
+
+/// The owner's laptop session: self-rooted, mode 0.
+pub fn owner_chain(f: &Fleet, nb: i64, na: i64) -> (Signer, pb::SignerChain) {
+    let (session, cert) = session_cert(&f.laptop, &f.owner.genesis(), None, None, nb, na);
+    let chain = pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+        device: Some(f.laptop_deleg.clone()),
+        session: Some(cert),
+    });
+    (session, pb::SignerChain { chain: Some(chain) })
+}
+
+/// A daemon's own session under a fresh device delegation.
+pub fn daemon_chain(
+    d: &Principal,
+    issued_at: i64,
+    not_after: i64,
+    nb: i64,
+    na: i64,
+) -> (Signer, pb::SignerChain) {
+    let (dev, deleg) = d.delegate_device(issued_at, not_after);
+    let (session, cert) = session_cert(&dev, &d.genesis(), None, None, nb, na);
+    let chain = pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+        device: Some(deleg),
+        session: Some(cert),
+    });
+    (session, pb::SignerChain { chain: Some(chain) })
+}
+
+/// An agent session vouched by the fleet's daemon (30-day device delegation).
+pub fn agent_chain(
+    f: &Fleet,
+    subject: &str,
+    nb: i64,
+    na: i64,
+) -> (Signer, pb::SignerChain) {
+    let (dev, deleg) = f.daemon.delegate_device(T0, T0 + 30 * DAY);
+    let (session, cert) = session_cert(
+        &dev,
+        &f.agent.public(),
+        Some(&f.daemon.genesis()),
+        Some(subject),
+        nb,
+        na,
+    );
+    let chain = pb::signer_chain::Chain::HostVouched(pb::HostVouched {
+        host_device: Some(deleg),
+        session: Some(cert),
+    });
+    (session, pb::SignerChain { chain: Some(chain) })
+}
+
+pub fn signed_message(
+    session: &Signer,
+    chain: pb::SignerChain,
+    audience: &str,
+    issued_at: i64,
+) -> pb::SignedMessage {
+    let mut m = pb::SignedMessage {
+        signer: Some(chain),
+        audience: audience.into(),
+        nonce: vec![7; 16],
+        issued_at_unix_seconds: issued_at,
+        in_reply_to_nonce: None,
+        body_type: "type.googleapis.com/test.v1.Body".into(),
+        body: vec![1, 2],
+        signature: vec![],
+    };
+    m.signature = session.sign(&signed_message_transcript(&m).unwrap());
+    m
+}
+
+/// The daemon's subject prefix: `<short id>/`.
+pub fn subject_on(d: &Principal, local: &str) -> String {
+    format!("{}/{local}", d.id().short_id())
+}
