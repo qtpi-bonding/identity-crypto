@@ -58,7 +58,6 @@ versions, persistence and policy are the caller's.
 
 Every primitive comes from [`rust_jwk_duo`](https://github.com/qtpi-bonding-org/rust_jwk_duo), re-exported as
 `identity_crypto::jwk_duo`; sign with it directly over transcript bytes.
-Chain verification (`verify_signed_message` and friends) arrives in 0.3.
 
 ## Vectors
 

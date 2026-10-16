@@ -504,10 +504,12 @@ def cases():
     ok("request_digest off-curve host", "request_digest", with_(rd, host_genesis=OFF_CURVE))
 
     crd = {"requester_genesis": K(1), "host_genesis": K(10), "resource": {"kind": "instance", "id": "3b6a27bcceb6a42d/i5"},
-           "message_kind": "start_instance", "body": "0a0568656c6c6f", "request_id": "r7", "target_genesis": K(10)}
+           "message_kind": "start_instance", "body": "0a0568656c6c6f", "request_id": "r7", "target_genesis": K(11)}
     ok("client_request_digest hosted client with resource", "client_request_digest", crd)
     ok("client_request_digest hostless client", "client_request_digest", with_(crd, host_genesis=None))
     ok("client_request_digest no resource", "client_request_digest", with_(crd, resource=None))
+    ok("client_request_digest hostless and no resource", "client_request_digest",
+       with_(crd, host_genesis=None, resource=None))
     ok("client_request_digest empty body", "client_request_digest", with_(crd, body=""))
     ok("client_request_digest long body", "client_request_digest", with_(crd, body="ab" * 300))
     ok("client_request_digest non-ascii message kind", "client_request_digest", with_(crd, message_kind="ação"))

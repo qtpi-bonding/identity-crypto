@@ -220,7 +220,7 @@ fn transcripts_match_the_independent_generator() {
         }
         checked += 1;
     }
-    assert_eq!(checked, 103,"transcripts.json case count changed");
+    assert_eq!(checked, 104, "transcripts.json case count changed");
 }
 
 #[test]
