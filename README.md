@@ -8,6 +8,20 @@ Pure: no I/O, no clock, no key storage. Every primitive comes from
 `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
 validation and verification.
 
+## Request digests (0.4.0)
+
+Two forms of `Approval.request_digest`, each under its own tag:
+
+- `request_digest` (`request-digest.v1`): a requester that can carry a
+  subject and always has a host daemon, an instance and an action.
+- `client_request_digest` (`client-request-digest.v1`): a requester that
+  connects with a self-rooted chain (no subject), with an optional host and an
+  optional resource. An absent host covers both `Host::Hostless` and
+  `Host::Unhosted`; the requester principal already fixes its kind.
+
+0.4.0 is additive: `ALL_TAGS` is now `[&str; 13]` (its type changes, which is
+why this is a minor bump). Nothing existing changes meaning.
+
 ## Verification (0.3.0)
 
 History is checked once; messages are checked against it.
@@ -37,7 +51,7 @@ versions, persistence and policy are the caller's.
   `identity_crypto::pb`): keys, delegations, signer chains, signed messages
   and documents, approvals, revocations, the delivery attestation.
 - **Transcripts** (`identity_crypto::transcripts`): the exact bytes every
-  signature covers, twelve functions under `identitycrypto.*.v1` tags. Each
+  signature covers, thirteen functions under `identitycrypto.*.v1` tags. Each
   validates while it encodes; signer and verifier call the same function.
 - **`verify_p256`:** 64-byte `r‖s`, both S forms, returning a
   `VerifiedSignature` witness bound to the key and the message.

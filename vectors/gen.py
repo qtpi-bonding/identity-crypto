@@ -33,6 +33,7 @@ TAGS = {
     "approval": "identitycrypto.approval.v1",
     "peer_revocation": "identitycrypto.peer-revocation.v1",
     "request_digest": "identitycrypto.request-digest.v1",
+    "client_request_digest": "identitycrypto.client-request-digest.v1",
     "delivery_attestation": "identitycrypto.delivery-attestation.v1",
 }
 
@@ -307,9 +308,28 @@ def request_digest(i):
     return out + text(i["request_id"]) + target
 
 
+def client_request_digest(i):
+    # Keys first (requester, host if present, target), as tests/vectors.rs converts them before the call.
+    requester = key(i["requester_genesis"], "requester")
+    host = None if i["host_genesis"] is None else key(i["host_genesis"], "host")
+    target = key(i["target_genesis"], "target")
+    resource = i["resource"]
+    if resource is not None:
+        non_empty("resource_kind", resource["kind"].encode())
+        non_empty("resource_id", resource["id"].encode())
+    non_empty("message_kind", i["message_kind"].encode())
+    non_empty("request_id", i["request_id"].encode())
+    out = tag("client_request_digest") + requester
+    out += b"\x00" if host is None else b"\x01" + host
+    out += b"\x00" if resource is None else b"\x01" + text(resource["kind"]) + text(resource["id"])
+    out += text(i["message_kind"]) + var(bytes.fromhex(i["body"]))
+    return out + text(i["request_id"]) + target
+
+
 FUNCTIONS = {f.__name__: f for f in [
     key_challenge, principal_rename, key_delegation, key_revocation, root_rotation, session_delegation,
     signed_message, signed_document, approval, peer_revocation, delivery_attestation, request_digest,
+    client_request_digest,
 ]}
 
 # ---- cases ----
@@ -482,6 +502,21 @@ def cases():
     ok("request_digest empty action", "request_digest", with_(rd, action_id=""))
     ok("request_digest empty request id", "request_digest", with_(rd, request_id=""))
     ok("request_digest off-curve host", "request_digest", with_(rd, host_genesis=OFF_CURVE))
+
+    crd = {"requester_genesis": K(1), "host_genesis": K(10), "resource": {"kind": "instance", "id": "3b6a27bcceb6a42d/i5"},
+           "message_kind": "start_instance", "body": "0a0568656c6c6f", "request_id": "r7", "target_genesis": K(10)}
+    ok("client_request_digest hosted client with resource", "client_request_digest", crd)
+    ok("client_request_digest hostless client", "client_request_digest", with_(crd, host_genesis=None))
+    ok("client_request_digest no resource", "client_request_digest", with_(crd, resource=None))
+    ok("client_request_digest empty body", "client_request_digest", with_(crd, body=""))
+    ok("client_request_digest long body", "client_request_digest", with_(crd, body="ab" * 300))
+    ok("client_request_digest non-ascii message kind", "client_request_digest", with_(crd, message_kind="ação"))
+    ok("client_request_digest empty resource kind", "client_request_digest",
+       with_(crd, resource={"kind": "", "id": "x"}))
+    ok("client_request_digest empty resource id", "client_request_digest",
+       with_(crd, resource={"kind": "instance", "id": ""}))
+    ok("client_request_digest empty message kind", "client_request_digest", with_(crd, message_kind=""))
+    ok("client_request_digest empty request id", "client_request_digest", with_(crd, request_id=""))
     return c
 
 

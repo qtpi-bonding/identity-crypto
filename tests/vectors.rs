@@ -166,6 +166,20 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
                 action_id: &action_id, parameters: &parameters, request_id: &request_id, target: &target,
             })
         }
+        "client_request_digest" => {
+            let pid = |f: &str| PublicKey::try_from(&key(&i[f]).unwrap()).map(PrincipalId::from_genesis);
+            let requester = pid("requester_genesis")?;
+            let host = if i["host_genesis"].is_null() { None } else { Some(pid("host_genesis")?) };
+            let target = pid("target_genesis")?;
+            let resource = (!i["resource"].is_null()).then(|| (s(&i["resource"]["kind"]), s(&i["resource"]["id"])));
+            let (message_kind, request_id) = (s(&i["message_kind"]), s(&i["request_id"]));
+            let body = bytes(&i["body"]);
+            client_request_digest_transcript(&ClientRequestDigestInput {
+                requester: &requester, host: host.as_ref(),
+                resource: resource.as_ref().map(|(k, id)| (k.as_str(), id.as_str())),
+                message_kind: &message_kind, body: &body, request_id: &request_id, target: &target,
+            })
+        }
         other => panic!("unknown function {other}"),
     }
 }
@@ -206,7 +220,7 @@ fn transcripts_match_the_independent_generator() {
         }
         checked += 1;
     }
-    assert_eq!(checked, 93, "transcripts.json case count changed");
+    assert_eq!(checked, 103,"transcripts.json case count changed");
 }
 
 #[test]

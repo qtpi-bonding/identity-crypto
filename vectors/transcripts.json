@@ -2864,6 +2864,272 @@
         }
       },
       "name": "request_digest off-curve host"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e636c69656e742d726571756573742d6469676573742e7631000300000041046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f501030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af07730100000008696e7374616e636500000013336236613237626363656236613432642f69350000000e73746172745f696e7374616e6365000000070a0568656c6c6f000000027237030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+      "function": "client_request_digest",
+      "input": {
+        "body": "0a0568656c6c6f",
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "message_kind": "start_instance",
+        "request_id": "r7",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": {
+          "id": "3b6a27bcceb6a42d/i5",
+          "kind": "instance"
+        },
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest hosted client with resource"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e636c69656e742d726571756573742d6469676573742e7631000300000041046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5000100000008696e7374616e636500000013336236613237626363656236613432642f69350000000e73746172745f696e7374616e6365000000070a0568656c6c6f000000027237030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+      "function": "client_request_digest",
+      "input": {
+        "body": "0a0568656c6c6f",
+        "host_genesis": null,
+        "message_kind": "start_instance",
+        "request_id": "r7",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": {
+          "id": "3b6a27bcceb6a42d/i5",
+          "kind": "instance"
+        },
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest hostless client"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e636c69656e742d726571756573742d6469676573742e7631000300000041046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f501030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773000000000e73746172745f696e7374616e6365000000070a0568656c6c6f000000027237030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+      "function": "client_request_digest",
+      "input": {
+        "body": "0a0568656c6c6f",
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "message_kind": "start_instance",
+        "request_id": "r7",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": null,
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest no resource"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e636c69656e742d726571756573742d6469676573742e7631000300000041046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f501030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af07730100000008696e7374616e636500000013336236613237626363656236613432642f69350000000e73746172745f696e7374616e636500000000000000027237030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+      "function": "client_request_digest",
+      "input": {
+        "body": "",
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "message_kind": "start_instance",
+        "request_id": "r7",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": {
+          "id": "3b6a27bcceb6a42d/i5",
+          "kind": "instance"
+        },
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest empty body"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e636c69656e742d726571756573742d6469676573742e7631000300000041046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f501030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af07730100000008696e7374616e636500000013336236613237626363656236613432642f69350000000e73746172745f696e7374616e63650000012cabababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab000000027237030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+      "function": "client_request_digest",
+      "input": {
+        "body": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "message_kind": "start_instance",
+        "request_id": "r7",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": {
+          "id": "3b6a27bcceb6a42d/i5",
+          "kind": "instance"
+        },
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest long body"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e636c69656e742d726571756573742d6469676573742e7631000300000041046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f501030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af07730100000008696e7374616e636500000013336236613237626363656236613432642f69350000000661c3a7c3a36f000000070a0568656c6c6f000000027237030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+      "function": "client_request_digest",
+      "input": {
+        "body": "0a0568656c6c6f",
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "message_kind": "ação",
+        "request_id": "r7",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": {
+          "id": "3b6a27bcceb6a42d/i5",
+          "kind": "instance"
+        },
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest non-ascii message kind"
+    },
+    {
+      "error": {
+        "field": "resource_kind",
+        "variant": "InvalidField"
+      },
+      "function": "client_request_digest",
+      "input": {
+        "body": "0a0568656c6c6f",
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "message_kind": "start_instance",
+        "request_id": "r7",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": {
+          "id": "x",
+          "kind": ""
+        },
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest empty resource kind"
+    },
+    {
+      "error": {
+        "field": "resource_id",
+        "variant": "InvalidField"
+      },
+      "function": "client_request_digest",
+      "input": {
+        "body": "0a0568656c6c6f",
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "message_kind": "start_instance",
+        "request_id": "r7",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": {
+          "id": "",
+          "kind": "instance"
+        },
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest empty resource id"
+    },
+    {
+      "error": {
+        "field": "message_kind",
+        "variant": "InvalidField"
+      },
+      "function": "client_request_digest",
+      "input": {
+        "body": "0a0568656c6c6f",
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "message_kind": "",
+        "request_id": "r7",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": {
+          "id": "3b6a27bcceb6a42d/i5",
+          "kind": "instance"
+        },
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest empty message kind"
+    },
+    {
+      "error": {
+        "field": "request_id",
+        "variant": "InvalidField"
+      },
+      "function": "client_request_digest",
+      "input": {
+        "body": "0a0568656c6c6f",
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "message_kind": "start_instance",
+        "request_id": "",
+        "requester_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "resource": {
+          "id": "3b6a27bcceb6a42d/i5",
+          "kind": "instance"
+        },
+        "target_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        }
+      },
+      "name": "client_request_digest empty request id"
     }
   ]
 }

@@ -23,7 +23,9 @@ pub const PEER_REVOCATION_TAG: &str = "identitycrypto.peer-revocation.v1";
 pub const DELIVERY_ATTESTATION_TAG: &str = "identitycrypto.delivery-attestation.v1";
 pub const REQUEST_DIGEST_TAG: &str = "identitycrypto.request-digest.v1";
 
-pub const ALL_TAGS: [&str; 12] = [
+pub const CLIENT_REQUEST_DIGEST_TAG: &str = "identitycrypto.client-request-digest.v1";
+
+pub const ALL_TAGS: [&str; 13] = [
     KEY_CHALLENGE_TAG,
     PRINCIPAL_RENAME_TAG,
     KEY_DELEGATION_TAG,
@@ -36,6 +38,7 @@ pub const ALL_TAGS: [&str; 12] = [
     PEER_REVOCATION_TAG,
     DELIVERY_ATTESTATION_TAG,
     REQUEST_DIGEST_TAG,
+    CLIENT_REQUEST_DIGEST_TAG,
 ];
 
 struct Enc(Vec<u8>);
@@ -382,6 +385,60 @@ pub fn request_digest(i: &RequestDigestInput<'_>) -> Result<[u8; 32]> {
     use sha2::{Digest, Sha256};
     let mut out = [0u8; 32];
     out.copy_from_slice(&Sha256::digest(request_digest_transcript(i)?));
+    Ok(out)
+}
+
+/// What an `Approval` covers for a requester with no host daemon or instance.
+///
+/// For requesters that connect with a self-rooted chain (a structmux client
+/// session; mode 0 forbids a subject). A requester that can carry a subject (a
+/// host-vouched agent) uses `request_digest`. An absent `host` covers both
+/// `Host::Hostless` and `Host::Unhosted`; that is sound because the requester
+/// principal already fixes its kind. An absent `resource` means the request
+/// names no resource.
+#[derive(Clone, Copy)]
+pub struct ClientRequestDigestInput<'a> {
+    pub requester: &'a PrincipalId,
+    pub host: Option<&'a PrincipalId>,
+    pub resource: Option<(&'a str, &'a str)>,
+    pub message_kind: &'a str,
+    pub body: &'a [u8],
+    pub request_id: &'a str,
+    pub target: &'a PrincipalId,
+}
+
+/// `client-request-digest.v1 := tag ‖ PRINCIPAL(requester) ‖ opt(PRINCIPAL(host))
+/// ‖ opt(len(resource_kind) ‖ len(resource_id)) ‖ len(message_kind) ‖ len(body)
+/// ‖ len(request_id) ‖ PRINCIPAL(target)`.
+pub fn client_request_digest_transcript(i: &ClientRequestDigestInput<'_>) -> Result<Vec<u8>> {
+    if let Some((kind, id)) = i.resource {
+        non_empty("resource_kind", kind.as_bytes())?;
+        non_empty("resource_id", id.as_bytes())?;
+    }
+    non_empty("message_kind", i.message_kind.as_bytes())?;
+    non_empty("request_id", i.request_id.as_bytes())?;
+    let mut e = Enc::new(CLIENT_REQUEST_DIGEST_TAG);
+    e.principal(i.requester.genesis())?;
+    match i.host {
+        Some(h) => { e.present(); e.principal(h.genesis())?; }
+        None => e.absent(),
+    }
+    match i.resource {
+        Some((kind, id)) => { e.present(); e.var(kind.as_bytes())?; e.var(id.as_bytes())?; }
+        None => e.absent(),
+    }
+    e.var(i.message_kind.as_bytes())?;
+    e.var(i.body)?;
+    e.var(i.request_id.as_bytes())?;
+    e.principal(i.target.genesis())?;
+    Ok(e.finish())
+}
+
+/// `Approval.request_digest` for a client request: SHA-256 of `client_request_digest_transcript`.
+pub fn client_request_digest(i: &ClientRequestDigestInput<'_>) -> Result<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&Sha256::digest(client_request_digest_transcript(i)?));
     Ok(out)
 }
 
@@ -862,5 +919,91 @@ mod tests {
         assert_eq!(request_digest_transcript(&RequestDigestInput { action_id: "", ..base }), empty("action_id"));
         assert_eq!(request_digest_transcript(&RequestDigestInput { request_id: "", ..base }), empty("request_id"));
         assert!(request_digest_transcript(&base).is_ok(), "empty parameters are allowed");
+    }
+
+    #[test]
+    fn client_request_digest_layout() {
+        use sha2::{Digest, Sha256};
+        let (r, h, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
+        let bare = ClientRequestDigestInput { requester: &r, host: None, resource: None, message_kind: "edit_arrangement", body: &[9, 9], request_id: "r4", target: &t };
+        let mut want = b"identitycrypto.client-request-digest.v1\0".to_vec();
+        want.extend(key_bytes(r.genesis())); want.push(0); want.push(0);
+        want.extend([0, 0, 0, 16]); want.extend(b"edit_arrangement");
+        want.extend([0, 0, 0, 2, 9, 9]); want.extend([0, 0, 0, 2, b'r', b'4']); want.extend(key_bytes(t.genesis()));
+        assert_eq!(client_request_digest_transcript(&bare).unwrap(), want);
+        assert_eq!(client_request_digest(&bare).unwrap().as_slice(), Sha256::digest(&want).as_slice());
+
+        let full = ClientRequestDigestInput { host: Some(&h), resource: Some(("instance", "i1")), ..bare };
+        let mut want = b"identitycrypto.client-request-digest.v1\0".to_vec();
+        want.extend(key_bytes(r.genesis()));
+        want.push(1); want.extend(key_bytes(h.genesis()));
+        want.push(1); want.extend([0, 0, 0, 8]); want.extend(b"instance"); want.extend([0, 0, 0, 2]); want.extend(b"i1");
+        want.extend([0, 0, 0, 16]); want.extend(b"edit_arrangement");
+        want.extend([0, 0, 0, 2, 9, 9]); want.extend([0, 0, 0, 2, b'r', b'4']); want.extend(key_bytes(t.genesis()));
+        assert_eq!(client_request_digest_transcript(&full).unwrap(), want);
+        assert_eq!(client_request_digest(&full).unwrap().as_slice(), Sha256::digest(&want).as_slice());
+    }
+
+    #[test]
+    fn client_request_digest_rejects_empty_fields() {
+        let (r, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
+        let base = ClientRequestDigestInput { requester: &r, host: None, resource: Some(("instance", "i1")), message_kind: "start_instance", body: &[], request_id: "r4", target: &t };
+        let empty = |field: &'static str| -> Result<Vec<u8>> { Err(Error::InvalidField { field, reason: "empty" }) };
+        let tr = |i: ClientRequestDigestInput<'_>| client_request_digest_transcript(&i);
+        assert_eq!(tr(ClientRequestDigestInput { resource: Some(("", "i1")), ..base }), empty("resource_kind"));
+        assert_eq!(tr(ClientRequestDigestInput { resource: Some(("instance", "")), ..base }), empty("resource_id"));
+        assert_eq!(tr(ClientRequestDigestInput { message_kind: "", ..base }), empty("message_kind"));
+        assert_eq!(tr(ClientRequestDigestInput { request_id: "", ..base }), empty("request_id"));
+        // Order when several are empty: resource_kind, resource_id, message_kind, request_id.
+        assert_eq!(tr(ClientRequestDigestInput { resource: Some(("", "")), message_kind: "", request_id: "", ..base }), empty("resource_kind"));
+        assert_eq!(tr(ClientRequestDigestInput { resource: Some(("instance", "")), message_kind: "", request_id: "", ..base }), empty("resource_id"));
+        assert_eq!(tr(ClientRequestDigestInput { message_kind: "", request_id: "", ..base }), empty("message_kind"));
+        // A resource is only checked when present; an empty body is allowed.
+        assert!(tr(ClientRequestDigestInput { resource: None, ..base }).is_ok());
+        assert!(tr(base).is_ok(), "empty body is allowed");
+    }
+
+    #[test]
+    fn client_request_digest_is_sensitive_to_every_field() {
+        let (r, r2) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
+        let (h, h2) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
+        let (t, t2) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
+        let base = ClientRequestDigestInput { requester: &r, host: Some(&h), resource: Some(("instance", "i1")), message_kind: "start_instance", body: &[1, 2, 3], request_id: "r4", target: &t };
+        let d = |i: ClientRequestDigestInput<'_>| client_request_digest(&i).unwrap();
+        let want = d(base);
+        let flips = [
+            ("requester", d(ClientRequestDigestInput { requester: &r2, ..base })),
+            ("host absent", d(ClientRequestDigestInput { host: None, ..base })),
+            ("host", d(ClientRequestDigestInput { host: Some(&h2), ..base })),
+            ("resource absent", d(ClientRequestDigestInput { resource: None, ..base })),
+            ("resource kind", d(ClientRequestDigestInput { resource: Some(("arrangement", "i1")), ..base })),
+            ("resource id", d(ClientRequestDigestInput { resource: Some(("instance", "i2")), ..base })),
+            ("message kind", d(ClientRequestDigestInput { message_kind: "stop_instance", ..base })),
+            ("body", d(ClientRequestDigestInput { body: &[1, 2, 4], ..base })),
+            ("body empty", d(ClientRequestDigestInput { body: &[], ..base })),
+            ("request id", d(ClientRequestDigestInput { request_id: "r5", ..base })),
+            ("target", d(ClientRequestDigestInput { target: &t2, ..base })),
+        ];
+        for (name, got) in &flips { assert_ne!(*got, want, "flipping {name} left the digest unchanged"); }
+        let one_byte = d(ClientRequestDigestInput { body: &[0], ..base });
+        let empty = d(ClientRequestDigestInput { body: &[], ..base });
+        assert_ne!(one_byte, empty, "an empty body differs from a one-byte body");
+        // Moving bytes between adjacent variable-length fields must not collide.
+        let a = d(ClientRequestDigestInput { resource: Some(("ab", "c")), ..base });
+        let b = d(ClientRequestDigestInput { resource: Some(("a", "bc")), ..base });
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn the_two_digest_forms_never_collide() {
+        use sha2::{Digest, Sha256};
+        let (r, h, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
+        let agent = RequestDigestInput { requester: &r, host: &h, subject: None, instance_id: "i1", action_id: "run", parameters: &[1], request_id: "r4", target: &t };
+        let client = ClientRequestDigestInput { requester: &r, host: Some(&h), resource: Some(("i1", "run")), message_kind: "run", body: &[1], request_id: "r4", target: &t };
+        assert_ne!(request_digest(&agent).unwrap(), client_request_digest(&client).unwrap());
+        let (a, c) = (request_digest_transcript(&agent).unwrap(), client_request_digest_transcript(&client).unwrap());
+        let common = a.iter().zip(&c).take_while(|(x, y)| x == y).count();
+        assert!(common < REQUEST_DIGEST_TAG.len(), "the transcripts diverge inside the tag");
+        assert_eq!(Sha256::digest(&c).as_slice(), client_request_digest(&client).unwrap().as_slice());
     }
 }
