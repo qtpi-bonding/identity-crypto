@@ -617,6 +617,55 @@ def thumbprints():
     return {"cases": cases}
 
 
+def message_nonce(message_id):
+    """multimatrix's rule: SHA-256 of the id's UTF-8 bytes, first 16 bytes."""
+    return hashlib.sha256(message_id.encode("utf-8")).digest()[:16]
+
+
+def message_nonces():
+    ids = ["m1", "", "héllo ✓", "01HZX4Q8WJ5E0T6K9N3M2R7V8B", "x" * 300]
+    return {"cases": [{"name": f"message_id {i[:12]!r}", "message_id": i, "nonce": message_nonce(i).hex()} for i in ids]}
+
+
+DEVICE_SCALAR, SESSION_SCALAR = 31, 32
+
+
+def sign_r_s(scalar, message):
+    """Deterministic ECDSA over SHA-256, as 64-byte r||s (either S form verifies in Rust)."""
+    der = private(scalar).sign(message, ec.ECDSA(hashes.SHA256(), deterministic_signing=True))
+    r, s = decode_dss_signature(der)
+    return r.to_bytes(32, "big") + s.to_bytes(32, "big")
+
+
+def messages():
+    not_before, not_after = "1700000000", "1700003600"
+    device = {"scheme": "3", "key": raw_pub(DEVICE_SCALAR).hex()}
+    session_key = raw_pub(SESSION_SCALAR).hex()
+    cert_in = cert(mode=0, principal=1, device=DEVICE_SCALAR, session=SESSION_SCALAR,
+                   not_before=not_before, not_after=not_after)
+    cert_in["signature"] = sign_r_s(DEVICE_SCALAR, session_delegation(cert_in)).hex()
+    cert_transcript = session_delegation(cert_in).hex()
+
+    def case(name, reply, body, body_type, audience, message_id):
+        nonce = message_nonce(message_id).hex()
+        msg_in = {"chain": "self_rooted", "session": cert_in, "audience": audience, "nonce": nonce,
+                  "issued_at": "1700000060", "in_reply_to_nonce": reply, "body_type": body_type, "body": body}
+        transcript = signed_message(msg_in)
+        return {
+            "name": name, "device_key": device, "session_key_hex": session_key,
+            "cert": cert_in, "cert_transcript_hex": cert_transcript,
+            "message": msg_in, "transcript_hex": transcript.hex(),
+            "signature_hex": sign_r_s(SESSION_SCALAR, transcript).hex(),
+        }
+
+    return {"cases": [
+        case("self-rooted message with reply", "1e" * 16, "0a0b0c", "type.googleapis.com/structmux.v1.FleetRequest",
+             "structmux-fleet:3b6a27bcceb6a42d", "m1"),
+        case("self-rooted message without reply, empty body", None, "", "type.googleapis.com/structmux.v1.FleetRequest",
+             "structmux-fleet:3b6a27bcceb6a42d", ""),
+    ]}
+
+
 def write(name, data):
     (HERE / name).write_text(json.dumps(data, sort_keys=True, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -627,6 +676,8 @@ def main():
     write("principals.json", principals())
     write("signatures.json", signatures(transcript_cases))
     write("thumbprints.json", thumbprints())
+    write("nonces.json", message_nonces())
+    write("messages.json", messages())
 
 
 if __name__ == "__main__":

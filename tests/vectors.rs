@@ -278,3 +278,53 @@ fn thumbprint_vector() {
     }
     assert_eq!(checked, 5, "thumbprints.json case count changed");
 }
+
+#[test]
+fn message_nonce_vector() {
+    let n = load("nonces.json");
+    let mut checked = 0;
+    for case in n["cases"].as_array().unwrap() {
+        let id = s(&case["message_id"]);
+        assert_eq!(hex::encode(message_nonce(&id)), s(&case["nonce"]), "{id:?}");
+        checked += 1;
+    }
+    assert_eq!(checked, 5, "nonces.json case count changed");
+}
+
+#[test]
+fn message_vector() {
+    let m = load("messages.json");
+    let mut checked = 0;
+    for case in m["cases"].as_array().unwrap() {
+        let name = s(&case["name"]);
+        let device = PublicKey::try_from(&key(&case["device_key"]).unwrap()).unwrap();
+        let session = PublicKey::p256(&bytes(&case["session_key_hex"])).unwrap();
+
+        // The certificate: the Python transcript and signature, verified by Rust under the device key.
+        let cert = cert(&case["cert"]).unwrap();
+        assert_eq!(cert.session, Some(pb::PublicKey::from(&session)), "{name}");
+        let cert_transcript = session_delegation_transcript(&cert).unwrap();
+        assert_eq!(hex::encode(&cert_transcript), s(&case["cert_transcript_hex"]), "{name}: cert");
+        verify_p256(&device, &cert_transcript, &cert.signature).unwrap_or_else(|e| panic!("{name}: cert: {e}"));
+
+        // The message: the Python transcript and signature, verified by Rust under the session key.
+        let m_in = &case["message"];
+        let message = pb::SignedMessage {
+            signer: Some(pb::SignerChain {
+                chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session: Some(cert) })),
+            }),
+            audience: s(&m_in["audience"]),
+            nonce: bytes(&m_in["nonce"]),
+            issued_at_unix_seconds: int(&m_in["issued_at"]),
+            in_reply_to_nonce: (!m_in["in_reply_to_nonce"].is_null()).then(|| bytes(&m_in["in_reply_to_nonce"])),
+            body_type: s(&m_in["body_type"]),
+            body: bytes(&m_in["body"]),
+            signature: bytes(&case["signature_hex"]),
+        };
+        let transcript = signed_message_transcript(&message).unwrap();
+        assert_eq!(hex::encode(&transcript), s(&case["transcript_hex"]), "{name}: message");
+        verify_p256(&session, &transcript, &message.signature).unwrap_or_else(|e| panic!("{name}: message: {e}"));
+        checked += 1;
+    }
+    assert_eq!(checked, 2, "messages.json case count changed");
+}

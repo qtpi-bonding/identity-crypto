@@ -32,6 +32,10 @@ impl Signer {
         PublicKey::from(&self.0)
     }
 
+    pub fn key_pair(&self) -> &SigningKeyPair {
+        &self.0
+    }
+
     pub fn sign(&self, msg: &[u8]) -> Vec<u8> {
         self.0.sign_bytes(msg).unwrap().to_vec()
     }

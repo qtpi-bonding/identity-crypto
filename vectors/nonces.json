@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "message_id": "m1",
+      "name": "message_id 'm1'",
+      "nonce": "ca0df2c95aa144c1d0ff2ff3c8f967fd"
+    },
+    {
+      "message_id": "",
+      "name": "message_id ''",
+      "nonce": "e3b0c44298fc1c149afbf4c8996fb924"
+    },
+    {
+      "message_id": "héllo ✓",
+      "name": "message_id 'héllo ✓'",
+      "nonce": "5657cdef8a85a584e0e961e6f8247cf5"
+    },
+    {
+      "message_id": "01HZX4Q8WJ5E0T6K9N3M2R7V8B",
+      "name": "message_id '01HZX4Q8WJ5E'",
+      "nonce": "7b50d8ba07a0ab07760d6512b9f50755"
+    },
+    {
+      "message_id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "name": "message_id 'xxxxxxxxxxxx'",
+      "nonce": "0d4e2ca9e9cbced7a7a5380eb29e1a37"
+    }
+  ]
+}

@@ -138,6 +138,17 @@ fn device_current(d: &pb::KeyDelegation, entry: &VerifiedEntry, r: &Resolver, at
     Ok(device)
 }
 
+/// The session window rule, shared by `mint_session` and `check_cert`: the
+/// span must be in `(0, MAX_SESSION_SECONDS]`. Computed in i128 so no pair
+/// of i64 bounds can overflow.
+pub(crate) fn check_session_span(not_before: i64, not_after: i64) -> Result<()> {
+    let span = i128::from(not_after) - i128::from(not_before);
+    if span <= 0 || span > i128::from(MAX_SESSION_SECONDS) {
+        return Err(Error::InvalidField { field: "session.not_after_unix_seconds", reason: "must be within 24 hours after not_before" });
+    }
+    Ok(())
+}
+
 /// Step 5: the session cert under `device`. Returns `(session key, not_after)`.
 fn check_cert(c: &pb::DelegationCert, device: &PublicKey, at: i64) -> Result<(PublicKey, i64)> {
     if &key(&c.device, "session.device")? != device {
@@ -145,10 +156,7 @@ fn check_cert(c: &pb::DelegationCert, device: &PublicKey, at: i64) -> Result<(Pu
     }
     verify_p256(device, &session_delegation_transcript(c)?, &c.signature)?;
     let (nb, na) = (c.not_before_unix_seconds, c.not_after_unix_seconds);
-    let span = i128::from(na) - i128::from(nb);
-    if span <= 0 || span > i128::from(MAX_SESSION_SECONDS) {
-        return Err(Error::InvalidField { field: "session.not_after_unix_seconds", reason: "must be within 24 hours after not_before" });
-    }
+    check_session_span(nb, na)?;
     if at < nb.saturating_sub(SKEW_SECONDS) {
         return Err(Error::NotYetValid("session cert"));
     }

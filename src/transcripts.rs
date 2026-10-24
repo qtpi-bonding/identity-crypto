@@ -243,6 +243,16 @@ pub fn signed_message_transcript(m: &pb::SignedMessage) -> Result<Vec<u8>> {
     Ok(e.finish())
 }
 
+/// The nonce a message carries: SHA-256 of its id's UTF-8 bytes, first 16
+/// bytes (multimatrix's rule). Signers and checkers both call this, so the
+/// rule exists once.
+pub fn message_nonce(message_id: &str) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let mut out = [0u8; 16];
+    out.copy_from_slice(&Sha256::digest(message_id.as_bytes())[..16]);
+    out
+}
+
 pub fn signed_document_transcript(d: &pb::SignedDocument) -> Result<Vec<u8>> {
     let signer = req(d.signer_genesis.as_ref(), "signer_genesis")?;
     let signing = req(d.signing.as_ref(), "signing")?;

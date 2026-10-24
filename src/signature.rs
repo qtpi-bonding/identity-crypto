@@ -1,5 +1,6 @@
-//! The one P-256 signature check. Signers call `jwk_duo` directly over the
-//! transcript bytes; there is no signing wrapper here.
+//! The one P-256 signature check. Signers sign transcript bytes with
+//! `jwk_duo::SigningKeyPair::sign_bytes`, or with
+//! `SessionCredential::sign_message` for a signed message.
 
 use crate::{jwk_duo, Error, PublicKey, Result};
 use sha2::{Digest, Sha256};

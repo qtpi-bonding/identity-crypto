@@ -34,6 +34,7 @@ mod error;
 mod principal;
 mod registry;
 mod resolver;
+mod session;
 mod verify;
 mod public_key;
 mod signature;
@@ -55,8 +56,10 @@ pub use verify::{
     VerifiedApproval, VerifiedChain, VerifiedMessage, When,
     MAX_SESSION_SECONDS, MAX_UNLISTED_DELEGATION_SECONDS, SKEW_SECONDS,
 };
+pub use session::{mint_session, SessionCredential};
 pub use signature::{verify_p256, VerifiedSignature};
 pub use rust_jwk_duo as jwk_duo;
+pub use transcripts::message_nonce;
 pub use wkt::Timestamp;
 
 /// The absolute path to this crate's `proto/` directory, resolved at this
