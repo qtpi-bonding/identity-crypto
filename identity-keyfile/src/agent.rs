@@ -39,6 +39,35 @@ pub struct AgentKeys {
     pub rotations: Vec<pb::RootRotation>,
 }
 
+/// The device keys and public device metadata of an agent. Loading this type
+/// never reads, checks, or opens the root or root-rotation files.
+pub struct DeviceKeys {
+    /// The current device. Private: stored in `device.jwk.json`.
+    pub device: KeyDuo,
+    /// The root's delegation of the current device.
+    pub delegation: pb::KeyDelegation,
+    /// The principal id of the agent.
+    pub agent_id: PrincipalId,
+    /// Devices this agent used to have, public halves only. `retired_at` is an
+    /// unsigned local claim; see [`AgentKeys::retired`].
+    pub retired: Vec<pb::RetiredDevice>,
+}
+
+/// Public device data suitable for handing to a verifier.
+#[derive(Clone, PartialEq)]
+pub struct DevicePublic {
+    /// The principal id of the agent.
+    pub agent_id: PrincipalId,
+    /// The current device's signing key.
+    pub device_signing: PublicKey,
+    /// The current device's encryption key.
+    pub device_encryption: PublicKey,
+    /// The root's delegation of the current device.
+    pub delegation: pb::KeyDelegation,
+    /// Retired devices, public halves only; see [`AgentKeys::retired`] for the trust caveat.
+    pub retired: Vec<pb::RetiredDevice>,
+}
+
 /// Every file an agent directory holds. `init` refuses when any of them exists.
 const AGENT_FILES: [&str; 6] = [
     ROOT_FILE,
@@ -69,11 +98,30 @@ fn retire(retired: &mut Vec<pb::RetiredDevice>, device: &KeyDuo, now: i64) {
     }
 }
 
+/// `DelegationMismatch` unless `delegation` names `device`'s signing key.
+fn check_delegation(device: &KeyDuo, delegation: &pb::KeyDelegation) -> Result<(), KeyfileError> {
+    if delegation.delegated == Some(pb::PublicKey::from(&signing_public(device))) {
+        Ok(())
+    } else {
+        Err(KeyfileError::DelegationMismatch)
+    }
+}
+
 fn exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
 impl AgentKeys {
+    /// Returns public device data without exposing private keys.
+    pub fn public(&self) -> DevicePublic {
+        DevicePublic::new(
+            &self.agent_id,
+            &self.device,
+            &self.delegation,
+            &self.retired,
+        )
+    }
+
     /// Writes every file of `self` into `dir`, creating `dir` (mode 0700) if needed.
     /// Takes the exclusive lock. Refuses a group- or world-accessible existing `dir`.
     /// The files are overwritten, not checked: use [`AgentKeys::init`] to create a
@@ -119,9 +167,7 @@ impl AgentKeys {
     fn load_locked(dir: &Path) -> Result<Self, KeyfileError> {
         files::check_dir(dir)?;
         let keys = Self::load_files(dir)?;
-        if keys.delegation.delegated != Some(pb::PublicKey::from(&signing_public(&keys.device))) {
-            return Err(KeyfileError::DelegationMismatch);
-        }
+        check_delegation(&keys.device, &keys.delegation)?;
         Ok(keys)
     }
 
@@ -298,6 +344,59 @@ impl AgentKeys {
     }
 }
 
+impl DeviceKeys {
+    /// Reads only the device, delegation, principal id, and device history files.
+    /// The root and rotation files are never opened or inspected.
+    pub fn load(dir: &Path) -> Result<Self, KeyfileError> {
+        files::check_dir(dir)?;
+        let _lock = files::lock_shared(dir)?;
+        let device = read_duo(dir, DEVICE_FILE)?;
+        let delegation = read_delegation(dir)?;
+        let agent_id = read_principal_id(dir)?;
+        let retired = read_history(dir)?.retired;
+        check_delegation(&device, &delegation)?;
+        Ok(Self {
+            device,
+            delegation,
+            agent_id,
+            retired,
+        })
+    }
+
+    /// Returns public device data without exposing the private device key.
+    pub fn public(&self) -> DevicePublic {
+        DevicePublic::new(
+            &self.agent_id,
+            &self.device,
+            &self.delegation,
+            &self.retired,
+        )
+    }
+}
+
+impl DevicePublic {
+    fn new(
+        agent_id: &PrincipalId,
+        device: &KeyDuo,
+        delegation: &pb::KeyDelegation,
+        retired: &[pb::RetiredDevice],
+    ) -> Self {
+        Self {
+            agent_id: agent_id.clone(),
+            device_signing: signing_public(device),
+            device_encryption: encryption_public(device),
+            delegation: delegation.clone(),
+            retired: retired.to_vec(),
+        }
+    }
+
+    /// The device signing keys accepted at `at`, as [`device_keys_at`]. `at` must
+    /// come from a trusted clock: `retired_at` is an unsigned local claim.
+    pub fn device_keys_at(&self, at: i64) -> Vec<PublicKey> {
+        device_keys_at_public(&self.device_signing, &self.retired, at)
+    }
+}
+
 /// The device signing keys a verifier should accept as of `at`: the current
 /// device first, then each retired device whose `retired_at_unix_seconds` is at
 /// or after `at`, in history order. Duplicates are removed.
@@ -309,9 +408,16 @@ impl AgentKeys {
 /// own `issued_at`. `retired_at` is an unsigned local claim, so a compromised
 /// retired key can sign claimed-earlier messages indefinitely.
 pub fn device_keys_at(keys: &AgentKeys, at: i64) -> Vec<PublicKey> {
-    let current = signing_public(&keys.device);
+    device_keys_at_public(&signing_public(&keys.device), &keys.retired, at)
+}
+
+fn device_keys_at_public(
+    current: &PublicKey,
+    retired: &[pb::RetiredDevice],
+    at: i64,
+) -> Vec<PublicKey> {
     let mut result = vec![current.clone()];
-    for retired in &keys.retired {
+    for retired in retired {
         if retired.retired_at_unix_seconds < at {
             continue;
         }
@@ -321,7 +427,7 @@ pub fn device_keys_at(keys: &AgentKeys, at: i64) -> Vec<PublicKey> {
         let Ok(public) = PublicKey::try_from(wire) else {
             continue;
         };
-        if public == current || result.contains(&public) {
+        if &public == current || result.contains(&public) {
             continue;
         }
         result.push(public);

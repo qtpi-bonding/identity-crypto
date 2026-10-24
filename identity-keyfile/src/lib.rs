@@ -5,7 +5,7 @@ mod agent;
 mod error;
 mod files;
 
-pub use agent::{device_keys_at, AgentKeys};
+pub use agent::{device_keys_at, AgentKeys, DeviceKeys, DevicePublic};
 pub use error::KeyfileError;
 pub use files::{
     read_delegation, read_duo, read_history, read_principal_id, read_rotations, write_delegation,

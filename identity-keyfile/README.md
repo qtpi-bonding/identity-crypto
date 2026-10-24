@@ -7,6 +7,15 @@ replaces the root (`rotate_root`), and reads and writes them (`load`, `save`).
 The crate is Unix-only: key files are written mode `0600`, and other targets
 fail to compile.
 
+## Device-only loading
+
+`DeviceKeys::load(dir)` reads the device key, delegation, agent id, and retired
+device history while taking the same shared lock as `AgentKeys::load`. It never
+opens, stats, or checks `root.jwk.json` or `rotations.json`, so a device-only
+signer can run without access to the root. Like `AgentKeys::load`, it creates
+`.lock`, and reads without a lock when the directory is read-only. `DeviceKeys::public()` (and
+`AgentKeys::public()`) returns the private-key-free `DevicePublic` snapshot.
+
 ## Layout
 
 The agent directory holds these files:
@@ -20,6 +29,10 @@ The agent directory holds these files:
 | `retired_devices.json` | retired devices, public halves and `retiredAtUnixSeconds` (proto3 JSON `DeviceHistory`) | `renew(.., true)`, `save` |
 | `rotations.json` | root rotation chain, public data only (proto3 JSON `RootRotations`) | `rotate_root`, `save` |
 | `.lock` | empty advisory lock file | every locked operation |
+
+The device-only loader needs `device.jwk.json`, `delegation.json`, `agent_id`,
+and (optionally) `retired_devices.json`; the root and rotation files are not
+part of its input.
 
 The directory is `0700`. Each file is written as a `0600` temporary file in the
 same directory, fsynced, renamed over the target, and then the directory is
