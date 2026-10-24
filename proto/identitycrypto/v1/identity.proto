@@ -137,24 +137,16 @@ message PeerRevocation {               // the authority, present, freezes a prin
   bytes document_id = 7;               // 32 bytes: the id of the document in force (SHA-256 of its signed-document.v1 transcript)
 }
 
-enum VerificationOutcome {
-  VERIFICATION_OUTCOME_UNSPECIFIED = 0;
-  VERIFICATION_OUTCOME_DIRECT_KEY = 1;
-  VERIFICATION_OUTCOME_DELEGATED_KEY = 2;
-  // No agent key was checked: the attesting service vouches for this
-  // content itself (e.g. multimatrix's admit_system path).
-  VERIFICATION_OUTCOME_SYSTEM = 3;
-}
-
 // One message inside a signed delivery batch. body_text is authoritative.
 message AttestedMessage {
   string message_id = 1;
   string room_id = 2;
   reserved 3;                               // was: string author_agent_id
   string body_text = 4;
-  VerificationOutcome verification_outcome = 5;
-  DelegationCert delegation_cert = 6;       // present iff outcome is DELEGATED_KEY
-  optional PublicKey author_genesis = 7;    // absent iff outcome is SYSTEM
+  reserved 5;                               // was: VerificationOutcome verification_outcome
+  reserved "verification_outcome";
+  DelegationCert delegation_cert = 6;       // required: the agent's session delegation
+  PublicKey author_genesis = 7;             // required: the author's genesis key
 }
 
 // Signed once per delivery batch by the delivering service's own key.

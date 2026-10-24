@@ -67,6 +67,7 @@ pub fn proto_include_dir() -> &'static str {
 
 /// Generated from `proto/identitycrypto/v1/identity.proto`. Private: the
 /// only public path to these types is [`pb`].
+#[allow(clippy::useless_borrows_in_formatting)] // pbjson-build 0.7 output
 mod proto {
     pub mod identitycrypto {
         pub mod v1 {
@@ -103,10 +104,6 @@ mod proto_tests {
         assert_eq!(pb::PrincipalKind::Human as i32, 1);
         assert_eq!(pb::PrincipalKind::Agent as i32, 2);
         assert_eq!(pb::PrincipalKind::Daemon as i32, 3);
-        assert_eq!(pb::VerificationOutcome::Unspecified as i32, 0);
-        assert_eq!(pb::VerificationOutcome::DirectKey as i32, 1);
-        assert_eq!(pb::VerificationOutcome::DelegatedKey as i32, 2);
-        assert_eq!(pb::VerificationOutcome::System as i32, 3);
     }
 
     fn round_trip<M: Message + Default + PartialEq + std::fmt::Debug>(m: M) {
@@ -156,7 +153,7 @@ mod proto_tests {
         };
         round_trip(pb::RegistryCarrier { registry: Some(pb::PrincipalRegistry { entries: vec![entry], allow_peer_revocation: true }) });
         round_trip(pb::AcceptedChains { principals: vec![pb::AcceptedPrincipal { principal_id: "p256:04".into(), kind: 3, rotations: vec![] }] });
-        round_trip(pb::DeliveryAttestation { key_id: "k".into(), batch_sequence: 1, attested_at: Some(prost_types::Timestamp { seconds: 1, nanos: 2 }), messages: vec![pb::AttestedMessage { message_id: "m".into(), room_id: "r".into(), body_text: "b".into(), verification_outcome: pb::VerificationOutcome::DelegatedKey as i32, delegation_cert: Some(cert()), author_genesis: Some(key(1)) }], signature: vec![1; 64], recipient_devices: vec![key(5), key(6)] });
+        round_trip(pb::DeliveryAttestation { key_id: "k".into(), batch_sequence: 1, attested_at: Some(prost_types::Timestamp { seconds: 1, nanos: 2 }), messages: vec![pb::AttestedMessage { message_id: "m".into(), room_id: "r".into(), body_text: "b".into(), delegation_cert: Some(cert()), author_genesis: Some(key(1)) }], signature: vec![1; 64], recipient_devices: vec![key(5), key(6)] });
     }
 
     #[test]

@@ -148,7 +148,6 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
                     message_id: s(&m["message_id"]),
                     room_id: s(&m["room_id"]),
                     body_text: s(&m["body_text"]),
-                    verification_outcome: int(&m["verification_outcome"]),
                     delegation_cert: cert(&m["delegation_cert"]),
                     author_genesis: key(&m["author_genesis"]),
                 })
@@ -220,7 +219,7 @@ fn transcripts_match_the_independent_generator() {
         }
         checked += 1;
     }
-    assert_eq!(checked, 104, "transcripts.json case count changed");
+    assert_eq!(checked, 100, "transcripts.json case count changed");
 }
 
 #[test]

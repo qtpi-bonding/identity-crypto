@@ -249,7 +249,6 @@ fn signed_document_approval_and_peer_revocation_bind_every_field() {
 fn delivery_attestation_binds_every_field() {
     let message = pb::AttestedMessage {
         message_id: "m".into(), room_id: "r".into(), body_text: "b".into(),
-        verification_outcome: pb::VerificationOutcome::DelegatedKey as i32,
         delegation_cert: Some(cert(1)), author_genesis: pk(),
     };
     let base = pb::DeliveryAttestation {
@@ -272,10 +271,6 @@ fn delivery_attestation_binds_every_field() {
             ("messages.room_id", Box::new(|a| a.messages[0].room_id.push('x'))),
             ("messages.author_genesis", Box::new(|a| a.messages[0].author_genesis = pk())),
             ("messages.body_text", Box::new(|a| a.messages[0].body_text.push('x'))),
-            ("messages.outcome", Box::new(|a| {
-                a.messages[0].verification_outcome = pb::VerificationOutcome::DirectKey as i32;
-                a.messages[0].delegation_cert = None;
-            })),
             ("messages.delegation_cert", Box::new(|a| a.messages[0].delegation_cert.as_mut().unwrap().not_after_unix_seconds += 1)),
             ("messages.delegation_cert.signature", Box::new(|a| a.messages[0].delegation_cert.as_mut().unwrap().signature[0] = 2)),
             ("message order", Box::new(|a| a.messages.swap(0, 1))),

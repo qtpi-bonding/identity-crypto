@@ -288,12 +288,11 @@ pub fn peer_revocation_transcript(p: &pb::PeerRevocation) -> Result<Vec<u8>> {
 ///                            ‖ len(key_id) ‖ batch_sequence u64
 ///                            ‖ attested_at.seconds i64 ‖ attested_at.nanos i32
 ///                            ‖ u32 count ‖ MESSAGE…
-/// MESSAGE := len(message_id) ‖ len(room_id) ‖ opt(PRINCIPAL(author))
-///            ‖ len(body_text) ‖ verification_outcome i32 ‖ opt(CERT)
+/// MESSAGE := len(message_id) ‖ len(room_id) ‖ KEY(author)
+///            ‖ len(body_text) ‖ CERT
 /// CERT    := the cert's session-delegation.v1 bytes without the tag, then len(signature)
 /// ```
 pub fn delivery_attestation_transcript(a: &pb::DeliveryAttestation) -> Result<Vec<u8>> {
-    use pb::VerificationOutcome as O;
     let mut e = Enc::new(DELIVERY_ATTESTATION_TAG);
     e.u32("recipient_devices", a.recipient_devices.len())?;
     for r in &a.recipient_devices {
@@ -311,39 +310,12 @@ pub fn delivery_attestation_transcript(a: &pb::DeliveryAttestation) -> Result<Ve
     for m in &a.messages {
         e.var(m.message_id.as_bytes())?;
         e.var(m.room_id.as_bytes())?;
-        let outcome = match O::try_from(m.verification_outcome) {
-            Ok(o @ (O::DirectKey | O::DelegatedKey | O::System)) => o,
-            _ => return Err(Error::InvalidField {
-                field: "messages.verification_outcome",
-                reason: "must be DIRECT_KEY, DELEGATED_KEY or SYSTEM",
-            }),
-        };
-        match (outcome, m.author_genesis.is_some()) {
-            (O::System, true) => return Err(Error::InvalidField {
-                field: "messages.author_genesis", reason: "forbidden for SYSTEM",
-            }),
-            (O::DirectKey | O::DelegatedKey, false) => return Err(Error::MissingField("messages.author_genesis")),
-            _ => {}
-        }
-        match (outcome, m.delegation_cert.is_some()) {
-            (O::DelegatedKey, false) => return Err(Error::MissingField("messages.delegation_cert")),
-            (O::DirectKey | O::System, true) => return Err(Error::InvalidField {
-                field: "messages.delegation_cert", reason: "only with DELEGATED_KEY",
-            }),
-            _ => {}
-        }
-        let author = opt_key(m.author_genesis.as_ref())?;
-        e.opt_key(author.as_ref())?;
+        let author = req(m.author_genesis.as_ref(), "messages.author_genesis")?;
+        let cert = m.delegation_cert.as_ref().ok_or(Error::MissingField("messages.delegation_cert"))?;
+        e.key(&author)?;
         e.var(m.body_text.as_bytes())?;
-        e.i32(m.verification_outcome);
-        match &m.delegation_cert {
-            Some(c) => {
-                e.present();
-                encode_cert_body(&mut e, c)?;
-                e.var(&c.signature)?;
-            }
-            None => e.absent(),
-        }
+        encode_cert_body(&mut e, cert)?;
+        e.var(&cert.signature)?;
     }
     Ok(e.finish())
 }
@@ -563,14 +535,13 @@ mod tests {
         }
     }
 
-    fn attested(outcome: pb::VerificationOutcome) -> pb::AttestedMessage {
+    fn attested() -> pb::AttestedMessage {
         pb::AttestedMessage {
             message_id: "m".into(),
             room_id: "r".into(),
             body_text: "hi".into(),
-            verification_outcome: outcome as i32,
-            delegation_cert: (outcome == pb::VerificationOutcome::DelegatedKey).then(cert1),
-            author_genesis: (outcome != pb::VerificationOutcome::System).then(|| pb::PublicKey::from(&k())),
+            delegation_cert: Some(cert1()),
+            author_genesis: Some(pb::PublicKey::from(&k())),
         }
     }
 
@@ -580,11 +551,7 @@ mod tests {
             key_id: "kid".into(),
             batch_sequence: 9,
             attested_at: Some(prost_types::Timestamp { seconds: 100, nanos: 5 }),
-            messages: vec![
-                attested(pb::VerificationOutcome::DirectKey),
-                attested(pb::VerificationOutcome::DelegatedKey),
-                attested(pb::VerificationOutcome::System),
-            ],
+            messages: vec![attested(), attested()],
             signature: vec![],
         }
     }
@@ -610,15 +577,13 @@ mod tests {
     fn delivery_attestation_message_layout() {
         let mut a = attestation();
         a.recipient_devices.clear();
-        a.messages = vec![attested(pb::VerificationOutcome::DelegatedKey)];
+        a.messages = vec![attested()];
         let m = &a.messages[0];
         let cert = m.delegation_cert.clone().unwrap();
         let t = delivery_attestation_transcript(&a).unwrap();
-        let mut tail = vec![0, 0, 0, 1, b'm', 0, 0, 0, 1, b'r', 1];
+        let mut tail = vec![0, 0, 0, 1, b'm', 0, 0, 0, 1, b'r'];
         tail.extend(key_bytes(&PublicKey::try_from(m.author_genesis.as_ref().unwrap()).unwrap()));
         tail.extend([0, 0, 0, 2, b'h', b'i']);
-        tail.extend(2i32.to_be_bytes());
-        tail.push(1);
         let cert_bytes = session_delegation_transcript(&cert).unwrap();
         tail.extend(&cert_bytes[SESSION_DELEGATION_TAG.len() + 1..]);
         tail.extend([0, 0, 0, 64]);
@@ -628,7 +593,6 @@ mod tests {
 
     #[test]
     fn delivery_attestation_checks() {
-        use pb::VerificationOutcome as O;
         let with = |f: &dyn Fn(&mut pb::DeliveryAttestation)| {
             let mut a = attestation();
             f(&mut a);
@@ -639,32 +603,36 @@ mod tests {
         let bad_nanos = Err(Error::InvalidField { field: "attested_at.nanos", reason: "out of range" });
         assert_eq!(with(&|a| a.attested_at.as_mut().unwrap().nanos = 1_000_000_000), bad_nanos);
         assert_eq!(with(&|a| a.attested_at.as_mut().unwrap().nanos = -1), bad_nanos);
+    }
+
+    #[test]
+    fn message_without_author_genesis_is_rejected() {
+        let mut a = attestation();
+        a.messages[1].author_genesis = None;
         assert_eq!(
-            with(&|a| a.messages[0].verification_outcome = O::Unspecified as i32),
-            Err(Error::InvalidField {
-                field: "messages.verification_outcome",
-                reason: "must be DIRECT_KEY, DELEGATED_KEY or SYSTEM"
-            })
-        );
-        assert_eq!(
-            with(&|a| a.messages[0].author_genesis = None),
+            delivery_attestation_transcript(&a),
             Err(Error::MissingField("messages.author_genesis"))
         );
+    }
+
+    #[test]
+    fn message_without_delegation_cert_is_rejected() {
+        let mut a = attestation();
+        a.messages[1].delegation_cert = None;
         assert_eq!(
-            with(&|a| a.messages[0].delegation_cert = Some(cert1())),
-            Err(Error::InvalidField { field: "messages.delegation_cert", reason: "only with DELEGATED_KEY" })
-        );
-        assert_eq!(
-            with(&|a| a.messages[1].delegation_cert = None),
+            delivery_attestation_transcript(&a),
             Err(Error::MissingField("messages.delegation_cert"))
         );
+    }
+
+    #[test]
+    fn message_missing_both_reports_author_first() {
+        let mut a = attestation();
+        a.messages[0].author_genesis = None;
+        a.messages[0].delegation_cert = None;
         assert_eq!(
-            with(&|a| a.messages[2].author_genesis = Some(pb::PublicKey::from(&k()))),
-            Err(Error::InvalidField { field: "messages.author_genesis", reason: "forbidden for SYSTEM" })
-        );
-        assert_eq!(
-            with(&|a| a.messages[2].delegation_cert = Some(cert1())),
-            Err(Error::InvalidField { field: "messages.delegation_cert", reason: "only with DELEGATED_KEY" })
+            delivery_attestation_transcript(&a),
+            Err(Error::MissingField("messages.author_genesis"))
         );
     }
 
