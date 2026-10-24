@@ -37,6 +37,7 @@ mod resolver;
 mod verify;
 mod public_key;
 mod signature;
+mod wkt;
 pub mod transcripts;
 
 #[cfg(test)]
@@ -56,6 +57,7 @@ pub use verify::{
 };
 pub use signature::{verify_p256, VerifiedSignature};
 pub use rust_jwk_duo as jwk_duo;
+pub use wkt::Timestamp;
 
 /// The absolute path to this crate's `proto/` directory, resolved at this
 /// crate's compile time so it is right for path and git dependencies alike.
@@ -153,7 +155,7 @@ mod proto_tests {
         };
         round_trip(pb::RegistryCarrier { registry: Some(pb::PrincipalRegistry { entries: vec![entry], allow_peer_revocation: true }) });
         round_trip(pb::AcceptedChains { principals: vec![pb::AcceptedPrincipal { principal_id: "p256:04".into(), kind: 3, rotations: vec![] }] });
-        round_trip(pb::DeliveryAttestation { key_id: "k".into(), batch_sequence: 1, attested_at: Some(prost_types::Timestamp { seconds: 1, nanos: 2 }), messages: vec![pb::AttestedMessage { message_id: "m".into(), room_id: "r".into(), body_text: "b".into(), delegation_cert: Some(cert()), author_genesis: Some(key(1)) }], signature: vec![1; 64], recipient_devices: vec![key(5), key(6)] });
+        round_trip(pb::DeliveryAttestation { key_id: "k".into(), batch_sequence: 1, attested_at: Some(Timestamp { seconds: 1, nanos: 2 }), messages: vec![pb::AttestedMessage { message_id: "m".into(), room_id: "r".into(), body_text: "b".into(), delegation_cert: Some(cert()), author_genesis: Some(key(1)) }], signature: vec![1; 64], recipient_devices: vec![key(5), key(6)] });
     }
 
     #[test]

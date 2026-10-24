@@ -253,7 +253,7 @@ fn delivery_attestation_binds_every_field() {
     };
     let base = pb::DeliveryAttestation {
         recipient_devices: vec![pb::PublicKey::from(&k())], key_id: "k".into(), batch_sequence: 1,
-        attested_at: Some(prost_types::Timestamp { seconds: 1, nanos: 1 }),
+        attested_at: Some(identity_crypto::Timestamp { seconds: 1, nanos: 1 }),
         messages: vec![message.clone(), pb::AttestedMessage { message_id: "n".into(), ..message }],
         signature: vec![],
     };

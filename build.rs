@@ -12,6 +12,11 @@ fn main() {
 
     let mut config = prost_build::Config::new();
     config.file_descriptor_set_path(&descriptor_path);
+    // prost-build maps .google.protobuf to prost-types by default; this
+    // maps it to our own Timestamp (src/wkt.rs), whose JSON form is RFC 3339
+    // with `Z`. compile_well_known_types() turns the prost-types default off.
+    config.compile_well_known_types();
+    config.extern_path(".google.protobuf", "crate::wkt");
     config
         .compile_protos(&[proto], &["proto/"])
         .expect("compiling identitycrypto/v1/identity.proto");
@@ -24,10 +29,7 @@ fn main() {
     pbjson_build::Builder::new()
         .register_descriptors(&descriptor_set)
         .expect("register descriptors")
-        .exclude([
-            ".identitycrypto.v1.AttestedMessage",
-            ".identitycrypto.v1.DeliveryAttestation",
-        ])
+        .extern_path(".google.protobuf", "crate::wkt")
         .build(&[".identitycrypto"])
         .expect("build pbjson serde");
 }

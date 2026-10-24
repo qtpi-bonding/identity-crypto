@@ -550,7 +550,7 @@ mod tests {
             recipient_devices: vec![pb::PublicKey::from(&k()), pb::PublicKey::from(&k())],
             key_id: "kid".into(),
             batch_sequence: 9,
-            attested_at: Some(prost_types::Timestamp { seconds: 100, nanos: 5 }),
+            attested_at: Some(crate::Timestamp { seconds: 100, nanos: 5 }),
             messages: vec![attested(), attested()],
             signature: vec![],
         }
@@ -560,7 +560,7 @@ mod tests {
     fn delivery_attestation_empty_layout() {
         let a = pb::DeliveryAttestation {
             recipient_devices: vec![], key_id: String::new(), batch_sequence: 0,
-            attested_at: Some(prost_types::Timestamp { seconds: 0, nanos: 0 }),
+            attested_at: Some(crate::Timestamp { seconds: 0, nanos: 0 }),
             messages: vec![], signature: vec![],
         };
         let mut want = b"identitycrypto.delivery-attestation.v1\0".to_vec();

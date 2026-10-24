@@ -136,7 +136,7 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
             recipient_devices: i["recipient_devices"].as_array().unwrap().iter().map(|k| key(k).unwrap()).collect(),
             key_id: s(&i["key_id"]),
             batch_sequence: int(&i["batch_sequence"]),
-            attested_at: (!i["attested_at"].is_null()).then(|| prost_types::Timestamp {
+            attested_at: (!i["attested_at"].is_null()).then(|| identity_crypto::Timestamp {
                 seconds: int(&i["attested_at"]["seconds"]),
                 nanos: int(&i["attested_at"]["nanos"]),
             }),
