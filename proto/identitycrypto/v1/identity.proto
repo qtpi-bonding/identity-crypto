@@ -221,3 +221,22 @@ message AcceptedPrincipal {
   PrincipalKind kind = 2;
   repeated RootRotation rotations = 3; // empty: the chain is the genesis key alone
 }
+
+// Keys a device held before a renewal under a new device duo, for the
+// verifier's historical lookups. Public halves only, never a private key.
+// Carried in the identity-keyfile agent directory (retired_devices.json).
+message RetiredDevice {
+  PublicKey signing = 1;
+  PublicKey encryption = 2;
+  int64 retired_at_unix_seconds = 3;   // a local claim, not signed by anyone
+}
+
+message DeviceHistory {
+  repeated RetiredDevice retired = 1;
+}
+
+// The whole root chain of one principal, public data only: the agent
+// directory's rotations.json.
+message RootRotations {
+  repeated RootRotation rotations = 1;
+}

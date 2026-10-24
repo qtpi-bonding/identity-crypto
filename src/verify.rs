@@ -123,10 +123,7 @@ fn device_current(d: &pb::KeyDelegation, entry: &VerifiedEntry, r: &Resolver, at
             }
         }
         PrincipalKind::Daemon | PrincipalKind::Agent => {
-            let span = i128::from(d.not_after_unix_seconds) - i128::from(d.issued_at_unix_seconds);
-            if span <= 0 || span > i128::from(MAX_UNLISTED_DELEGATION_SECONDS) {
-                return Err(Error::InvalidField { field: "device.not_after_unix_seconds", reason: "must be within 31 days after issued_at" });
-            }
+            check_unlisted_span("device.not_after_unix_seconds", d.issued_at_unix_seconds, d.not_after_unix_seconds)?;
             if d.issued_at_unix_seconds > at.saturating_add(SKEW_SECONDS) {
                 return Err(Error::NotYetValid("device delegation"));
             }
@@ -145,6 +142,18 @@ pub(crate) fn check_session_span(not_before: i64, not_after: i64) -> Result<()> 
     let span = i128::from(not_after) - i128::from(not_before);
     if span <= 0 || span > i128::from(MAX_SESSION_SECONDS) {
         return Err(Error::InvalidField { field: "session.not_after_unix_seconds", reason: "must be within 24 hours after not_before" });
+    }
+    Ok(())
+}
+
+/// The unlisted device-delegation rule (daemons and self-rooted agents): the
+/// span must be in `(0, MAX_UNLISTED_DELEGATION_SECONDS]`. Shared by the
+/// verifier and `keys::delegate_device`, so the signer and the verifier
+/// enforce one cap. Computed in i128 so no pair of i64 bounds can overflow.
+pub(crate) fn check_unlisted_span(field: &'static str, issued: i64, not_after: i64) -> Result<()> {
+    let span = i128::from(not_after) - i128::from(issued);
+    if span <= 0 || span > i128::from(MAX_UNLISTED_DELEGATION_SECONDS) {
+        return Err(Error::InvalidField { field, reason: "must be within 31 days after issued_at" });
     }
     Ok(())
 }

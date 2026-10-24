@@ -29,6 +29,7 @@
 //! ```
 
 mod authority;
+mod keys;
 mod accepted;
 mod error;
 mod principal;
@@ -41,8 +42,11 @@ mod signature;
 mod wkt;
 pub mod transcripts;
 
-#[cfg(test)]
-pub(crate) mod testkit;
+/// Test fixtures with real keys and signatures. Compiled for this crate's
+/// tests, or for consumers that enable the `testkit` feature in their
+/// `[dev-dependencies]`. Never enable it in a normal dependency.
+#[cfg(any(test, feature = "testkit"))]
+pub mod testkit;
 
 pub use authority::{verify_signed_document, AuthorityChain, VerifiedDocument};
 pub use accepted::AcceptedChains;
@@ -56,6 +60,10 @@ pub use verify::{
     verify_signed_message_trusted_devices, AcceptedAt, AuthorDevices, Host, VerifiedApproval,
     VerifiedChain, VerifiedMessage, VerifiedTrustedMessage, When,
     MAX_SESSION_SECONDS, MAX_UNLISTED_DELEGATION_SECONDS, SKEW_SECONDS,
+};
+pub use keys::{
+    challenge_proof, delegate_device, device_delegation, encryption_public, principal_id,
+    rename_proof, renewal_due, revocation, rotation, sign_key_delegation, signing_public,
 };
 pub use session::{mint_session, SessionCredential};
 pub use signature::{verify_p256, VerifiedSignature};

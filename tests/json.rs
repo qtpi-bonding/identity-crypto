@@ -224,3 +224,88 @@ fn json_round_trip_keeps_the_transcript() {
         assert_eq!(transcript(&decoded), transcript(&original), "{name}: transcript");
     }
 }
+
+fn fixed_key(b: u8) -> pb::PublicKey {
+    pb::PublicKey { scheme: pb::KeyScheme::EcdsaP256 as i32, key: vec![b; 65] }
+}
+
+fn device_history() -> pb::DeviceHistory {
+    pb::DeviceHistory {
+        retired: vec![pb::RetiredDevice {
+            signing: Some(fixed_key(4)),
+            encryption: Some(fixed_key(4)),
+            retired_at_unix_seconds: 1_700_000_000,
+        }],
+    }
+}
+
+#[test]
+fn device_history_json_round_trip() {
+    let h = device_history();
+    let v = serde_json::to_value(&h).expect("serialize");
+    // Exact proto3-JSON: camelCase names, int64 as a string, bytes as padded
+    // standard base64 of 65 bytes of 0x04, enums by their full proto name.
+    let key = "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ=";
+    assert_eq!(
+        v,
+        json!({
+            "retired": [{
+                "signing": { "scheme": "KEY_SCHEME_ECDSA_P256", "key": key },
+                "encryption": { "scheme": "KEY_SCHEME_ECDSA_P256", "key": key },
+                "retiredAtUnixSeconds": "1700000000"
+            }]
+        })
+    );
+    let back: pb::DeviceHistory = serde_json::from_value(v).expect("decode");
+    assert_eq!(back, h);
+    // An empty history is the empty object, and the field may be absent.
+    assert_eq!(serde_json::to_value(pb::DeviceHistory::default()).unwrap(), json!({}));
+    assert_eq!(serde_json::from_str::<pb::DeviceHistory>("{}").unwrap(), pb::DeviceHistory::default());
+}
+
+#[test]
+fn root_rotations_json_round_trip() {
+    let rotation = pb::RootRotation {
+        principal_genesis: Some(fixed_key(1)),
+        old_root: Some(fixed_key(2)),
+        new_root: Some(fixed_key(3)),
+        issued_at_unix_seconds: 42,
+        signature: vec![0xfb; 64],
+    };
+    let chain = pb::RootRotations { rotations: vec![rotation.clone()] };
+    let v = serde_json::to_value(&chain).expect("serialize");
+    let key = |b: u8| base64_std(&[b; 65]);
+    assert_eq!(
+        v,
+        json!({
+            "rotations": [{
+                "principalGenesis": { "scheme": "KEY_SCHEME_ECDSA_P256", "key": key(1) },
+                "oldRoot": { "scheme": "KEY_SCHEME_ECDSA_P256", "key": key(2) },
+                "newRoot": { "scheme": "KEY_SCHEME_ECDSA_P256", "key": key(3) },
+                "issuedAtUnixSeconds": "42",
+                "signature": "+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+/v7+w=="
+            }]
+        })
+    );
+    let back: pb::RootRotations = serde_json::from_value(v).expect("decode");
+    assert_eq!(back, chain);
+    assert_eq!(back.rotations[0], rotation);
+}
+
+/// Standard padded base64, for the exact-JSON assertions above.
+fn base64_std(raw: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::new();
+    for chunk in raw.chunks(3) {
+        let b = [chunk[0], *chunk.get(1).unwrap_or(&0), *chunk.get(2).unwrap_or(&0)];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}

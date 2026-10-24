@@ -4,6 +4,7 @@
 #![allow(dead_code, clippy::items_after_test_module)]
 
 use crate::jwk_duo::{GenerationService, SigningKeyPair};
+use crate::keys;
 use crate::transcripts::*;
 use crate::{pb, PrincipalId, PublicKey};
 use prost::Message;
@@ -97,50 +98,50 @@ impl Principal {
         }
     }
 
+    /// Signs `delegation` with the current root. Uncapped, like the real
+    /// `keys::sign_key_delegation` it calls.
     pub fn sign_delegation(&self, delegation: &mut pb::KeyDelegation) {
-        delegation.signature = self
-            .root()
-            .sign(&key_delegation_transcript(delegation).unwrap());
+        keys::sign_key_delegation(self.root().key_pair(), delegation).unwrap();
     }
 
-    /// A DEVICE delegation of a fresh duo, signed by the current root.
+    /// A DEVICE delegation of a fresh duo, signed by the current root. Uncapped
+    /// (the `i64::MAX` fixtures need that); the capped path is `keys::delegate_device`.
     pub fn delegate_device(
         &self,
         issued_at: i64,
         not_after: i64,
     ) -> (Signer, pb::KeyDelegation) {
         let device = Signer::new();
-        let mut delegation = pb::KeyDelegation {
-            principal_genesis: pk(&self.genesis()),
-            signing_root: pk(&self.root().public()),
-            purpose: pb::KeyPurpose::Device as i32,
-            delegated: pk(&device.public()),
-            delegated_encryption: pk(&enc_key()),
-            issued_at_unix_seconds: issued_at,
-            not_after_unix_seconds: not_after,
-            signature: vec![],
-        };
+        let mut delegation = keys::device_delegation(
+            &self.id(),
+            &self.root().public(),
+            &device.public(),
+            &enc_key(),
+            issued_at,
+            not_after,
+        );
         self.sign_delegation(&mut delegation);
         (device, delegation)
     }
 
-    /// An APPROVAL delegation of a fresh key, signed by the current root.
+    /// An APPROVAL delegation of a fresh key, signed by the current root. It is
+    /// the device builder with the purpose changed and no encryption half.
     pub fn delegate_approval(
         &self,
         issued_at: i64,
         not_after: i64,
     ) -> (Signer, pb::KeyDelegation) {
         let key = Signer::new();
-        let mut delegation = pb::KeyDelegation {
-            principal_genesis: pk(&self.genesis()),
-            signing_root: pk(&self.root().public()),
-            purpose: pb::KeyPurpose::Approval as i32,
-            delegated: pk(&key.public()),
-            delegated_encryption: None,
-            issued_at_unix_seconds: issued_at,
-            not_after_unix_seconds: not_after,
-            signature: vec![],
-        };
+        let mut delegation = keys::device_delegation(
+            &self.id(),
+            &self.root().public(),
+            &key.public(),
+            &enc_key(),
+            issued_at,
+            not_after,
+        );
+        delegation.purpose = pb::KeyPurpose::Approval as i32;
+        delegation.delegated_encryption = None;
         self.sign_delegation(&mut delegation);
         (key, delegation)
     }

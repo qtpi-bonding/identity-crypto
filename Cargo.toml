@@ -4,6 +4,10 @@ version = "0.5.0"
 edition = "2021"
 description = "P-256 key types, principal ids, canonical transcripts and the signature check for the concordium/structmux identity design"
 
+[features]
+# Test fixtures for consumers' dev-dependencies. Off by default.
+testkit = []
+
 [dependencies]
 rust_jwk_duo = { git = "https://github.com/qtpi-bonding-org/rust_jwk_duo.git", rev = "489985d719539a6d8f841561728eb33cda82601e" }
 sha2 = "0.11"

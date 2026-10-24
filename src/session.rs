@@ -53,7 +53,8 @@ pub fn mint_session(
     Ok(SessionCredential { cert, key })
 }
 
-fn sign(key: &jwk_duo::SigningKeyPair, message: &[u8]) -> Result<[u8; 64]> {
+/// The one signing-failure mapping: a public-only key pair becomes `InvalidKey`.
+pub(crate) fn sign(key: &jwk_duo::SigningKeyPair, message: &[u8]) -> Result<[u8; 64]> {
     key.sign_bytes(message)
         .map_err(|e| Error::InvalidKey(format!("cannot sign with this key pair: {e}")))
 }

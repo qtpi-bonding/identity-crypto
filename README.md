@@ -99,9 +99,47 @@ versions, persistence and policy are the caller's.
   validates while it encodes; signer and verifier call the same function.
 - **`verify_p256`:** 64-byte `r‖s`, both S forms, returning a
   `VerifiedSignature` witness bound to the key and the message.
+- **Key builders** (`keys`, see below): the delegation, proof, rotation and
+  revocation signatures over those transcripts, with the device window cap.
 
 Every primitive comes from [`rust_jwk_duo`](https://github.com/qtpi-bonding-org/rust_jwk_duo), re-exported as
-`identity_crypto::jwk_duo`; sign with it directly over transcript bytes.
+`identity_crypto::jwk_duo`. Sign transcripts with the `keys` builders (below),
+not with `jwk_duo` directly, so the window caps and transcript rules apply.
+
+## Keys
+
+Pure builders for a self-rooted principal's signatures (re-exported at the
+root from `src/keys.rs`). No I/O, no clock (the caller passes `now`), no key
+generation or storage.
+
+- `signing_public`, `encryption_public`, `principal_id`: the public halves of a
+  duo, and the principal id a genesis duo starts.
+- `delegate_device(root, genesis, device, issued, not_after)`: a root-signed
+  DEVICE delegation for an Agent or Daemon device. Capped at 31 days by the
+  same rule the verifier applies (`check_unlisted_span`).
+- `device_delegation` (unsigned) and `sign_key_delegation`: no cap. For a
+  Human's device or an approval key, whose window may be longer.
+- `renewal_due(d, now, margin)`: whether a delegation is inside its renewal
+  margin.
+- `challenge_proof`, `rename_proof`, `rotation`, `revocation`: the signed
+  proofs over their transcripts.
+
+Every builder returns `Error::InvalidKey` for a key pair with no private half,
+never a panic.
+
+## Testkit
+
+The `testkit` feature (off by default) compiles `identity_crypto::testkit`:
+real keys, real signatures and fixtures (`Signer`, `Principal`, `Fleet`,
+signed messages, delegations). Enable it in `[dev-dependencies]` only:
+
+```toml
+[dev-dependencies]
+identity-crypto = { git = "https://github.com/qtpi-bonding/identity-crypto.git", rev = "<rev>", features = ["testkit"] }
+```
+
+Its helpers call the same `keys` builders as the real API; they are test
+conveniences, not a second implementation.
 
 ## Vectors
 
