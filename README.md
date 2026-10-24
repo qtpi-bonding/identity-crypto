@@ -8,6 +8,8 @@ Pure: no I/O, no clock, no key storage. Every primitive comes from
 `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
 validation and verification.
 
+The `identity-keyfile/` workspace member (0.5.1) stores an agent's keys in a Unix directory, with the history and rotation chain; see its README.
+
 ## Attestation (0.5.0)
 
 The delivery attestation has a JSON form, the one carried in `_meta`.

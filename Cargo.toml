@@ -1,8 +1,11 @@
 [package]
 name = "identity-crypto"
-version = "0.5.0"
+version = "0.5.1"
 edition = "2021"
 description = "P-256 key types, principal ids, canonical transcripts and the signature check for the concordium/structmux identity design"
+
+[workspace]
+members = [".", "identity-keyfile"]
 
 [features]
 # Test fixtures for consumers' dev-dependencies. Off by default.
