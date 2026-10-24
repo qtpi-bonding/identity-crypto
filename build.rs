@@ -16,7 +16,7 @@ fn main() {
     // maps it to our own Timestamp (src/wkt.rs), whose JSON form is RFC 3339
     // with `Z`. compile_well_known_types() turns the prost-types default off.
     config.compile_well_known_types();
-    config.extern_path(".google.protobuf", "crate::wkt");
+    config.extern_path(".google.protobuf.Timestamp", "crate::wkt::Timestamp");
     config
         .compile_protos(&[proto], &["proto/"])
         .expect("compiling identitycrypto/v1/identity.proto");
@@ -29,7 +29,7 @@ fn main() {
     pbjson_build::Builder::new()
         .register_descriptors(&descriptor_set)
         .expect("register descriptors")
-        .extern_path(".google.protobuf", "crate::wkt")
+        .extern_path(".google.protobuf.Timestamp", "crate::wkt::Timestamp")
         .build(&[".identitycrypto"])
         .expect("build pbjson serde");
 }

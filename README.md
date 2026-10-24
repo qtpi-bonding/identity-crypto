@@ -8,6 +8,49 @@ Pure: no I/O, no clock, no key storage. Every primitive comes from
 `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
 validation and verification.
 
+## Attestation (0.5.0)
+
+The delivery attestation has a JSON form, the one carried in `_meta`.
+Breaking, pre-MVP.
+
+- **JSON form.** `DeliveryAttestation`, `AttestedMessage` and the types they
+  contain implement serde `Serialize` and `Deserialize` as proto3-JSON, via
+  pbjson. Field names are camelCase (snake_case also parses). `attestedAt`
+  is RFC 3339 and is emitted with `Z`; offset forms such as `+02:00` are
+  accepted on parse. `bytes` fields are emitted as padded standard base64
+  (parsing accepts either alphabet). Unknown fields are rejected.
+- **Writer.** The supported writer of this JSON is the message-attestation
+  crate's `attach` function. That function lives in message-attestation, not
+  in this repo; this crate defines the form and the transcript only.
+- **Layout.** `AttestedMessage.verification_outcome` is deleted, along with
+  `VerificationOutcome` (its tag and name are reserved). Every attested
+  message requires `author_genesis` and `delegation_cert`, and a
+  `DeliveryAttestation` requires `attested_at`. The attestation transcript
+  rejects a missing one.
+- **`PublicKey::thumbprint()`** gives the RFC 7638 JWK thumbprint (43
+  base64url characters, unpadded): the `key_id` for a `p256:` key.
+- **`mint_session(device, principal_genesis, not_before, not_after)`**
+  makes a fresh session key and a mode-0 cert signed by the device. The span
+  must be in `(0, 24 h]`. It returns a `SessionCredential` (not `Clone`) with
+  `cert()`, `session_public_key()` and `not_after_unix()`. Renewal is the
+  caller's.
+- **`SessionCredential::sign_message(device_delegation, audience, nonce,
+  issued_at, in_reply_to_nonce, body_type, body)`** builds a `SelfRooted`
+  `SignedMessage` and signs `signed-message.v1` with the session key. Pass
+  `device_delegation: None` only in step 1, before a root exists to delegate
+  the device.
+- **`message_nonce(message_id)`** gives 16 bytes: the first half of SHA-256
+  over the message id.
+- **`verify_signed_message_trusted_devices`** (interim, step 1) checks a
+  message against a caller-supplied `AuthorDevices { author_genesis, devices }`
+  set of device keys, with no registry. It checks the mode-0 cert, its
+  `principal_genesis`, device membership, the cert and its window, the
+  audience, the message signature and, for `When::Live`, the 30 s skew. It
+  does not read `SelfRooted.device` and does no revocation or freeze checks:
+  removing a device from the set is the caller's revocation. `issued_at` is
+  not tied to the cert window. This function is deleted, not kept, when the
+  step-2 `Resolver` verifier lands.
+
 ## Request digests (0.4.0)
 
 Two forms of `Approval.request_digest`, each under its own tag:

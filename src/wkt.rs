@@ -28,6 +28,10 @@ impl Serialize for Timestamp {
             .ok()
             .filter(|n| *n < 1_000_000_000)
             .ok_or_else(|| S::Error::custom("attested_at.nanos out of range"))?;
+        // RFC 3339 spans years 0001..=9999; wider values would not parse back.
+        if !(-62_135_596_800..=253_402_300_799).contains(&self.seconds) {
+            return Err(S::Error::custom("attested_at.seconds out of range"));
+        }
         let at = DateTime::<Utc>::from_timestamp(self.seconds, nanos)
             .ok_or_else(|| S::Error::custom("attested_at.seconds out of range"))?;
         // AutoSi: 0, 3, 6 or 9 fractional digits, none when the nanos are zero.

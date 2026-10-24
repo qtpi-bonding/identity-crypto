@@ -106,6 +106,19 @@ fn attested_at_out_of_range_is_rejected() {
     a.attested_at = Some(Timestamp { seconds: i64::MAX, nanos: 0 });
     assert!(serde_json::to_value(&a).is_err(), "seconds out of range must not serialize");
 
+    // The first second past year 9999 must not serialize either.
+    let mut a = full();
+    a.attested_at = Some(Timestamp { seconds: 253_402_300_800, nanos: 0 });
+    assert!(serde_json::to_value(&a).is_err(), "year 10000 must not serialize");
+
+    // Negative nanos cannot serialize; a leap second cannot parse.
+    let mut a = full();
+    a.attested_at = Some(Timestamp { seconds: 1, nanos: -1 });
+    assert!(serde_json::to_value(&a).is_err(), "negative nanos must not serialize");
+    let mut v = to_json(&full());
+    v["attestedAt"] = json!("2016-12-31T23:59:60Z");
+    assert!(from_json(v).is_err(), "leap second must be rejected");
+
     // Nanos outside 0..1e9 are rejected by the signed transcript, which is
     // the only path that signs or verifies them.
     let mut a = full();
@@ -130,6 +143,11 @@ fn bytes_fields_are_emitted_as_padded_standard_base64() {
     // Emission is padded standard base64. Decoding is pbjson's (alphabet- and
     // padding-indifferent): equivalent spellings give the same bytes, and the
     // signed transcript binds the parsed bytes, so leniency is not a hole.
+    // pbjson decodes either alphabet, padded or not, to the same bytes.
+    let lenient = standard.replace('+', "-").replace('/', "_");
+    let mut w = v.clone();
+    w["signature"] = json!(lenient.trim_end_matches('='));
+    assert_eq!(from_json(w).expect("lenient spelling decodes").signature, vec![0xfb; 64]);
     let key = v["recipientDevices"][0]["key"].as_str().expect("key string");
     assert!(key.ends_with('='), "65-byte key is emitted padded");
 }
