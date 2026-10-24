@@ -47,6 +47,7 @@ versions, persistence and policy are the caller's.
 - **Types:** `PublicKey` (SEC1 uncompressed P-256, validated),
   `PublicKeyDuo`, `PrincipalId` (`p256:<130 lowercase hex>`), `ShortId`
   (first 8 bytes of SHA-256 over the genesis key), and a typed `Error`.
+  `PublicKey::thumbprint()` gives the RFC 7638 JWK thumbprint, the `key_id` for a `p256:` key.
 - **Proto** (`proto/identitycrypto/v1/identity.proto`, reached as
   `identity_crypto::pb`): keys, delegations, signer chains, signed messages
   and documents, approvals, revocations, the delivery attestation.

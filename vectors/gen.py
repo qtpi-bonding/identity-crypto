@@ -8,6 +8,7 @@ to derive public keys from fixed scalars, to validate points, and to sign.
 
 Run from this directory:  .venv/bin/python gen.py
 """
+import base64
 import hashlib
 import json
 import struct
@@ -588,6 +589,34 @@ def signatures(transcript_cases):
     return {"cases": out}
 
 
+def b64url(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode("ascii")
+
+
+def thumbprint(raw):
+    """RFC 7638 thumbprint of the EC JWK {crv, kty, x, y} for an uncompressed P-256 point."""
+    assert len(raw) == 65 and raw[0] == 0x04
+    canonical = '{"crv":"P-256","kty":"EC","x":"%s","y":"%s"}' % (b64url(raw[1:33]), b64url(raw[33:65]))
+    return b64url(hashlib.sha256(canonical.encode("utf-8")).digest())
+
+
+def thumbprints():
+    # draft-ietf-jose-hpke-encrypt-22 Appendix A.13 (HPKE-7 key): a published known answer.
+    a13_x = "z860carZ9CSxTjXo7MK65h_TaZX7ipi2iUh_Bh-VP54"
+    a13_y = "i9X0v8PwcNgbsoMhAz-_W2OPaFU--BQAgWVzJVOfedo"
+    a13_raw = b"\x04" + base64.urlsafe_b64decode(a13_x + "==") + base64.urlsafe_b64decode(a13_y + "==")
+    a13 = {"name": "rfc draft a13 hpke-7 key", "key_hex": a13_raw.hex(),
+           "thumbprint": thumbprint(a13_raw)}
+    assert a13["thumbprint"] == "YGdLPiZno0vV3kJKu4kEMQEjK3_upFF2D_lFDf1FFwk"
+    cases = [a13]
+    for name, i in (("scalar 1", 1), ("scalar 2", 2), ("scalar 3", 3),
+                    ("scalar large", 0x5EED5EED5EED5EED5EED5EED5EED5EED5EED5EED5EED5EED5EED5EED5EED5EED % N)):
+        raw = raw_pub(i)
+        ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), raw)  # on-curve check
+        cases.append({"name": name, "key_hex": raw.hex(), "thumbprint": thumbprint(raw)})
+    return {"cases": cases}
+
+
 def write(name, data):
     (HERE / name).write_text(json.dumps(data, sort_keys=True, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
@@ -597,6 +626,7 @@ def main():
     write("transcripts.json", {"cases": transcript_cases})
     write("principals.json", principals())
     write("signatures.json", signatures(transcript_cases))
+    write("thumbprints.json", thumbprints())
 
 
 if __name__ == "__main__":

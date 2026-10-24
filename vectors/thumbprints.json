@@ -1,0 +1,29 @@
+{
+  "cases": [
+    {
+      "key_hex": "04cfceb471aad9f424b14e35e8ecc2bae61fd36995fb8a98b689487f061f953f9e8bd5f4bfc3f070d81bb28321033fbf5b638f68553ef8140081657325539f79da",
+      "name": "rfc draft a13 hpke-7 key",
+      "thumbprint": "YGdLPiZno0vV3kJKu4kEMQEjK3_upFF2D_lFDf1FFwk"
+    },
+    {
+      "key_hex": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+      "name": "scalar 1",
+      "thumbprint": "xx0BcA-wMohw8atYDJOe6peGModklG2wRHBlXHMvl0M"
+    },
+    {
+      "key_hex": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+      "name": "scalar 2",
+      "thumbprint": "AhqHzaYXA5MzmDCrsseUsVBGKyfhDhvekx0THjH_xIE"
+    },
+    {
+      "key_hex": "045ecbe4d1a6330a44c8f7ef951d4bf165e6c6b721efada985fb41661bc6e7fd6c8734640c4998ff7e374b06ce1a64a2ecd82ab036384fb83d9a79b127a27d5032",
+      "name": "scalar 3",
+      "thumbprint": "B3zQUJfL8WPQJT3fRc_9F85aNjqoqRkk-HMzwyAp7WU"
+    },
+    {
+      "key_hex": "04f727019145268d2b0742a41711b0ce23d5cde0f19a0ba59acf1a486a2766f9ddd0ec21bf75dab30b23008ab413193bc92e3acf90bf2c21a20a57dd46e60f95cc",
+      "name": "scalar large",
+      "thumbprint": "xzO_7dozLJkng5S__v8ej4_EJAskQ1cI_ywf2peMxgU"
+    }
+  ]
+}

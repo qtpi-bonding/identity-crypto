@@ -25,6 +25,14 @@ impl PublicKey {
     pub fn as_bytes(&self) -> &[u8; 65] { &self.bytes }
     pub fn to_hex(&self) -> String { hex::encode(self.bytes) }
 
+    /// RFC 7638 JWK thumbprint of `{crv, kty, x, y}` (SHA-256, base64url, unpadded, 43 chars):
+    /// the `key_id` the jwk_duo convention derives for a `p256:` key.
+    pub fn thumbprint(&self) -> String {
+        jwk_duo::SigningKeyPair::import_public_key_raw(self.as_bytes())
+            .and_then(|kp| kp.calculate_key_id())
+            .expect("PublicKey is a validated SEC1 P-256 point, so jwk_duo import and thumbprint cannot fail")
+    }
+
     pub fn from_hex(s: &str) -> Result<Self> {
         if s.len() != 130 || !s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
             return Err(Error::InvalidKey("expected 130 lowercase hex digits".into()));
@@ -222,5 +230,31 @@ mod tests {
         assert_eq!(PublicKeyDuo::try_from(&missing), Err(Error::MissingField("signing")));
         let same = pb::PublicKeyDuo { signing: p.signing.clone(), encryption: p.signing.clone() };
         assert_eq!(PublicKeyDuo::try_from(&same), Err(Error::NotDistinct("duo halves")));
+    }
+
+    #[test]
+    fn thumbprint_matches_jwk_duo_key_id() {
+        use crate::jwk_duo::KeyPair as _;
+        let kp = SigningKeyPair::generate();
+        assert_eq!(PublicKey::from(&kp).thumbprint(), kp.calculate_key_id().unwrap());
+    }
+
+    #[test]
+    fn thumbprint_is_43_chars_unpadded() {
+        for _ in 0..16 {
+            let t = valid().thumbprint();
+            assert_eq!(t.len(), 43, "{t}");
+            assert!(!t.contains('='), "{t}");
+            assert!(t.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_'), "{t}");
+        }
+    }
+
+    #[test]
+    fn distinct_keys_distinct_thumbprints() {
+        let a = valid();
+        let b = valid();
+        assert_ne!(a, b);
+        assert_ne!(a.thumbprint(), b.thumbprint());
+        assert_eq!(a.thumbprint(), a.clone().thumbprint());
     }
 }

@@ -265,3 +265,16 @@ fn signatures_from_an_independent_signer_verify_in_both_s_forms() {
         assert_eq!(verify_p256(&k, &tampered, &bytes(&case["signature_hex"])).unwrap_err(), Error::BadSignature);
     }
 }
+
+#[test]
+fn thumbprint_vector() {
+    let t = load("thumbprints.json");
+    let mut checked = 0;
+    for case in t["cases"].as_array().unwrap() {
+        let name = s(&case["name"]);
+        let key = PublicKey::p256(&bytes(&case["key_hex"])).unwrap();
+        assert_eq!(key.thumbprint(), s(&case["thumbprint"]), "{name}");
+        checked += 1;
+    }
+    assert_eq!(checked, 5, "thumbprints.json case count changed");
+}
