@@ -150,7 +150,7 @@ pub(crate) fn check_session_span(not_before: i64, not_after: i64) -> Result<()> 
 }
 
 /// Step 5: the session cert under `device`. Returns `(session key, not_after)`.
-fn check_cert(c: &pb::DelegationCert, device: &PublicKey, at: i64) -> Result<(PublicKey, i64)> {
+pub(crate) fn check_cert(c: &pb::DelegationCert, device: &PublicKey, at: i64) -> Result<(PublicKey, i64)> {
     if &key(&c.device, "session.device")? != device {
         return Err(Error::ChainMismatch("session.device"));
     }
@@ -262,19 +262,132 @@ impl VerifiedMessage {
     pub fn body(&self) -> &[u8] { &self.body }
 }
 
+/// The steps every signed-message verifier runs once it has a session key:
+/// audience, the message signature under that key, then the live skew.
+/// The order is fixed here so both entry points report the same error.
+fn check_message_under_session(
+    msg: &pb::SignedMessage,
+    expected_audience: &str,
+    session_key: &PublicKey,
+    when: When,
+) -> Result<()> {
+    if msg.audience != expected_audience {
+        return Err(Error::WrongAudience);
+    }
+    verify_p256(session_key, &signed_message_transcript(msg)?, &msg.signature)?;
+    when.check_skew(msg.issued_at_unix_seconds)
+}
+
 pub fn verify_signed_message(msg: &pb::SignedMessage, expected_audience: &str, r: &Resolver, when: When) -> Result<VerifiedMessage> {
     if msg.signature.is_empty() {
         return Err(Error::EmptySignature);
     }
     let chain = verify_chain(msg.signer.as_ref().ok_or(Error::MissingField("signer"))?, r, when)?;
-    if msg.audience != expected_audience {
-        return Err(Error::WrongAudience);
-    }
-    verify_p256(chain.session_key(), &signed_message_transcript(msg)?, &msg.signature)?;
-    when.check_skew(msg.issued_at_unix_seconds)?;
+    check_message_under_session(msg, expected_audience, chain.session_key(), when)?;
     Ok(VerifiedMessage {
         chain, nonce: msg.nonce.clone(), issued_at: msg.issued_at_unix_seconds,
         in_reply_to_nonce: msg.in_reply_to_nonce.clone(), body_type: msg.body_type.clone(), body: msg.body.clone(),
+    })
+}
+
+/// The author and that author's device keys, as one value. They travel
+/// together on purpose: a device signs the cert, but `principal_genesis` is
+/// only a field the device signs. With a shared device set, a trusted device
+/// could sign a cert naming another principal's genesis. `devices` must be
+/// the devices of `author_genesis` only.
+#[derive(Clone, Copy, Debug)]
+pub struct AuthorDevices<'a> {
+    pub author_genesis: &'a PublicKey,
+    pub devices: &'a [PublicKey],
+}
+
+/// A message accepted by [`verify_signed_message_trusted_devices`]. Unlike
+/// [`VerifiedMessage`] there is no `Resolver` chain behind it: the accessors
+/// are direct.
+#[derive(Clone, Debug)]
+pub struct VerifiedTrustedMessage {
+    author_genesis: PublicKey,
+    device: PublicKey,
+    session_key: PublicKey,
+    session_not_after: i64,
+    nonce: Vec<u8>,
+    issued_at: i64,
+    in_reply_to_nonce: Option<Vec<u8>>,
+    body_type: String,
+    body: Vec<u8>,
+}
+
+impl VerifiedTrustedMessage {
+    pub fn author_genesis(&self) -> &PublicKey { &self.author_genesis }
+    pub fn device(&self) -> &PublicKey { &self.device }
+    pub fn session_key(&self) -> &PublicKey { &self.session_key }
+    pub fn session_not_after(&self) -> i64 { self.session_not_after }
+    /// Replay checking is the caller's: it needs state.
+    pub fn nonce(&self) -> &[u8] { &self.nonce }
+    pub fn issued_at(&self) -> i64 { self.issued_at }
+    pub fn in_reply_to_nonce(&self) -> Option<&[u8]> { self.in_reply_to_nonce.as_deref() }
+    pub fn body_type(&self) -> &str { &self.body_type }
+    pub fn body(&self) -> &[u8] { &self.body }
+}
+
+/// Step-1 interim verifier: trusts a caller-supplied set of DEVICE keys
+/// instead of a signed registry. It exists until the step-2 `Resolver`
+/// verifier lands. Then this function and these docs are deleted, not kept.
+///
+/// Checks, in order: signature non-empty; the signer chain is `SelfRooted`
+/// and the cert is mode 0 (a host-vouched chain is `ChainMismatch`); the
+/// cert's `principal_genesis` is `author.author_genesis`; the cert's device
+/// is in `author.devices` (else `NotBound`); the cert signature and window,
+/// via `check_cert`; the audience; the message signature under the cert's
+/// session key; for `When::Live`, the 30 s window on `issued_at`.
+///
+/// It does NOT read `SelfRooted.device` (the root-to-device delegation) and
+/// does no revocation or freeze checks. Removing a device from `devices` is
+/// the caller's revocation, and it takes effect at the next call. As in the
+/// full verifier, `issued_at` is not tied to the cert window.
+pub fn verify_signed_message_trusted_devices(
+    msg: &pb::SignedMessage,
+    expected_audience: &str,
+    author: AuthorDevices<'_>,
+    when: When,
+) -> Result<VerifiedTrustedMessage> {
+    if msg.signature.is_empty() {
+        return Err(Error::EmptySignature);
+    }
+    let chain = msg
+        .signer
+        .as_ref()
+        .ok_or(Error::MissingField("signer"))?
+        .chain
+        .as_ref()
+        .ok_or(Error::MissingField("chain"))?;
+    let cert = match chain {
+        pb::signer_chain::Chain::SelfRooted(s) => s.session.as_ref().ok_or(Error::MissingField("self_rooted.session"))?,
+        pb::signer_chain::Chain::HostVouched(_) => return Err(Error::ChainMismatch("signer.host_vouched")),
+    };
+    if cert.mode != 0 {
+        return Err(Error::ChainMismatch("session.mode"));
+    }
+    let principal = key(&cert.principal_genesis, "session.principal_genesis")?;
+    if &principal != author.author_genesis {
+        return Err(Error::ChainMismatch("session.principal_genesis"));
+    }
+    let device = key(&cert.device, "session.device")?;
+    if !author.devices.contains(&device) {
+        return Err(Error::NotBound);
+    }
+    let (session_key, session_not_after) = check_cert(cert, &device, when.at())?;
+    check_message_under_session(msg, expected_audience, &session_key, when)?;
+    Ok(VerifiedTrustedMessage {
+        author_genesis: author.author_genesis.clone(),
+        device,
+        session_key,
+        session_not_after,
+        nonce: msg.nonce.clone(),
+        issued_at: msg.issued_at_unix_seconds,
+        in_reply_to_nonce: msg.in_reply_to_nonce.clone(),
+        body_type: msg.body_type.clone(),
+        body: msg.body.clone(),
     })
 }
 
@@ -875,5 +988,421 @@ mod tests {
         let r2 = r.with_peer_revocation(verify_peer_revocation(&p, &r, LIVE).unwrap()).unwrap();
         let again = peer_revocation(&f, &r2, &f.daemon.genesis(), None, T0 + 61);
         assert_eq!(verify_peer_revocation(&again, &r2, When::Live { now: T0 + 61 }).unwrap_err(), Error::Frozen);
+    }
+
+    // ---- step-1 verifier with trusted device keys (no Resolver) ----
+
+    use crate::{mint_session, message_nonce, SessionCredential};
+
+    const BODY_TYPE: &str = "type.googleapis.com/test.v1.Body";
+    const SPAN: Error = Error::InvalidField {
+        field: "session.not_after_unix_seconds",
+        reason: "must be within 24 hours after not_before",
+    };
+
+    /// The owner's laptop mints a session (the A4 path) and signs one message
+    /// with it. The device delegation is a step-2 field; step 1 ignores it.
+    fn minted(
+        f: &Fleet,
+        nb: i64,
+        na: i64,
+        issued: i64,
+        device: Option<pb::KeyDelegation>,
+    ) -> (SessionCredential, pb::SignedMessage) {
+        let cred = mint_session(f.laptop.key_pair(), &f.owner.genesis(), nb, na).unwrap();
+        let msg = cred
+            .sign_message(device, AUD, message_nonce("m1"), issued, None, BODY_TYPE, b"hi")
+            .unwrap();
+        (cred, msg)
+    }
+
+    fn trusted(
+        msg: &pb::SignedMessage,
+        author: &PublicKey,
+        devices: &[PublicKey],
+        when: When,
+    ) -> Result<VerifiedTrustedMessage> {
+        verify_signed_message_trusted_devices(msg, AUD, AuthorDevices { author_genesis: author, devices }, when)
+    }
+
+    fn self_rooted(cert: pb::DelegationCert) -> pb::SignerChain {
+        pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session: Some(cert) })),
+        }
+    }
+
+    fn self_rooted_mut(msg: &mut pb::SignedMessage) -> &mut pb::SelfRooted {
+        match msg.signer.as_mut().unwrap().chain.as_mut().unwrap() {
+            pb::signer_chain::Chain::SelfRooted(s) => s,
+            _ => panic!("not a self-rooted chain"),
+        }
+    }
+
+    #[test]
+    fn valid_message_is_accepted() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        let cred = mint_session(f.laptop.key_pair(), &owner, T0, T0 + 3600).unwrap();
+        let msg = cred
+            .sign_message(None, AUD, message_nonce("m1"), T0 + 60, Some(message_nonce("m0")), BODY_TYPE, b"hi")
+            .unwrap();
+        let v = trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap();
+        assert_eq!(v.author_genesis(), &owner);
+        assert_eq!(v.device(), &f.laptop.public());
+        assert_eq!(v.session_key(), &cred.session_public_key());
+        assert_eq!(v.session_not_after(), T0 + 3600);
+        assert_eq!(v.nonce(), &message_nonce("m1")[..]);
+        assert_eq!(v.issued_at(), T0 + 60);
+        assert_eq!(v.in_reply_to_nonce(), Some(&message_nonce("m0")[..]));
+        assert_eq!(v.body_type(), BODY_TYPE);
+        assert_eq!(v.body(), b"hi");
+    }
+
+    #[test]
+    fn wrong_author_genesis_is_rejected() {
+        // the laptop IS trusted, but the cert names the owner, not this author
+        let f = Fleet::new();
+        let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        let stranger = Principal::new().genesis();
+        assert_eq!(
+            trusted(&msg, &stranger, &[f.laptop.public()], LIVE).unwrap_err(),
+            Error::ChainMismatch("session.principal_genesis")
+        );
+    }
+
+    #[test]
+    fn trusted_device_of_another_principal_cannot_claim_this_genesis() {
+        // The laptop is trusted for the owner. It signs a cert naming B.
+        // B's device set does not contain the laptop, so the cert is refused.
+        let f = Fleet::new();
+        let b = Principal::new();
+        let (b_device, _) = b.delegate_device(T0, i64::MAX);
+        let cred = mint_session(f.laptop.key_pair(), &b.genesis(), T0, T0 + 3600).unwrap();
+        let msg = cred.sign_message(None, AUD, message_nonce("m1"), T0 + 60, None, BODY_TYPE, b"hi").unwrap();
+        assert_eq!(
+            trusted(&msg, &b.genesis(), &[b_device.public()], LIVE).unwrap_err(),
+            Error::NotBound
+        );
+        // the laptop's own principal (the owner) is accepted with the laptop in its set
+        let (_, own) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        assert!(trusted(&own, &f.owner.genesis(), &[f.laptop.public()], LIVE).is_ok());
+    }
+
+    #[test]
+    fn session_key_in_the_set_but_not_the_device_is_rejected() {
+        let f = Fleet::new();
+        let (cred, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        assert_eq!(
+            trusted(&msg, &f.owner.genesis(), &[cred.session_public_key()], LIVE).unwrap_err(),
+            Error::NotBound
+        );
+    }
+
+    #[test]
+    fn device_not_in_trusted_set_is_rejected() {
+        // The cert signature is valid (the laptop made it), so only the set check can refuse.
+        let f = Fleet::new();
+        let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        let other = Signer::new().public();
+        assert_eq!(
+            trusted(&msg, &f.owner.genesis(), &[other], LIVE).unwrap_err(),
+            Error::NotBound
+        );
+    }
+
+    #[test]
+    fn empty_trusted_set_is_rejected() {
+        let f = Fleet::new();
+        let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        assert_eq!(trusted(&msg, &f.owner.genesis(), &[], LIVE).unwrap_err(), Error::NotBound);
+    }
+
+    #[test]
+    fn error_order_untrusted_device_before_bad_signature() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        let (session, mut cert) = session_cert(&f.laptop, &owner, None, None, T0, T0 + 3600);
+        cert.signature = vec![1; 64];
+        let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
+        // not trusted: the set check fires before the cert signature is looked at
+        assert_eq!(trusted(&msg, &owner, &[], LIVE).unwrap_err(), Error::NotBound);
+        // trusted: now the bad cert signature is what fails
+        assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), Error::BadSignature);
+    }
+
+    #[test]
+    fn boundaries_are_exact() {
+        let f = Fleet::new();
+        let (owner, devices) = (f.owner.genesis(), [f.laptop.public()]);
+        let (_, msg) = minted(&f, T0 + 100, T0 + 3600, T0 + 60, None);
+        // not_before tolerance is 30 s: accepted from nb - 30, rejected one second earlier
+        assert!(trusted(&msg, &owner, &devices, accepted(T0 + 70)).is_ok());
+        assert_eq!(
+            trusted(&msg, &owner, &devices, accepted(T0 + 69)).unwrap_err(),
+            Error::NotYetValid("session cert")
+        );
+        // not_after is inclusive
+        assert!(trusted(&msg, &owner, &devices, accepted(T0 + 3600)).is_ok());
+        assert_eq!(
+            trusted(&msg, &owner, &devices, accepted(T0 + 3601)).unwrap_err(),
+            Error::Expired("session cert")
+        );
+    }
+
+    #[test]
+    fn not_before_equal_or_after_not_after_is_rejected() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        for (nb, na) in [(T0 + 60, T0 + 60), (T0 + 61, T0 + 60)] {
+            let (session, cert) = session_cert(&f.laptop, &owner, None, None, nb, na);
+            let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
+            assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), SPAN, "{nb}..{na}");
+        }
+    }
+
+    #[test]
+    fn i64_max_not_after_does_not_panic() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        for (nb, na) in [(T0, i64::MAX), (i64::MIN, i64::MAX), (i64::MAX, i64::MIN)] {
+            let (session, cert) = session_cert(&f.laptop, &owner, None, None, nb, na);
+            let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
+            assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), SPAN, "{nb}..{na}");
+        }
+    }
+
+    #[test]
+    fn signature_of_63_or_65_bytes_is_bad_length_and_empty_is_empty_signature() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        let devices = [f.laptop.public()];
+        let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        for len in [63usize, 65] {
+            let mut m = msg.clone();
+            m.signature = vec![0; len];
+            assert_eq!(
+                trusted(&m, &owner, &devices, LIVE).unwrap_err(),
+                Error::BadLength { field: "signature", expected: 64, actual: len }
+            );
+        }
+        let mut empty = msg.clone();
+        empty.signature.clear();
+        assert_eq!(trusted(&empty, &owner, &devices, LIVE).unwrap_err(), Error::EmptySignature);
+    }
+
+    #[test]
+    fn missing_signer_chain_cert_session_or_principal_genesis_are_errors() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        let devices = [f.laptop.public()];
+        let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+
+        let mut m = msg.clone();
+        m.signer = None;
+        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("signer"));
+
+        let mut m = msg.clone();
+        m.signer.as_mut().unwrap().chain = None;
+        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("chain"));
+
+        let mut m = msg.clone();
+        self_rooted_mut(&mut m).session = None;
+        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("self_rooted.session"));
+
+        let mut m = msg.clone();
+        self_rooted_mut(&mut m).session.as_mut().unwrap().principal_genesis = None;
+        assert_eq!(
+            trusted(&m, &owner, &devices, LIVE).unwrap_err(),
+            Error::MissingField("session.principal_genesis")
+        );
+
+        let mut m = msg.clone();
+        self_rooted_mut(&mut m).session.as_mut().unwrap().device = None;
+        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("session.device"));
+
+        let mut m = msg.clone();
+        self_rooted_mut(&mut m).session.as_mut().unwrap().session = None;
+        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("session"));
+    }
+
+    #[test]
+    fn duplicate_devices_in_the_slice_are_harmless() {
+        let f = Fleet::new();
+        let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        let devices = [f.laptop.public(), Signer::new().public(), f.laptop.public()];
+        assert!(trusted(&msg, &f.owner.genesis(), &devices, LIVE).is_ok());
+    }
+
+    #[test]
+    fn issued_at_outside_the_cert_window_is_accepted_like_the_full_verifier() {
+        // Neither verifier ties a message's issued_at to the cert window.
+        let f = Fleet::new();
+        let r = f.resolver();
+        let (_, msg) = minted(&f, T0, T0 + 3600, T0 - 10_000, Some(f.laptop_deleg.clone()));
+        let at = accepted(T0 + 60);
+        let v = trusted(&msg, &f.owner.genesis(), &[f.laptop.public()], at).unwrap();
+        assert_eq!(v.issued_at(), T0 - 10_000);
+        assert_eq!(verify_signed_message(&msg, AUD, &r, at).unwrap().issued_at(), T0 - 10_000);
+    }
+
+    #[test]
+    fn differential_with_verify_signed_message() {
+        // One fixture through both verifiers. The full verifier needs the
+        // Fleet's Resolver, so the fixture carries the owner's device
+        // delegation (the step-2 field); step 1 ignores it.
+        let f = Fleet::new();
+        let r = f.resolver();
+        let owner = f.owner.genesis();
+        let devices = [f.laptop.public()];
+        let both = |m: &pb::SignedMessage, aud: &str, when: When| {
+            let full = verify_signed_message(m, aud, &r, when).map(|_| ());
+            let trusted_side = verify_signed_message_trusted_devices(
+                m,
+                aud,
+                AuthorDevices { author_genesis: &owner, devices: &devices },
+                when,
+            )
+            .map(|_| ());
+            (full, trusted_side)
+        };
+        let (_, valid) = minted(&f, T0, T0 + 3600, T0 + 60, Some(f.laptop_deleg.clone()));
+        assert_eq!(both(&valid, AUD, LIVE), (Ok(()), Ok(())));
+
+        let mut wrong_session = valid.clone();
+        wrong_session.signature =
+            Signer::new().sign(&crate::transcripts::signed_message_transcript(&wrong_session).unwrap());
+        let (_, skewed) = minted(&f, T0, T0 + 3600, T0 + 91, Some(f.laptop_deleg.clone()));
+        let (_, not_yet) = minted(&f, T0 + 100, T0 + 3600, T0 + 60, Some(f.laptop_deleg.clone()));
+        let (_, expired) = minted(&f, T0, T0 + 30, T0 + 60, Some(f.laptop_deleg.clone()));
+        let cases: [(&str, &pb::SignedMessage, &str, When, Error); 5] = [
+            ("audience", &valid, "structmux:other", LIVE, Error::WrongAudience),
+            ("session key", &wrong_session, AUD, LIVE, Error::BadSignature),
+            ("skew", &skewed, AUD, LIVE, Error::Skew),
+            ("not_before", &not_yet, AUD, LIVE, Error::NotYetValid("session cert")),
+            ("not_after", &expired, AUD, LIVE, Error::Expired("session cert")),
+        ];
+        for (name, msg, aud, when, want) in cases {
+            let (full, trusted_side) = both(msg, aud, when);
+            assert_eq!(full.unwrap_err(), want, "full verifier: {name}");
+            assert_eq!(trusted_side.unwrap_err(), want, "trusted-devices verifier: {name}");
+        }
+    }
+
+    #[test]
+    fn cert_signed_by_another_key_is_rejected() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        let (session, mut cert) = session_cert(&f.laptop, &owner, None, None, T0, T0 + 3600);
+        cert.signature = Signer::new().sign(&session_delegation_transcript(&cert).unwrap());
+        let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
+        assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), Error::BadSignature);
+    }
+
+    #[test]
+    fn expired_cert_is_rejected() {
+        let f = Fleet::new();
+        let (_, msg) = minted(&f, T0, T0 + 30, T0 + 60, None);
+        assert_eq!(
+            trusted(&msg, &f.owner.genesis(), &[f.laptop.public()], LIVE).unwrap_err(),
+            Error::Expired("session cert")
+        );
+    }
+
+    #[test]
+    fn not_yet_valid_cert_is_rejected() {
+        let f = Fleet::new();
+        let (_, msg) = minted(&f, T0 + 100, T0 + 3600, T0 + 60, None);
+        assert_eq!(
+            trusted(&msg, &f.owner.genesis(), &[f.laptop.public()], LIVE).unwrap_err(),
+            Error::NotYetValid("session cert")
+        );
+    }
+
+    #[test]
+    fn cert_span_over_24h_is_rejected() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        let (session, cert) = session_cert(&f.laptop, &owner, None, None, T0, T0 + 86_401);
+        let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
+        assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), SPAN);
+    }
+
+    #[test]
+    fn wrong_audience_is_rejected() {
+        let f = Fleet::new();
+        let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        let r = verify_signed_message_trusted_devices(
+            &msg,
+            "structmux:other",
+            AuthorDevices { author_genesis: &f.owner.genesis(), devices: &[f.laptop.public()] },
+            LIVE,
+        );
+        assert_eq!(r.unwrap_err(), Error::WrongAudience);
+    }
+
+    #[test]
+    fn tampered_body_is_rejected() {
+        let f = Fleet::new();
+        let (_, mut msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        msg.body.push(3);
+        assert_eq!(
+            trusted(&msg, &f.owner.genesis(), &[f.laptop.public()], LIVE).unwrap_err(),
+            Error::BadSignature
+        );
+    }
+
+    #[test]
+    fn message_signed_by_a_different_session_key_is_rejected() {
+        let f = Fleet::new();
+        let (_, mut msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        msg.signature = Signer::new().sign(&crate::transcripts::signed_message_transcript(&msg).unwrap());
+        assert_eq!(
+            trusted(&msg, &f.owner.genesis(), &[f.laptop.public()], LIVE).unwrap_err(),
+            Error::BadSignature
+        );
+    }
+
+    #[test]
+    fn host_vouched_chain_is_rejected() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        let devices = [f.laptop.public()];
+        let (session, chain) = agent_chain(&f, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
+        let msg = signed_message(&session, chain, AUD, T0 + 60);
+        assert_eq!(
+            trusted(&msg, &owner, &devices, LIVE).unwrap_err(),
+            Error::ChainMismatch("signer.host_vouched")
+        );
+        // a mode-1 cert inside a self-rooted chain is refused on its mode
+        let subject = subject_on(&f.daemon, "i5");
+        let (session, cert) = session_cert(&f.laptop, &owner, Some(&f.daemon.genesis()), Some(&subject), T0, T0 + 3600);
+        let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
+        assert_eq!(trusted(&msg, &owner, &devices, LIVE).unwrap_err(), Error::ChainMismatch("session.mode"));
+    }
+
+    #[test]
+    fn live_skew_over_30s_is_rejected_and_accepted_mode_skips_it() {
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        let devices = [f.laptop.public()];
+        let (_, late) = minted(&f, T0, T0 + 3600, T0 + 60 + 31, None);
+        assert_eq!(trusted(&late, &owner, &devices, LIVE).unwrap_err(), Error::Skew);
+        assert!(trusted(&late, &owner, &devices, accepted(T0 + 60)).is_ok());
+        let (_, edge) = minted(&f, T0, T0 + 3600, T0 + 60 + 30, None);
+        assert!(trusted(&edge, &owner, &devices, LIVE).is_ok(), "exactly 30 s is inside the window");
+    }
+
+    #[test]
+    fn absent_root_delegation_is_fine() {
+        // The step-1 shape has no root delegation. The verifier never reads
+        // SelfRooted.device, so a bogus one is also ignored.
+        let f = Fleet::new();
+        let owner = f.owner.genesis();
+        let devices = [f.laptop.public()];
+        let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
+        assert!(trusted(&msg, &owner, &devices, LIVE).is_ok());
+        let mut with_bogus = msg.clone();
+        self_rooted_mut(&mut with_bogus).device = Some(pb::KeyDelegation::default());
+        assert!(trusted(&with_bogus, &owner, &devices, LIVE).is_ok());
     }
 }
