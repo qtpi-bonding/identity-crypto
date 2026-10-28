@@ -8,7 +8,7 @@ Pure: no I/O, no clock, no key storage. Every primitive comes from
 `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
 validation and verification.
 
-The `identity-keyfile/` workspace member (0.5.1) stores an agent's keys in a Unix directory, with the history and rotation chain; see its README.
+The `identity-keyfile/` workspace member (0.5.2) stores an agent's keys in a Unix directory, with the history and rotation chain; see its README.
 
 ## Attestation (0.5.0)
 
@@ -146,8 +146,9 @@ conveniences, not a second implementation.
 ## Vectors
 
 `vectors/gen.py` is an independent Python implementation of every
-transcript. It writes `transcripts.json`, `principals.json` and
-`signatures.json`, which `tests/vectors.rs` checks. To regenerate:
+transcript. It writes `transcripts.json`, `principals.json`,
+`signatures.json`, `thumbprints.json`, `nonces.json` and `messages.json`,
+which `tests/vectors.rs` checks. To regenerate:
 
 ```
 cd vectors

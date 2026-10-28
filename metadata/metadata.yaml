@@ -1,0 +1,132 @@
+id: identity-crypto
+verified_at: c6a5e8da1ccc6500abd9b22171a06f36da5a1da8
+public:
+  name: identity-crypto
+  summary: Rust library for P-256 identity keys, canonical signing transcripts and signed-message verification.
+  status: active
+  stage: beta
+  stack:
+  - Rust
+  - Protobuf
+  links:
+  - type: repo
+    url: https://github.com/qtpi-bonding/identity-crypto
+private:
+  started: 2026-09
+  visibility: public
+  license: none
+  ownership: designed and directed; code written with AI assistance
+  build: agentic
+facts:
+- id: p256-only-public-keys
+  assertion: PublicKey accepts only ECDSA P-256 keys as 65-byte uncompressed SEC1 points that lie on the
+    curve; converting a proto key with any other scheme value fails with UnsupportedScheme, and an off-curve
+    point fails with InvalidKey.
+  evidence:
+  - src/public_key.rs
+  - src/lib.rs
+- id: principal-id-canonical-form
+  assertion: A PrincipalId is `p256:` followed by the 130 lowercase hex digits of its 65-byte genesis key,
+    and its ShortId is the first 8 bytes of SHA-256 over those key bytes; parse accepts any letter case,
+    while parse_canonical rejects every spelling other than the lowercase form.
+  evidence:
+  - src/principal.rs
+  - vectors/principals.json
+  - tests/vectors.rs
+- id: transcripts-tagged-and-validated
+  assertion: src/transcripts.rs defines 13 `*_transcript` functions, each starting with its own NUL-terminated
+    `identitycrypto.*.v1` tag, and each returns Err instead of bytes when a required field is missing
+    or invalid.
+  evidence:
+  - src/transcripts.rs
+  - vectors/transcripts.json
+  - tests/vectors.rs
+- id: verify-p256-both-s-forms
+  assertion: verify_p256 accepts only a 64-byte r||s ECDSA P-256 signature, accepts both the low-S and
+    high-S form of a valid signature, and returns a VerifiedSignature only when verification succeeds.
+  evidence:
+  - src/signature.rs
+  - vectors/signatures.json
+  - tests/vectors.rs
+- id: keys-delegate-device-31-day-cap
+  assertion: delegate_device in src/keys.rs signs a DEVICE delegation with the root key only when its
+    window is positive and at most 31 days, while device_delegation and sign_key_delegation apply no
+    window cap.
+  evidence:
+  - src/keys.rs
+- id: vectors-cross-language-checked
+  assertion: tests/vectors.rs checks the crate against six JSON files written by the independent Python
+    generator vectors/gen.py, asserting 100 transcript cases, 5 thumbprints, 5 message nonces and 2 signed
+    messages, plus principal ids and signatures in both S forms.
+  evidence:
+  - tests/vectors.rs
+  - vectors/gen.py
+  - vectors/transcripts.json
+  - vectors/principals.json
+  - vectors/signatures.json
+  - vectors/thumbprints.json
+  - vectors/nonces.json
+  - vectors/messages.json
+- id: trusted-devices-verifier-without-resolver
+  assertion: verify_signed_message_trusted_devices checks a SignedMessage against a caller-supplied author
+    genesis and device-key list with no Resolver, and does not read SelfRooted.device or run revocation
+    or freeze checks.
+  evidence:
+  - src/verify.rs
+  - src/lib.rs
+- id: resolver-built-from-verified-document
+  assertion: Resolver::from_document builds its registry lookups only from a VerifiedDocument of the
+    given registry type, and requires the registry to be field 1 of the body exactly once.
+  evidence:
+  - src/resolver.rs
+  - src/registry.rs
+  - src/authority.rs
+- id: session-mint-span-bound
+  assertion: mint_session generates a fresh session key and a mode-0 cert signed by the device, and rejects
+    a validity span outside (0, 24 h]; renewal is left to the caller.
+  evidence:
+  - src/session.rs
+  - src/verify.rs
+- id: pbjson-attestation-rejects-unknown-fields
+  assertion: build.rs compiles identitycrypto.v1 into prost types plus pbjson serde impls, and the DeliveryAttestation
+    proto3-JSON form rejects unknown fields.
+  evidence:
+  - build.rs
+  - proto/identitycrypto/v1/identity.proto
+  - tests/json.rs
+- id: testkit-feature-off-by-default
+  assertion: The testkit Cargo feature is declared empty with no default, and identity_crypto::testkit
+    is compiled only under cfg(any(test, feature = "testkit")).
+  evidence:
+  - Cargo.toml
+  - src/lib.rs
+  - src/testkit.rs
+- id: agent-dir-init-and-load
+  assertion: AgentKeys::init writes the six agent files with agent_id last and refuses an existing agent
+    file, and AgentKeys::load reads them under a shared .lock after refusing any directory with a group
+    or other permission bit set (unix targets only; identity-keyfile's lib.rs compile_error!s elsewhere).
+  evidence:
+  - identity-keyfile/src/agent.rs
+  - identity-keyfile/src/files.rs
+  - identity-keyfile/tests/agent.rs
+- id: agent-renew-retires-old-device
+  assertion: AgentKeys::renew re-signs the device delegation under the current root, and with new_device
+    = true writes retired_devices.json before device.jwk.json, keeping the earlier retired_at when a signing
+    key is retired again (unix only).
+  evidence:
+  - identity-keyfile/src/agent.rs
+  - identity-keyfile/tests/agent.rs
+- id: device-keys-at-history-filter
+  assertion: device_keys_at returns the current signing key first, then each retired signing key whose
+    retired_at_unix_seconds is at or after the given time, without duplicates, skipping entries with
+    a missing or unparseable key; retired_at_unix_seconds is an unsigned local value that nothing checks.
+  evidence:
+  - identity-keyfile/src/agent.rs
+  - identity-keyfile/tests/agent.rs
+- id: device-only-loader-skips-root
+  assertion: DeviceKeys::load reads device.jwk.json, delegation.json, agent_id and retired_devices.json
+    under a shared lock and never opens root.jwk.json or rotations.json, so it succeeds when those two
+    files are unreadable or corrupt (unix only).
+  evidence:
+  - identity-keyfile/src/agent.rs
+  - identity-keyfile/tests/device.rs
