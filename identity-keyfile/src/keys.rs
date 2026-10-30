@@ -295,6 +295,44 @@ impl IdentityKeys {
         Ok(keys)
     }
 
+    /// Creates the identity in `dir` atomically, or loads and verifies the one that
+    /// is already there. See the daemon-identity spec.
+    pub fn create_or_load(
+        _dir: &Path,
+        _now: i64,
+        _ttl_seconds: i64,
+    ) -> Result<Self, KeyfileError> {
+        todo!("daemon-identity additions")
+    }
+
+    /// `load`, plus every consistency check of [`VerifyCheck`].
+    pub fn load_verified(_dir: &Path) -> Result<Self, KeyfileError> {
+        todo!("daemon-identity additions")
+    }
+
+    /// `Ok(None)` when `dir` or its `agent_id` marker is absent; otherwise `load_verified`.
+    pub fn load_existing(_dir: &Path) -> Result<Option<Self>, KeyfileError> {
+        todo!("daemon-identity additions")
+    }
+
+    /// True when `dir` exists and holds the `agent_id` marker.
+    pub fn exists(_dir: &Path) -> bool {
+        todo!("daemon-identity additions")
+    }
+
+    /// Re-signs the delegation with the in-memory root and device when it is due
+    /// within `margin_seconds`; writes `delegation.json` when `dir` is given.
+    /// Returns whether it renewed.
+    pub fn renew_if_due(
+        &mut self,
+        _dir: Option<&Path>,
+        _now: i64,
+        _ttl_seconds: i64,
+        _margin_seconds: i64,
+    ) -> Result<bool, KeyfileError> {
+        todo!("daemon-identity additions")
+    }
+
     /// Replaces the device with a new one and retires the old device's public
     /// keys. This is [`IdentityKeys::renew`] with `new_device = true`.
     pub fn rotate_device(dir: &Path, now: i64, ttl_seconds: i64) -> Result<Self, KeyfileError> {
@@ -342,6 +380,12 @@ impl IdentityKeys {
         self.delegation.signing_root == Some(pb::PublicKey::from(&signing_public(&self.root)))
             && self.delegation.delegated == Some(pb::PublicKey::from(&signing_public(&self.device)))
     }
+}
+
+/// The principal stored in `dir`, read from `agent_id` and `delegation.json`
+/// only (no private key). `Ok(None)` when missing; verified as in the spec.
+pub fn read_principal(_dir: &Path) -> Result<Option<PrincipalId>, KeyfileError> {
+    todo!("daemon-identity additions")
 }
 
 impl DeviceKeys {

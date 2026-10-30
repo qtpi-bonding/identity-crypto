@@ -5,8 +5,8 @@ mod keys;
 mod error;
 mod files;
 
-pub use keys::{device_keys_at, IdentityKeys, DeviceKeys, DevicePublic};
-pub use error::KeyfileError;
+pub use keys::{device_keys_at, read_principal, IdentityKeys, DeviceKeys, DevicePublic};
+pub use error::{KeyfileError, VerifyCheck};
 pub use files::{
     read_delegation, read_duo, read_history, read_principal_id, read_rotations, write_delegation,
     write_duo, write_history, write_principal_id, write_rotations, AGENT_ID_FILE, DELEGATION_FILE,
