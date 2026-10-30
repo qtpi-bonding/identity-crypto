@@ -10,13 +10,14 @@ use identity_crypto::jwk_duo::KeyDuo;
 use identity_crypto::transcripts;
 use identity_crypto::{
     delegate_device, encryption_public, pb, principal_id, renewal_due, rotation, signing_public,
-    verify_p256, PrincipalId, PublicKey,
+    verify_p256, AuthorityChain, PrincipalId, PublicKey,
 };
 use std::fs;
 use std::io::ErrorKind;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -125,13 +126,44 @@ fn rename_collision(error: &std::io::Error) -> bool {
     )
 }
 
+struct TempDirGuard {
+    path: std::path::PathBuf,
+    armed: bool,
+}
+
+impl TempDirGuard {
+    fn new(path: &Path) -> Self {
+        Self {
+            path: path.to_path_buf(),
+            armed: true,
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for TempDirGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+}
+
 fn clean_dead_temps(dir: &Path, parent: &Path) -> Result<(), KeyfileError> {
     let prefix = format!(
         "{}.tmp-",
         dir.file_name().unwrap_or_default().to_string_lossy()
     );
-    for entry in fs::read_dir(parent).map_err(|e| crate::error::io(parent, e))? {
-        let entry = entry.map_err(|e| crate::error::io(parent, e))?;
+    let Ok(entries) = fs::read_dir(parent) else {
+        return Ok(());
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            continue;
+        };
         let name = entry.file_name().to_string_lossy().into_owned();
         if !name.starts_with(&prefix) {
             continue;
@@ -155,15 +187,30 @@ fn clean_dead_temps(dir: &Path, parent: &Path) -> Result<(), KeyfileError> {
 }
 
 fn verify_identity(keys: &IdentityKeys) -> Result<(), KeyfileError> {
+    let genesis = keys
+        .delegation
+        .principal_genesis
+        .as_ref()
+        .ok_or(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
+    let genesis = PublicKey::try_from(genesis)
+        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
+    let chain = AuthorityChain::from_rotations(genesis, &keys.rotations)
+        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
+    // The chain must end at the root on disk before agent_id is compared
+    // against it, so a foreign genesis is reported as such, not as agent_id.
     let root_signing = signing_public(&keys.root);
-    let root_wire = pb::PublicKey::from(&root_signing);
-    if keys.principal_id != PrincipalId::from_genesis(root_signing.clone()) {
-        return Err(KeyfileError::VerifyFailed(VerifyCheck::AgentId));
-    }
-    if keys.delegation.principal_genesis.as_ref() != Some(&root_wire) {
+    if &root_signing != chain.head() {
         return Err(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis));
     }
-    if keys.delegation.signing_root.as_ref() != Some(&root_wire) {
+    if keys.principal_id != chain.principal() {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::AgentId));
+    }
+    let signing_root = keys
+        .delegation
+        .signing_root
+        .as_ref()
+        .ok_or(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot))?;
+    if signing_root != &pb::PublicKey::from(chain.head()) {
         return Err(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot));
     }
     if keys.delegation.delegated.as_ref()
@@ -181,7 +228,7 @@ fn verify_identity(keys: &IdentityKeys) -> Result<(), KeyfileError> {
     }
     let transcript = transcripts::key_delegation_transcript(&keys.delegation)
         .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::Signature))?;
-    if verify_p256(&root_signing, &transcript, &keys.delegation.signature).is_err() {
+    if verify_p256(chain.head(), &transcript, &keys.delegation.signature).is_err() {
         return Err(KeyfileError::VerifyFailed(VerifyCheck::Signature));
     }
     Ok(())
@@ -387,54 +434,88 @@ impl IdentityKeys {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        files::check_dir(parent)?;
+        fs::create_dir_all(parent).map_err(|e| crate::error::io(parent, e))?;
         clean_dead_temps(dir, parent)?;
-        let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let temp = parent.join(format!(
-            "{}.tmp-{}-{}",
-            dir.file_name().unwrap_or_default().to_string_lossy(),
-            std::process::id(),
-            n
-        ));
-        fs::create_dir(&temp).map_err(|e| crate::error::io(&temp, e))?;
-        fs::set_permissions(&temp, std::os::unix::fs::PermissionsExt::from_mode(0o700))
-            .map_err(|e| crate::error::io(&temp, e))?;
+        let mut temp = None;
+        for _ in 0..8 {
+            let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_nanos() as u64)
+                .unwrap_or(0);
+            let candidate = parent.join(format!(
+                "{}.tmp-{}-{}-{:016x}",
+                dir.file_name().unwrap_or_default().to_string_lossy(),
+                std::process::id(),
+                n,
+                nanos ^ n
+            ));
+            match fs::DirBuilder::new().mode(0o700).create(&candidate) {
+                Ok(()) => {
+                    temp = Some(candidate);
+                    break;
+                }
+                Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(crate::error::io(&candidate, error)),
+            }
+        }
+        let temp = temp.ok_or_else(|| {
+            crate::error::io(
+                dir,
+                std::io::Error::new(ErrorKind::AlreadyExists, "temporary directory collision"),
+            )
+        })?;
+        let mut temp_guard = TempDirGuard::new(&temp);
         if dir.is_dir() {
-            let only_lock = fs::read_dir(dir)
-                .map_err(|e| crate::error::io(dir, e))?
-                .all(|entry| {
-                    entry
-                        .map(|e| e.file_name().to_string_lossy() == files::LOCK_FILE)
-                        .unwrap_or(false)
-                });
+            let only_lock = match fs::read_dir(dir) {
+                Ok(mut entries) => {
+                    let mut saw_lock = false;
+                    let only_lock = entries.all(|entry| match entry {
+                        Ok(entry) if entry.file_name().to_string_lossy() == files::LOCK_FILE => {
+                            saw_lock = true;
+                            true
+                        }
+                        Ok(_) => false,
+                        Err(_) => false,
+                    });
+                    only_lock && saw_lock
+                }
+                Err(error) if error.kind() == ErrorKind::NotFound => false,
+                Err(error) => return Err(crate::error::io(dir, error)),
+            };
             if only_lock {
-                fs::remove_dir_all(dir).map_err(|e| crate::error::io(dir, e))?;
+                let _ = fs::remove_file(dir.join(files::LOCK_FILE));
+                match fs::remove_dir(dir) {
+                    Ok(()) => {}
+                    Err(error)
+                        if matches!(
+                            error.kind(),
+                            ErrorKind::NotFound | ErrorKind::DirectoryNotEmpty
+                        ) => {}
+                    Err(error) => return Err(crate::error::io(dir, error)),
+                }
             }
         }
-        let result = (|| {
-            let keys = Self::init(&temp, now, ttl_seconds)?;
-            fs::File::open(&temp)
-                .and_then(|f| f.sync_all())
-                .map_err(|e| crate::error::io(&temp, e))?;
-            fs::rename(&temp, dir).map_err(|e| crate::error::io(dir, e))?;
-            fs::File::open(parent)
-                .and_then(|f| f.sync_all())
-                .map_err(|e| crate::error::io(parent, e))?;
-            Ok(keys)
-        })();
-        if result.is_err() {
-            let _ = fs::remove_dir_all(&temp);
-        }
-        match result {
-            Ok(keys) => Ok(keys),
-            Err(KeyfileError::Io { source, .. }) if rename_collision(&source) => {
-                Self::load_verified(dir)
+        let keys = Self::init(&temp, now, ttl_seconds)?;
+        fs::File::open(&temp)
+            .and_then(|f| f.sync_all())
+            .map_err(|e| crate::error::io(&temp, e))?;
+        match fs::rename(&temp, dir) {
+            Ok(()) => {
+                temp_guard.disarm();
+                fs::File::open(parent)
+                    .and_then(|f| f.sync_all())
+                    .map_err(|e| crate::error::io(parent, e))?;
+                Ok(keys)
             }
-            Err(error) => Err(error),
+            Err(error) if rename_collision(&error) => Self::load_verified(dir),
+            Err(error) => Err(crate::error::io(dir, error)),
         }
     }
 
-    /// `load`, plus every consistency check of [`VerifyCheck`].
+    /// `load`, plus every consistency check of [`VerifyCheck`]. After a root
+    /// rotation, this fails with `SigningRoot` until `renew` re-signs the
+    /// delegation under the installed root.
     pub fn load_verified(dir: &Path) -> Result<Self, KeyfileError> {
         files::check_dir(dir)?;
         let _lock = files::lock_shared(dir)?;
@@ -487,6 +568,15 @@ impl IdentityKeys {
         if let Some(dir) = dir {
             files::check_dir(dir)?;
             let _lock = files::lock_exclusive(dir)?;
+            let disk_root = read_duo(dir, ROOT_FILE)?;
+            let disk_device = read_duo(dir, DEVICE_FILE)?;
+            if signing_public(&disk_root) != signing_public(&self.root)
+                || encryption_public(&disk_root) != encryption_public(&self.root)
+                || signing_public(&disk_device) != signing_public(&self.device)
+                || encryption_public(&disk_device) != encryption_public(&self.device)
+            {
+                return Err(KeyfileError::DelegationMismatch);
+            }
             write_delegation(dir, &delegation)?;
         }
         self.delegation = delegation;
@@ -556,30 +646,35 @@ pub fn read_principal(_dir: &Path) -> Result<Option<PrincipalId>, KeyfileError> 
     }
     let id = read_principal_id(dir)?;
     let delegation = read_delegation(dir)?;
-    if delegation.principal_genesis != delegation.signing_root {
-        return Err(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis));
-    }
     let genesis = delegation
         .principal_genesis
         .as_ref()
         .ok_or(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
-    let expected = PrincipalId::from_genesis(
-        PublicKey::try_from(genesis)
-            .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::AgentId))?,
-    );
-    if id != expected {
+    let genesis = PublicKey::try_from(genesis)
+        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
+    let rotations = read_rotations(dir)
+        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
+    let chain = AuthorityChain::from_rotations(genesis, &rotations.rotations)
+        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
+    if id != chain.principal() {
         return Err(KeyfileError::VerifyFailed(VerifyCheck::AgentId));
     }
-    let root = PublicKey::try_from(
+    let signing_root = PublicKey::try_from(
         delegation
             .signing_root
             .as_ref()
             .ok_or(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot))?,
     )
     .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::SigningRoot))?;
+    if &signing_root != chain.head() {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot));
+    }
+    if delegation.purpose != pb::KeyPurpose::Device as i32 {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::Purpose));
+    }
     let transcript = transcripts::key_delegation_transcript(&delegation)
         .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::Signature))?;
-    if verify_p256(&root, &transcript, &delegation.signature).is_err() {
+    if verify_p256(chain.head(), &transcript, &delegation.signature).is_err() {
         return Err(KeyfileError::VerifyFailed(VerifyCheck::Signature));
     }
     Ok(Some(id))
