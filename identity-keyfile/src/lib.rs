@@ -1,11 +1,11 @@
 #[cfg(not(unix))]
 compile_error!("identity-keyfile writes 0600 key files and needs a unix target");
 
-mod agent;
+mod keys;
 mod error;
 mod files;
 
-pub use agent::{device_keys_at, AgentKeys, DeviceKeys, DevicePublic};
+pub use keys::{device_keys_at, IdentityKeys, DeviceKeys, DevicePublic};
 pub use error::KeyfileError;
 pub use files::{
     read_delegation, read_duo, read_history, read_principal_id, read_rotations, write_delegation,

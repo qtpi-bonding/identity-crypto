@@ -1,6 +1,6 @@
 [package]
 name = "identity-crypto"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 description = "P-256 key types, principal ids, canonical transcripts and the signature check for the concordium/structmux identity design"
 

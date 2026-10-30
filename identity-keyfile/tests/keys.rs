@@ -107,17 +107,17 @@ fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>, u32)> {
     entries
 }
 
-fn fresh() -> (tempfile::TempDir, AgentKeys) {
+fn fresh() -> (tempfile::TempDir, IdentityKeys) {
     let dir = tempdir();
-    let keys = AgentKeys::init(dir.path(), 1_000, 100).unwrap();
+    let keys = IdentityKeys::init(dir.path(), 1_000, 100).unwrap();
     (dir, keys)
 }
 
 #[test]
 fn init_then_load_round_trips() {
     let (dir, keys) = fresh();
-    let loaded = AgentKeys::load(dir.path()).unwrap();
-    assert_eq!(loaded.agent_id, keys.agent_id);
+    let loaded = IdentityKeys::load(dir.path()).unwrap();
+    assert_eq!(loaded.principal_id, keys.principal_id);
     assert_eq!(loaded.delegation, keys.delegation);
     assert_eq!(
         signing_public(&loaded.root),
@@ -144,7 +144,7 @@ fn init_refuses_to_overwrite() {
     let (dir, _) = fresh();
     let before = snapshot(dir.path());
     assert!(matches!(
-        AgentKeys::init(dir.path(), 2, 100),
+        IdentityKeys::init(dir.path(), 2, 100),
         Err(KeyfileError::AlreadyInitialised(_))
     ));
     assert_eq!(
@@ -156,7 +156,7 @@ fn init_refuses_to_overwrite() {
     let partial = tempdir();
     fs::write(partial.path().join(ROOT_FILE), b"partial").unwrap();
     assert!(matches!(
-        AgentKeys::init(partial.path(), 1, 100),
+        IdentityKeys::init(partial.path(), 1, 100),
         Err(KeyfileError::AlreadyInitialised(_))
     ));
     assert_eq!(
@@ -173,7 +173,7 @@ fn init_rejects_ttl_over_31_days_and_nonpositive() {
     for ttl in [0, -1, MAX_TTL + 1] {
         assert!(
             matches!(
-                AgentKeys::init(&path, 1_000, ttl),
+                IdentityKeys::init(&path, 1_000, ttl),
                 Err(KeyfileError::Crypto(_))
             ),
             "ttl {ttl}"
@@ -184,7 +184,7 @@ fn init_rejects_ttl_over_31_days_and_nonpositive() {
         "a rejected init writes no agent file"
     );
 
-    let keys = AgentKeys::init(&path, 1_000, MAX_TTL).unwrap();
+    let keys = IdentityKeys::init(&path, 1_000, MAX_TTL).unwrap();
     assert_eq!(
         keys.delegation.not_after_unix_seconds - keys.delegation.issued_at_unix_seconds,
         MAX_TTL
@@ -203,7 +203,7 @@ fn renew_rejects_bad_ttl_without_touching_files() {
     ] {
         assert!(
             matches!(
-                AgentKeys::renew(dir.path(), 1_010, ttl, new_device),
+                IdentityKeys::renew(dir.path(), 1_010, ttl, new_device),
                 Err(KeyfileError::Crypto(_))
             ),
             "ttl {ttl}, new_device {new_device}"
@@ -220,7 +220,7 @@ fn renew_rejects_bad_ttl_without_touching_files() {
 fn renew_same_device_keeps_history_empty() {
     let (dir, before) = fresh();
     let history_before = fs::read(dir.path().join(HISTORY_FILE)).unwrap();
-    let after = AgentKeys::renew(dir.path(), 1_010, 100, false).unwrap();
+    let after = IdentityKeys::renew(dir.path(), 1_010, 100, false).unwrap();
     assert_eq!(after.retired.len(), 0);
     assert_eq!(
         signing_public(&after.device),
@@ -228,7 +228,7 @@ fn renew_same_device_keeps_history_empty() {
     );
     assert!(after.delegation_is_current());
 
-    let loaded = AgentKeys::load(dir.path()).unwrap();
+    let loaded = IdentityKeys::load(dir.path()).unwrap();
     assert!(loaded.retired.is_empty());
     assert_eq!(
         fs::read(dir.path().join(HISTORY_FILE)).unwrap(),
@@ -249,8 +249,8 @@ fn renew_same_device_keeps_history_empty() {
 #[test]
 fn renew_new_device_appends_the_old_public_keys() {
     let (dir, before) = fresh();
-    let after = AgentKeys::renew(dir.path(), 1_010, 100, true).unwrap();
-    let loaded = AgentKeys::load(dir.path()).unwrap();
+    let after = IdentityKeys::renew(dir.path(), 1_010, 100, true).unwrap();
+    let loaded = IdentityKeys::load(dir.path()).unwrap();
     for keys in [&after, &loaded] {
         assert_eq!(keys.retired.len(), 1);
         let entry = &keys.retired[0];
@@ -282,9 +282,9 @@ fn renew_new_device_appends_the_old_public_keys() {
 #[test]
 fn rotate_device_twice_keeps_both_retired_keys_in_order() {
     let (dir, first) = fresh();
-    let second = AgentKeys::rotate_device(dir.path(), 10, 100).unwrap();
-    let third = AgentKeys::rotate_device(dir.path(), 20, 100).unwrap();
-    let loaded = AgentKeys::load(dir.path()).unwrap();
+    let second = IdentityKeys::rotate_device(dir.path(), 10, 100).unwrap();
+    let third = IdentityKeys::rotate_device(dir.path(), 20, 100).unwrap();
+    let loaded = IdentityKeys::load(dir.path()).unwrap();
     assert_eq!(loaded.retired.len(), 2);
     assert_eq!(loaded.retired[0].retired_at_unix_seconds, 10);
     assert_eq!(loaded.retired[1].retired_at_unix_seconds, 20);
@@ -310,15 +310,15 @@ fn rotate_device_twice_keeps_both_retired_keys_in_order() {
 #[test]
 fn history_survives_load() {
     let (dir, _) = fresh();
-    let rotated = AgentKeys::rotate_device(dir.path(), 8, 100).unwrap();
-    let loaded = AgentKeys::load(dir.path()).unwrap();
+    let rotated = IdentityKeys::rotate_device(dir.path(), 8, 100).unwrap();
+    let loaded = IdentityKeys::load(dir.path()).unwrap();
     assert_eq!(loaded.retired, rotated.retired);
 }
 
 #[test]
 fn retired_devices_file_holds_public_halves_only() {
     let (dir, old) = fresh();
-    let _ = AgentKeys::rotate_device(dir.path(), 8, 100).unwrap();
+    let _ = IdentityKeys::rotate_device(dir.path(), 8, 100).unwrap();
     let text = fs::read_to_string(dir.path().join(HISTORY_FILE)).unwrap();
     let json: serde_json::Value = serde_json::from_str(&text).unwrap();
     let retired = json
@@ -404,8 +404,8 @@ fn retry_after_history_first_crash_keeps_the_earliest_retired_at() {
         },
     )
     .unwrap();
-    let retried = AgentKeys::rotate_device(dir.path(), 2_000, 100).unwrap();
-    let loaded = AgentKeys::load(dir.path()).unwrap();
+    let retried = IdentityKeys::rotate_device(dir.path(), 2_000, 100).unwrap();
+    let loaded = IdentityKeys::load(dir.path()).unwrap();
     let old_signing = pb::PublicKey::from(&signing_public(&before.device));
     assert_eq!(loaded.retired.len(), 1);
     let matching: Vec<_> = loaded
@@ -433,7 +433,7 @@ fn retry_after_history_first_crash_keeps_the_earliest_retired_at() {
 #[test]
 fn device_keys_at_includes_retired_until_retired_at() {
     let (dir, first) = fresh();
-    let rotated = AgentKeys::rotate_device(dir.path(), 100, 100).unwrap();
+    let rotated = IdentityKeys::rotate_device(dir.path(), 100, 100).unwrap();
     let current = signing_public(&rotated.device);
     let old = signing_public(&first.device);
     assert_eq!(
@@ -449,8 +449,8 @@ fn device_keys_at_includes_retired_until_retired_at() {
 
     // Three keys: K0 retired at 100, K1 retired at 200, current K2.
     let (chain_dir, k0_keys) = fresh();
-    let k1_keys = AgentKeys::rotate_device(chain_dir.path(), 100, 100).unwrap();
-    let k2_keys = AgentKeys::rotate_device(chain_dir.path(), 200, 100).unwrap();
+    let k1_keys = IdentityKeys::rotate_device(chain_dir.path(), 100, 100).unwrap();
+    let k2_keys = IdentityKeys::rotate_device(chain_dir.path(), 200, 100).unwrap();
     let (k0, k1, k2) = (
         signing_public(&k0_keys.device),
         signing_public(&k1_keys.device),
@@ -471,7 +471,7 @@ fn device_keys_at_includes_retired_until_retired_at() {
 #[test]
 fn current_device_is_always_included() {
     let (dir, first) = fresh();
-    let rotated = AgentKeys::rotate_device(dir.path(), 5, 100).unwrap();
+    let rotated = IdentityKeys::rotate_device(dir.path(), 5, 100).unwrap();
     let current = signing_public(&rotated.device);
     let old = signing_public(&first.device);
     assert_eq!(
@@ -539,11 +539,11 @@ fn device_keys_at_drops_unreadable_retired_entries() {
 #[test]
 fn rotate_root_keeps_agent_id_and_signs_with_the_old_root() {
     let (dir, before) = fresh();
-    let rotation = AgentKeys::rotate_root(dir.path(), 50).unwrap();
+    let rotation = IdentityKeys::rotate_root(dir.path(), 50).unwrap();
     let transcript = transcripts::root_rotation_transcript(&rotation).unwrap();
     assert_eq!(
         rotation.principal_genesis,
-        Some(pb::PublicKey::from(before.agent_id.genesis()))
+        Some(pb::PublicKey::from(before.principal_id.genesis()))
     );
     assert_eq!(
         rotation.old_root,
@@ -555,9 +555,9 @@ fn rotate_root_keeps_agent_id_and_signs_with_the_old_root() {
         &rotation.signature
     )
     .is_ok());
-    assert_eq!(read_principal_id(dir.path()).unwrap(), before.agent_id);
+    assert_eq!(read_principal_id(dir.path()).unwrap(), before.principal_id);
 
-    let loaded = AgentKeys::load(dir.path()).unwrap();
+    let loaded = IdentityKeys::load(dir.path()).unwrap();
     assert_eq!(
         rotation.new_root,
         Some(pb::PublicKey::from(&signing_public(&loaded.root)))
@@ -567,7 +567,7 @@ fn rotate_root_keeps_agent_id_and_signs_with_the_old_root() {
         "the delegation is stale until renew"
     );
 
-    let renewed = AgentKeys::renew(dir.path(), 60, 100, false).unwrap();
+    let renewed = IdentityKeys::renew(dir.path(), 60, 100, false).unwrap();
     assert!(renewed.delegation_is_current());
     let delegation_transcript =
         transcripts::key_delegation_transcript(&renewed.delegation).unwrap();
@@ -591,9 +591,9 @@ fn rotate_root_keeps_agent_id_and_signs_with_the_old_root() {
 #[test]
 fn rotation_chain_survives_load_and_grows_on_each_rotate() {
     let (dir, before) = fresh();
-    let first = AgentKeys::rotate_root(dir.path(), 50).unwrap();
-    let second = AgentKeys::rotate_root(dir.path(), 60).unwrap();
-    let loaded = AgentKeys::load(dir.path()).unwrap();
+    let first = IdentityKeys::rotate_root(dir.path(), 50).unwrap();
+    let second = IdentityKeys::rotate_root(dir.path(), 60).unwrap();
+    let loaded = IdentityKeys::load(dir.path()).unwrap();
     assert_eq!(loaded.rotations.len(), 2);
     assert_eq!(loaded.rotations[0], first);
     assert_eq!(loaded.rotations[1], second);
@@ -627,7 +627,7 @@ fn load_tolerates_a_history_entry_equal_to_the_current_device() {
         },
     )
     .unwrap();
-    let loaded = AgentKeys::load(dir.path()).unwrap();
+    let loaded = IdentityKeys::load(dir.path()).unwrap();
     assert_eq!(loaded.retired.len(), 1);
     assert_eq!(
         signing_public(&loaded.device),
@@ -641,7 +641,7 @@ fn load_requires_agent_id() {
     let (dir, _) = fresh();
     fs::remove_file(dir.path().join(AGENT_ID_FILE)).unwrap();
     assert!(matches!(
-        AgentKeys::load(dir.path()),
+        IdentityKeys::load(dir.path()),
         Err(KeyfileError::Missing(_))
     ));
 }
@@ -651,7 +651,7 @@ fn load_in_read_only_dir_falls_back_to_unlocked_read() {
     let (dir, _) = fresh();
     fs::remove_file(dir.path().join(LOCK_FILE)).unwrap();
     fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o500)).unwrap();
-    let result = AgentKeys::load(dir.path());
+    let result = IdentityKeys::load(dir.path());
     fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
     assert!(
         result.is_ok(),
@@ -668,11 +668,11 @@ fn load_during_renew_never_sees_a_torn_state() {
     let (dir, _) = fresh();
     let path = dir.path();
     let done = AtomicBool::new(false);
-    let renewals: Result<Vec<AgentKeys>, KeyfileError> = thread::scope(|scope| {
+    let renewals: Result<Vec<IdentityKeys>, KeyfileError> = thread::scope(|scope| {
         let reader = scope.spawn(|| {
             let mut loads = 0u32;
             while !done.load(Ordering::SeqCst) {
-                if let Err(error) = AgentKeys::load(path) {
+                if let Err(error) = IdentityKeys::load(path) {
                     panic!("load saw a torn state: {error}");
                 }
                 loads += 1;
@@ -680,7 +680,7 @@ fn load_during_renew_never_sees_a_torn_state() {
             loads
         });
         let renewals = (0..30i64)
-            .map(|i| AgentKeys::renew(path, 1_010 + i, 100, true))
+            .map(|i| IdentityKeys::renew(path, 1_010 + i, 100, true))
             .collect();
         done.store(true, Ordering::SeqCst);
         assert!(
@@ -690,14 +690,14 @@ fn load_during_renew_never_sees_a_torn_state() {
         renewals
     });
     renewals.unwrap();
-    assert_eq!(AgentKeys::load(path).unwrap().retired.len(), 30);
+    assert_eq!(IdentityKeys::load(path).unwrap().retired.len(), 30);
 }
 
 #[test]
 fn two_renewals_do_not_lose_history() {
     for _ in 0..5 {
         let dir = Arc::new(tempdir());
-        AgentKeys::init(dir.path(), 1, 100).unwrap();
+        IdentityKeys::init(dir.path(), 1, 100).unwrap();
         let barrier = Arc::new(Barrier::new(8));
         let handles: Vec<_> = (0..8i64)
             .map(|i| {
@@ -705,14 +705,14 @@ fn two_renewals_do_not_lose_history() {
                 let barrier = Arc::clone(&barrier);
                 thread::spawn(move || {
                     barrier.wait();
-                    AgentKeys::renew(dir.path(), 10 + i, 100, true).unwrap();
+                    IdentityKeys::renew(dir.path(), 10 + i, 100, true).unwrap();
                 })
             })
             .collect();
         for handle in handles {
             handle.join().unwrap();
         }
-        let loaded = AgentKeys::load(dir.path()).unwrap();
+        let loaded = IdentityKeys::load(dir.path()).unwrap();
         assert_eq!(
             loaded.retired.len(),
             8,

@@ -102,15 +102,15 @@ facts:
   - src/lib.rs
   - src/testkit.rs
 - id: agent-dir-init-and-load
-  assertion: AgentKeys::init writes the six agent files with agent_id last and refuses an existing agent
-    file, and AgentKeys::load reads them under a shared .lock after refusing any directory with a group
+  assertion: IdentityKeys::init writes the six agent files with agent_id last and refuses an existing agent
+    file, and IdentityKeys::load reads them under a shared .lock after refusing any directory with a group
     or other permission bit set (unix targets only; identity-keyfile's lib.rs compile_error!s elsewhere).
   evidence:
   - identity-keyfile/src/agent.rs
   - identity-keyfile/src/files.rs
   - identity-keyfile/tests/agent.rs
 - id: agent-renew-retires-old-device
-  assertion: AgentKeys::renew re-signs the device delegation under the current root, and with new_device
+  assertion: IdentityKeys::renew re-signs the device delegation under the current root, and with new_device
     = true writes retired_devices.json before device.jwk.json, keeping the earlier retired_at when a signing
     key is retired again (unix only).
   evidence:

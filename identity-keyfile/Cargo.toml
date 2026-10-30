@@ -1,16 +1,16 @@
 [package]
 name = "identity-keyfile"
-version = "0.5.2"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.89"
-description = "Agent key directory for identity-crypto principals: load, save, renew and rotate keys, with a retired-device history"
+description = "Key directory for identity-crypto principals: load, save, renew and rotate keys, with a retired-device history"
 
 [features]
 # A temp agent-dir fixture for consumers' dev-dependencies. Off by default.
 testkit = ["dep:tempfile"]
 
 [dependencies]
-identity-crypto = { path = "..", version = "0.5.2" }
+identity-crypto = { path = "..", version = "0.6.0" }
 serde_json = "1"
 serde = "1"
 thiserror = "2"

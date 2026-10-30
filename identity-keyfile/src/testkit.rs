@@ -1,22 +1,22 @@
-use crate::{AgentKeys, KeyfileError};
+use crate::{IdentityKeys, KeyfileError};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 /// A temporary initialized agent directory for consumer tests. Dropping it
-/// deletes the directory and its keys, unless [`TempAgentDir::keep`] is called.
-#[must_use = "dropping a TempAgentDir deletes the agent directory immediately"]
-pub struct TempAgentDir {
+/// deletes the directory and its keys, unless [`TempIdentityDir::keep`] is called.
+#[must_use = "dropping a TempIdentityDir deletes the agent directory immediately"]
+pub struct TempIdentityDir {
     directory: tempfile::TempDir,
 }
 
-impl TempAgentDir {
-    /// Creates a private temp directory and runs `AgentKeys::init` in it.
+impl TempIdentityDir {
+    /// Creates a private temp directory and runs `IdentityKeys::init` in it.
     /// Panics on failure, which is correct for a test fixture.
     pub fn new(now: i64, ttl_seconds: i64) -> Self {
         let directory = tempfile::tempdir().expect("create temporary agent directory");
         std::fs::set_permissions(directory.path(), std::fs::Permissions::from_mode(0o700))
             .expect("make the temporary agent directory private");
-        AgentKeys::init(directory.path(), now, ttl_seconds)
+        IdentityKeys::init(directory.path(), now, ttl_seconds)
             .expect("initialize temporary agent directory");
         Self { directory }
     }
@@ -25,8 +25,8 @@ impl TempAgentDir {
         self.directory.path()
     }
 
-    pub fn load(&self) -> Result<AgentKeys, KeyfileError> {
-        AgentKeys::load(self.path())
+    pub fn load(&self) -> Result<IdentityKeys, KeyfileError> {
+        IdentityKeys::load(self.path())
     }
 
     /// Disables the cleanup and returns the directory path. The caller now owns

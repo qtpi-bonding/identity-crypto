@@ -18,16 +18,16 @@ use std::path::Path;
 /// The root signs the device delegation and root rotations. The device signs
 /// for the agent day to day. `agent_id` is the principal id derived from the
 /// first root and does not change when the root is rotated.
-pub struct AgentKeys {
+pub struct IdentityKeys {
     /// The current root. Private: stored in `root.jwk.json`.
     pub root: KeyDuo,
     /// The current device. Private: stored in `device.jwk.json`.
     pub device: KeyDuo,
     /// The root's delegation of `device`. It is stale after `rotate_root` until
-    /// `renew` re-signs it under the new root; see [`AgentKeys::delegation_is_current`].
+    /// `renew` re-signs it under the new root; see [`IdentityKeys::delegation_is_current`].
     pub delegation: pb::KeyDelegation,
     /// The principal id, `p256:<genesis>`. Stored in `agent_id`, which is written last.
-    pub agent_id: PrincipalId,
+    pub principal_id: PrincipalId,
     /// Devices this agent used to have, public halves only, in the order they were
     /// retired. Each entry's `retired_at_unix_seconds` is a local, unsigned claim:
     /// it is not checked against any signature or clock. A compromised retired key
@@ -35,7 +35,7 @@ pub struct AgentKeys {
     /// [`device_keys_at`] from a trusted clock or receipt time, never from a message.
     pub retired: Vec<pb::RetiredDevice>,
     /// The root rotation chain, oldest first, public data only. The last entry may
-    /// be a pending rotation whose new root was never installed (see [`AgentKeys::rotate_root`]).
+    /// be a pending rotation whose new root was never installed (see [`IdentityKeys::rotate_root`]).
     pub rotations: Vec<pb::RootRotation>,
 }
 
@@ -47,9 +47,9 @@ pub struct DeviceKeys {
     /// The root's delegation of the current device.
     pub delegation: pb::KeyDelegation,
     /// The principal id of the agent.
-    pub agent_id: PrincipalId,
+    pub principal_id: PrincipalId,
     /// Devices this agent used to have, public halves only. `retired_at` is an
-    /// unsigned local claim; see [`AgentKeys::retired`].
+    /// unsigned local claim; see [`IdentityKeys::retired`].
     pub retired: Vec<pb::RetiredDevice>,
 }
 
@@ -57,14 +57,14 @@ pub struct DeviceKeys {
 #[derive(Clone, PartialEq)]
 pub struct DevicePublic {
     /// The principal id of the agent.
-    pub agent_id: PrincipalId,
+    pub principal_id: PrincipalId,
     /// The current device's signing key.
     pub device_signing: PublicKey,
     /// The current device's encryption key.
     pub device_encryption: PublicKey,
     /// The root's delegation of the current device.
     pub delegation: pb::KeyDelegation,
-    /// Retired devices, public halves only; see [`AgentKeys::retired`] for the trust caveat.
+    /// Retired devices, public halves only; see [`IdentityKeys::retired`] for the trust caveat.
     pub retired: Vec<pb::RetiredDevice>,
 }
 
@@ -111,11 +111,11 @@ fn exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
 }
 
-impl AgentKeys {
+impl IdentityKeys {
     /// Returns public device data without exposing private keys.
     pub fn public(&self) -> DevicePublic {
         DevicePublic::new(
-            &self.agent_id,
+            &self.principal_id,
             &self.device,
             &self.delegation,
             &self.retired,
@@ -124,7 +124,7 @@ impl AgentKeys {
 
     /// Writes every file of `self` into `dir`, creating `dir` (mode 0700) if needed.
     /// Takes the exclusive lock. Refuses a group- or world-accessible existing `dir`.
-    /// The files are overwritten, not checked: use [`AgentKeys::init`] to create a
+    /// The files are overwritten, not checked: use [`IdentityKeys::init`] to create a
     /// new agent. `agent_id` is written last.
     pub fn save(&self, dir: &Path) -> Result<(), KeyfileError> {
         files::ensure_dir(dir)?;
@@ -144,7 +144,7 @@ impl AgentKeys {
                 rotations: self.rotations.clone(),
             },
         )?;
-        write_principal_id(dir, &self.agent_id)
+        write_principal_id(dir, &self.principal_id)
     }
 
     /// Reads the agent directory `dir`. The directory must exist and must not be
@@ -154,7 +154,7 @@ impl AgentKeys {
     ///
     /// Returns `DelegationMismatch` when the stored delegation names a different
     /// device key than `device.jwk.json`. A delegation that names an old root is
-    /// accepted; [`AgentKeys::delegation_is_current`] reports it.
+    /// accepted; [`IdentityKeys::delegation_is_current`] reports it.
     pub fn load(dir: &Path) -> Result<Self, KeyfileError> {
         files::check_dir(dir)?;
         let _lock = files::lock_shared(dir)?;
@@ -177,14 +177,14 @@ impl AgentKeys {
         let root = read_duo(dir, ROOT_FILE)?;
         let device = read_duo(dir, DEVICE_FILE)?;
         let delegation = read_delegation(dir)?;
-        let agent_id = read_principal_id(dir)?;
+        let principal_id = read_principal_id(dir)?;
         let retired = read_history(dir)?.retired;
         let rotations = read_rotations(dir)?.rotations;
         Ok(Self {
             root,
             device,
             delegation,
-            agent_id,
+            principal_id,
             retired,
             rotations,
         })
@@ -206,10 +206,10 @@ impl AgentKeys {
         files::ensure_dir(dir)?;
         let root = generate();
         let device = generate();
-        let agent_id = principal_id(&root);
+        let principal_id = principal_id(&root);
         let delegation = delegate_device(
             &root,
-            &agent_id,
+            &principal_id,
             &device,
             now,
             now.saturating_add(ttl_seconds),
@@ -233,12 +233,12 @@ impl AgentKeys {
                 rotations: Vec::new(),
             },
         )?;
-        write_principal_id(dir, &agent_id)?;
+        write_principal_id(dir, &principal_id)?;
         Ok(Self {
             root,
             device,
             delegation,
-            agent_id,
+            principal_id,
             retired: Vec::new(),
             rotations: Vec::new(),
         })
@@ -272,7 +272,7 @@ impl AgentKeys {
         let device = replacement.as_ref().unwrap_or(&keys.device);
         let delegation = delegate_device(
             &keys.root,
-            &keys.agent_id,
+            &keys.principal_id,
             device,
             now,
             now.saturating_add(ttl_seconds),
@@ -296,7 +296,7 @@ impl AgentKeys {
     }
 
     /// Replaces the device with a new one and retires the old device's public
-    /// keys. This is [`AgentKeys::renew`] with `new_device = true`.
+    /// keys. This is [`IdentityKeys::renew`] with `new_device = true`.
     pub fn rotate_device(dir: &Path, now: i64, ttl_seconds: i64) -> Result<Self, KeyfileError> {
         Self::renew(dir, now, ttl_seconds, true)
     }
@@ -304,7 +304,7 @@ impl AgentKeys {
     /// Replaces the root with a new one. The rotation is signed by the old root
     /// and returned for the caller to submit. `agent_id` does not change.
     ///
-    /// The delegation is not re-signed here: until [`AgentKeys::renew`] runs,
+    /// The delegation is not re-signed here: until [`IdentityKeys::renew`] runs,
     /// `delegation_is_current` is false. Write order: the complete rotation chain
     /// first, then `root.jwk.json`. A crash between them leaves the old root on
     /// disk with a pending final rotation in the chain. The old root still works,
@@ -328,7 +328,7 @@ impl AgentKeys {
             rotations.pop();
         }
         let new_root = generate();
-        let signed = rotation(&keys.root, &keys.agent_id, &new_root, now)?;
+        let signed = rotation(&keys.root, &keys.principal_id, &new_root, now)?;
         rotations.push(signed.clone());
         write_rotations(dir, &pb::RootRotations { rotations })?;
         write_duo(dir, ROOT_FILE, &new_root)?;
@@ -352,13 +352,13 @@ impl DeviceKeys {
         let _lock = files::lock_shared(dir)?;
         let device = read_duo(dir, DEVICE_FILE)?;
         let delegation = read_delegation(dir)?;
-        let agent_id = read_principal_id(dir)?;
+        let principal_id = read_principal_id(dir)?;
         let retired = read_history(dir)?.retired;
         check_delegation(&device, &delegation)?;
         Ok(Self {
             device,
             delegation,
-            agent_id,
+            principal_id,
             retired,
         })
     }
@@ -366,7 +366,7 @@ impl DeviceKeys {
     /// Returns public device data without exposing the private device key.
     pub fn public(&self) -> DevicePublic {
         DevicePublic::new(
-            &self.agent_id,
+            &self.principal_id,
             &self.device,
             &self.delegation,
             &self.retired,
@@ -376,13 +376,13 @@ impl DeviceKeys {
 
 impl DevicePublic {
     fn new(
-        agent_id: &PrincipalId,
+        principal_id: &PrincipalId,
         device: &KeyDuo,
         delegation: &pb::KeyDelegation,
         retired: &[pb::RetiredDevice],
     ) -> Self {
         Self {
-            agent_id: agent_id.clone(),
+            principal_id: principal_id.clone(),
             device_signing: signing_public(device),
             device_encryption: encryption_public(device),
             delegation: delegation.clone(),
@@ -407,7 +407,7 @@ impl DevicePublic {
 /// `at` must come from a trusted clock or receipt time, never from a message's
 /// own `issued_at`. `retired_at` is an unsigned local claim, so a compromised
 /// retired key can sign claimed-earlier messages indefinitely.
-pub fn device_keys_at(keys: &AgentKeys, at: i64) -> Vec<PublicKey> {
+pub fn device_keys_at(keys: &IdentityKeys, at: i64) -> Vec<PublicKey> {
     device_keys_at_public(&signing_public(&keys.device), &keys.retired, at)
 }
 
@@ -470,16 +470,16 @@ mod crash_tests {
     #[test]
     fn crash_between_history_and_device_write_loses_no_key() {
         let dir = private_dir();
-        let before = AgentKeys::init(dir.path(), 1_000, 100).unwrap();
+        let before = IdentityKeys::init(dir.path(), 1_000, 100).unwrap();
         let old_signing = signing_public(&before.device);
         {
             let _armed = Failpoint::on(DEVICE_FILE);
             assert!(matches!(
-                AgentKeys::renew(dir.path(), 1_010, 100, true),
+                IdentityKeys::renew(dir.path(), 1_010, 100, true),
                 Err(KeyfileError::Io { .. })
             ));
         }
-        let loaded = AgentKeys::load(dir.path()).unwrap();
+        let loaded = IdentityKeys::load(dir.path()).unwrap();
         assert_eq!(
             signing_public(&loaded.device),
             old_signing,
@@ -505,21 +505,21 @@ mod crash_tests {
     #[test]
     fn crash_between_device_and_delegation_write_is_detected_and_repaired() {
         let dir = private_dir();
-        let before = AgentKeys::init(dir.path(), 1_000, 100).unwrap();
+        let before = IdentityKeys::init(dir.path(), 1_000, 100).unwrap();
         {
             let _armed = Failpoint::on(DELEGATION_FILE);
             assert!(matches!(
-                AgentKeys::renew(dir.path(), 1_010, 100, true),
+                IdentityKeys::renew(dir.path(), 1_010, 100, true),
                 Err(KeyfileError::Io { .. })
             ));
         }
         assert!(matches!(
-            AgentKeys::load(dir.path()),
+            IdentityKeys::load(dir.path()),
             Err(KeyfileError::DelegationMismatch)
         ));
         let written = signing_public(&read_duo(dir.path(), DEVICE_FILE).unwrap());
         assert_ne!(written, signing_public(&before.device));
-        let repaired = AgentKeys::renew(dir.path(), 1_020, 100, false).unwrap();
+        let repaired = IdentityKeys::renew(dir.path(), 1_020, 100, false).unwrap();
         assert_eq!(signing_public(&repaired.device), written);
         assert!(repaired.delegation_is_current());
         let on_disk = read_delegation(dir.path()).unwrap();
@@ -545,7 +545,7 @@ mod crash_tests {
         {
             let _armed = Failpoint::on(AGENT_ID_FILE);
             assert!(matches!(
-                AgentKeys::init(&target, 1, 100),
+                IdentityKeys::init(&target, 1, 100),
                 Err(KeyfileError::Io { .. })
             ));
         }
@@ -563,10 +563,10 @@ mod crash_tests {
         }
         assert!(!target.join(AGENT_ID_FILE).exists());
         assert!(
-            matches!(AgentKeys::load(&target), Err(KeyfileError::Missing(p)) if p.ends_with(AGENT_ID_FILE))
+            matches!(IdentityKeys::load(&target), Err(KeyfileError::Missing(p)) if p.ends_with(AGENT_ID_FILE))
         );
         assert!(matches!(
-            AgentKeys::init(&target, 1, 100),
+            IdentityKeys::init(&target, 1, 100),
             Err(KeyfileError::AlreadyInitialised(_))
         ));
     }
@@ -574,13 +574,13 @@ mod crash_tests {
     #[test]
     fn rotate_root_writes_rotations_before_the_root() {
         let dir = private_dir();
-        let before = AgentKeys::init(dir.path(), 1_000, 100).unwrap();
+        let before = IdentityKeys::init(dir.path(), 1_000, 100).unwrap();
         let old_root = signing_public(&before.root);
         let root_bytes = fs::read(dir.path().join(ROOT_FILE)).unwrap();
         {
             let _armed = Failpoint::on(ROOT_FILE);
             assert!(matches!(
-                AgentKeys::rotate_root(dir.path(), 50),
+                IdentityKeys::rotate_root(dir.path(), 50),
                 Err(KeyfileError::Io { .. })
             ));
         }
@@ -593,16 +593,16 @@ mod crash_tests {
         assert_eq!(chain.len(), 1, "the chain was written before the root");
         assert_eq!(chain[0].old_root, Some(pb::PublicKey::from(&old_root)));
         assert_eq!(
-            signing_public(&AgentKeys::load(dir.path()).unwrap().root),
+            signing_public(&IdentityKeys::load(dir.path()).unwrap().root),
             old_root
         );
 
         let other = private_dir();
-        let other_keys = AgentKeys::init(other.path(), 1_000, 100).unwrap();
+        let other_keys = IdentityKeys::init(other.path(), 1_000, 100).unwrap();
         {
             let _armed = Failpoint::on(ROTATIONS_FILE);
             assert!(matches!(
-                AgentKeys::rotate_root(other.path(), 50),
+                IdentityKeys::rotate_root(other.path(), 50),
                 Err(KeyfileError::Io { .. })
             ));
         }
@@ -619,16 +619,16 @@ mod crash_tests {
     #[test]
     fn crash_after_rotations_write_keeps_old_root_usable() {
         let dir = private_dir();
-        let before = AgentKeys::init(dir.path(), 1_000, 100).unwrap();
+        let before = IdentityKeys::init(dir.path(), 1_000, 100).unwrap();
         let old_root = signing_public(&before.root);
         {
             let _armed = Failpoint::on(ROOT_FILE);
             assert!(matches!(
-                AgentKeys::rotate_root(dir.path(), 50),
+                IdentityKeys::rotate_root(dir.path(), 50),
                 Err(KeyfileError::Io { .. })
             ));
         }
-        let loaded = AgentKeys::load(dir.path()).unwrap();
+        let loaded = IdentityKeys::load(dir.path()).unwrap();
         assert_eq!(
             signing_public(&loaded.root),
             old_root,
@@ -644,8 +644,8 @@ mod crash_tests {
             Some(pb::PublicKey::from(&old_root))
         );
 
-        let retried = AgentKeys::rotate_root(dir.path(), 60).unwrap();
-        let after = AgentKeys::load(dir.path()).unwrap();
+        let retried = IdentityKeys::rotate_root(dir.path(), 60).unwrap();
+        let after = IdentityKeys::load(dir.path()).unwrap();
         assert_eq!(
             after.rotations.len(),
             1,
@@ -656,21 +656,21 @@ mod crash_tests {
             Some(pb::PublicKey::from(&signing_public(&after.root)))
         );
         assert_eq!(after.rotations[0], retried);
-        let renewed = AgentKeys::renew(dir.path(), 70, 100, false).unwrap();
+        let renewed = IdentityKeys::renew(dir.path(), 70, 100, false).unwrap();
         assert!(renewed.delegation_is_current());
     }
 
     #[test]
     fn rotate_root_retry_does_not_fork_the_chain() {
         let dir = private_dir();
-        let before = AgentKeys::init(dir.path(), 1_000, 100).unwrap();
+        let before = IdentityKeys::init(dir.path(), 1_000, 100).unwrap();
         let old_root = signing_public(&before.root);
         for _ in 0..2 {
             let _armed = Failpoint::on(ROOT_FILE);
-            assert!(AgentKeys::rotate_root(dir.path(), 50).is_err());
+            assert!(IdentityKeys::rotate_root(dir.path(), 50).is_err());
         }
-        let final_rotation = AgentKeys::rotate_root(dir.path(), 60).unwrap();
-        let loaded = AgentKeys::load(dir.path()).unwrap();
+        let final_rotation = IdentityKeys::rotate_root(dir.path(), 60).unwrap();
+        let loaded = IdentityKeys::load(dir.path()).unwrap();
         assert_eq!(
             loaded.rotations.len(),
             1,

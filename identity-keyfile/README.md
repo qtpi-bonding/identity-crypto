@@ -1,7 +1,7 @@
 # identity-keyfile
 
-`identity-keyfile` keeps a self-rooted agent's keys in a Unix directory. It
-creates them (`AgentKeys::init`), re-signs the device delegation (`renew`),
+`identity-keyfile` keeps a self-rooted principal's keys (an agent or a daemon) in a Unix directory. It
+creates them (`IdentityKeys::init`), re-signs the device delegation (`renew`),
 replaces the device (`rotate_device`, or `renew` with `new_device = true`),
 replaces the root (`rotate_root`), and reads and writes them (`load`, `save`).
 The crate is Unix-only: key files are written mode `0600`, and other targets
@@ -10,15 +10,15 @@ fail to compile.
 ## Device-only loading
 
 `DeviceKeys::load(dir)` reads the device key, delegation, agent id, and retired
-device history while taking the same shared lock as `AgentKeys::load`. It never
+device history while taking the same shared lock as `IdentityKeys::load`. It never
 opens, stats, or checks `root.jwk.json` or `rotations.json`, so a device-only
-signer can run without access to the root. Like `AgentKeys::load`, it creates
+signer can run without access to the root. Like `IdentityKeys::load`, it creates
 `.lock`, and reads without a lock when the directory is read-only. `DeviceKeys::public()` (and
-`AgentKeys::public()`) returns the private-key-free `DevicePublic` snapshot.
+`IdentityKeys::public()`) returns the private-key-free `DevicePublic` snapshot.
 
 ## Layout
 
-The agent directory holds these files:
+The key directory holds these files:
 
 | File | Contents | Written by |
 | --- | --- | --- |
@@ -101,7 +101,7 @@ halves only.
 
 ## Testing
 
-The `testkit` feature exports `TempAgentDir`, a private temporary agent
+The `testkit` feature exports `TempIdentityDir`, a private temporary agent
 directory that is removed on drop unless `keep()` is called. Crash
 simulations use a crate-private failpoint in `files.rs` and are unit tests in
 `src/`.
