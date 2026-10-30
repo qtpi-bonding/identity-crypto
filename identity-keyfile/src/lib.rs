@@ -1,17 +1,17 @@
 #[cfg(not(unix))]
 compile_error!("identity-keyfile writes 0600 key files and needs a unix target");
 
-mod keys;
 mod error;
 mod files;
+mod keys;
 
-pub use keys::{device_keys_at, read_principal, IdentityKeys, DeviceKeys, DevicePublic};
 pub use error::{KeyfileError, VerifyCheck};
 pub use files::{
     read_delegation, read_duo, read_history, read_principal_id, read_rotations, write_delegation,
     write_duo, write_history, write_principal_id, write_rotations, AGENT_ID_FILE, DELEGATION_FILE,
     DEVICE_FILE, HISTORY_FILE, LOCK_FILE, ROOT_FILE, ROTATIONS_FILE,
 };
+pub use keys::{device_keys_at, read_principal, DeviceKeys, DevicePublic, IdentityKeys};
 
 #[cfg(feature = "testkit")]
 pub mod testkit;

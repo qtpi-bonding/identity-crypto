@@ -1,4 +1,5 @@
 use crate::error::KeyfileError;
+use crate::error::VerifyCheck;
 use crate::files::{
     self, read_delegation, read_duo, read_history, read_principal_id, read_rotations,
     write_delegation, write_duo, write_history, write_principal_id, write_rotations, AGENT_ID_FILE,
@@ -6,12 +7,18 @@ use crate::files::{
 };
 use crate::generate;
 use identity_crypto::jwk_duo::KeyDuo;
+use identity_crypto::transcripts;
 use identity_crypto::{
-    delegate_device, encryption_public, pb, principal_id, rotation, signing_public, PrincipalId,
-    PublicKey,
+    delegate_device, encryption_public, pb, principal_id, renewal_due, rotation, signing_public,
+    verify_p256, PrincipalId, PublicKey,
 };
 use std::fs;
+use std::io::ErrorKind;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// The keys of one self-rooted agent, as stored in an agent directory.
 ///
@@ -109,6 +116,75 @@ fn check_delegation(device: &KeyDuo, delegation: &pb::KeyDelegation) -> Result<(
 
 fn exists(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok()
+}
+
+fn rename_collision(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        ErrorKind::AlreadyExists | ErrorKind::DirectoryNotEmpty
+    )
+}
+
+fn clean_dead_temps(dir: &Path, parent: &Path) -> Result<(), KeyfileError> {
+    let prefix = format!(
+        "{}.tmp-",
+        dir.file_name().unwrap_or_default().to_string_lossy()
+    );
+    for entry in fs::read_dir(parent).map_err(|e| crate::error::io(parent, e))? {
+        let entry = entry.map_err(|e| crate::error::io(parent, e))?;
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.starts_with(&prefix) {
+            continue;
+        }
+        let Some(pid_text) = name.strip_prefix(&prefix).and_then(|s| s.split('-').next()) else {
+            continue;
+        };
+        let Ok(pid) = pid_text.parse::<libc::pid_t>() else {
+            continue;
+        };
+        // `kill(pid, 0)` probes process existence without sending a signal.
+        let dead = unsafe {
+            libc::kill(pid, 0) == -1
+                && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        };
+        if dead {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+    Ok(())
+}
+
+fn verify_identity(keys: &IdentityKeys) -> Result<(), KeyfileError> {
+    let root_signing = signing_public(&keys.root);
+    let root_wire = pb::PublicKey::from(&root_signing);
+    if keys.principal_id != PrincipalId::from_genesis(root_signing.clone()) {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::AgentId));
+    }
+    if keys.delegation.principal_genesis.as_ref() != Some(&root_wire) {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis));
+    }
+    if keys.delegation.signing_root.as_ref() != Some(&root_wire) {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot));
+    }
+    if keys.delegation.delegated.as_ref()
+        != Some(&pb::PublicKey::from(&signing_public(&keys.device)))
+    {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::Delegated));
+    }
+    if keys.delegation.delegated_encryption.as_ref()
+        != Some(&pb::PublicKey::from(&encryption_public(&keys.device)))
+    {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::DelegatedEncryption));
+    }
+    if keys.delegation.purpose != pb::KeyPurpose::Device as i32 {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::Purpose));
+    }
+    let transcript = transcripts::key_delegation_transcript(&keys.delegation)
+        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::Signature))?;
+    if verify_p256(&root_signing, &transcript, &keys.delegation.signature).is_err() {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::Signature));
+    }
+    Ok(())
 }
 
 impl IdentityKeys {
@@ -297,27 +373,95 @@ impl IdentityKeys {
 
     /// Creates the identity in `dir` atomically, or loads and verifies the one that
     /// is already there. See the daemon-identity spec.
-    pub fn create_or_load(
-        _dir: &Path,
-        _now: i64,
-        _ttl_seconds: i64,
-    ) -> Result<Self, KeyfileError> {
-        todo!("daemon-identity additions")
+    pub fn create_or_load(dir: &Path, now: i64, ttl_seconds: i64) -> Result<Self, KeyfileError> {
+        if Self::exists(dir) {
+            return Self::load_verified(dir);
+        }
+        // A symlink or a loose directory is refused, never renamed over.
+        match fs::symlink_metadata(dir) {
+            Ok(_) => files::check_dir(dir)?,
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => return Err(crate::error::io(dir, error)),
+        }
+        let parent = dir
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        files::check_dir(parent)?;
+        clean_dead_temps(dir, parent)?;
+        let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let temp = parent.join(format!(
+            "{}.tmp-{}-{}",
+            dir.file_name().unwrap_or_default().to_string_lossy(),
+            std::process::id(),
+            n
+        ));
+        fs::create_dir(&temp).map_err(|e| crate::error::io(&temp, e))?;
+        fs::set_permissions(&temp, std::os::unix::fs::PermissionsExt::from_mode(0o700))
+            .map_err(|e| crate::error::io(&temp, e))?;
+        if dir.is_dir() {
+            let only_lock = fs::read_dir(dir)
+                .map_err(|e| crate::error::io(dir, e))?
+                .all(|entry| {
+                    entry
+                        .map(|e| e.file_name().to_string_lossy() == files::LOCK_FILE)
+                        .unwrap_or(false)
+                });
+            if only_lock {
+                fs::remove_dir_all(dir).map_err(|e| crate::error::io(dir, e))?;
+            }
+        }
+        let result = (|| {
+            let keys = Self::init(&temp, now, ttl_seconds)?;
+            fs::File::open(&temp)
+                .and_then(|f| f.sync_all())
+                .map_err(|e| crate::error::io(&temp, e))?;
+            fs::rename(&temp, dir).map_err(|e| crate::error::io(dir, e))?;
+            fs::File::open(parent)
+                .and_then(|f| f.sync_all())
+                .map_err(|e| crate::error::io(parent, e))?;
+            Ok(keys)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_dir_all(&temp);
+        }
+        match result {
+            Ok(keys) => Ok(keys),
+            Err(KeyfileError::Io { source, .. }) if rename_collision(&source) => {
+                Self::load_verified(dir)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     /// `load`, plus every consistency check of [`VerifyCheck`].
-    pub fn load_verified(_dir: &Path) -> Result<Self, KeyfileError> {
-        todo!("daemon-identity additions")
+    pub fn load_verified(dir: &Path) -> Result<Self, KeyfileError> {
+        files::check_dir(dir)?;
+        let _lock = files::lock_shared(dir)?;
+        let keys = Self::load_files(dir)?;
+        verify_identity(&keys)?;
+        Ok(keys)
     }
 
     /// `Ok(None)` when `dir` or its `agent_id` marker is absent; otherwise `load_verified`.
-    pub fn load_existing(_dir: &Path) -> Result<Option<Self>, KeyfileError> {
-        todo!("daemon-identity additions")
+    pub fn load_existing(dir: &Path) -> Result<Option<Self>, KeyfileError> {
+        match fs::symlink_metadata(dir) {
+            Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(crate::error::io(dir, error)),
+            Ok(_) => files::check_dir(dir)?,
+        }
+        if !exists(&dir.join(AGENT_ID_FILE)) {
+            return Ok(None);
+        }
+        Self::load_verified(dir).map(Some)
     }
 
     /// True when `dir` exists and holds the `agent_id` marker.
-    pub fn exists(_dir: &Path) -> bool {
-        todo!("daemon-identity additions")
+    pub fn exists(dir: &Path) -> bool {
+        fs::symlink_metadata(dir)
+            .map(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0)
+            .unwrap_or(false)
+            && exists(&dir.join(AGENT_ID_FILE))
     }
 
     /// Re-signs the delegation with the in-memory root and device when it is due
@@ -325,12 +469,28 @@ impl IdentityKeys {
     /// Returns whether it renewed.
     pub fn renew_if_due(
         &mut self,
-        _dir: Option<&Path>,
-        _now: i64,
-        _ttl_seconds: i64,
-        _margin_seconds: i64,
+        dir: Option<&Path>,
+        now: i64,
+        ttl_seconds: i64,
+        margin_seconds: i64,
     ) -> Result<bool, KeyfileError> {
-        todo!("daemon-identity additions")
+        if !renewal_due(&self.delegation, now, margin_seconds) {
+            return Ok(false);
+        }
+        let delegation = delegate_device(
+            &self.root,
+            &self.principal_id,
+            &self.device,
+            now,
+            now.saturating_add(ttl_seconds),
+        )?;
+        if let Some(dir) = dir {
+            files::check_dir(dir)?;
+            let _lock = files::lock_exclusive(dir)?;
+            write_delegation(dir, &delegation)?;
+        }
+        self.delegation = delegation;
+        Ok(true)
     }
 
     /// Replaces the device with a new one and retires the old device's public
@@ -385,7 +545,44 @@ impl IdentityKeys {
 /// The principal stored in `dir`, read from `agent_id` and `delegation.json`
 /// only (no private key). `Ok(None)` when missing; verified as in the spec.
 pub fn read_principal(_dir: &Path) -> Result<Option<PrincipalId>, KeyfileError> {
-    todo!("daemon-identity additions")
+    let dir = _dir;
+    match fs::symlink_metadata(dir) {
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(crate::error::io(dir, error)),
+        Ok(_) => files::check_dir(dir)?,
+    }
+    if !exists(&dir.join(AGENT_ID_FILE)) {
+        return Ok(None);
+    }
+    let id = read_principal_id(dir)?;
+    let delegation = read_delegation(dir)?;
+    if delegation.principal_genesis != delegation.signing_root {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis));
+    }
+    let genesis = delegation
+        .principal_genesis
+        .as_ref()
+        .ok_or(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
+    let expected = PrincipalId::from_genesis(
+        PublicKey::try_from(genesis)
+            .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::AgentId))?,
+    );
+    if id != expected {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::AgentId));
+    }
+    let root = PublicKey::try_from(
+        delegation
+            .signing_root
+            .as_ref()
+            .ok_or(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot))?,
+    )
+    .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::SigningRoot))?;
+    let transcript = transcripts::key_delegation_transcript(&delegation)
+        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::Signature))?;
+    if verify_p256(&root, &transcript, &delegation.signature).is_err() {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::Signature));
+    }
+    Ok(Some(id))
 }
 
 impl DeviceKeys {

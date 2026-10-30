@@ -132,7 +132,9 @@ fn create_or_load_never_exposes_a_partial_directory() {
     fs::write(stale.join("root.jwk.json"), b"junk from a crashed process").unwrap();
 
     let sleeper = Sleeper::start();
-    let live = parent.path().join(format!("daemon.tmp-{}-0", sleeper.pid()));
+    let live = parent
+        .path()
+        .join(format!("daemon.tmp-{}-0", sleeper.pid()));
     fs::create_dir(&live).unwrap();
     fs::write(live.join("root.jwk.json"), b"another process is writing").unwrap();
 
@@ -141,7 +143,10 @@ fn create_or_load_never_exposes_a_partial_directory() {
         IdentityKeys::load_verified(&dir).unwrap().principal_id,
         keys.principal_id
     );
-    assert!(!stale.exists(), "a dead process's temporary directory is removed");
+    assert!(
+        !stale.exists(),
+        "a dead process's temporary directory is removed"
+    );
     assert_eq!(
         fs::read(live.join("root.jwk.json")).unwrap(),
         b"another process is writing",
@@ -168,7 +173,11 @@ fn create_or_load_never_exposes_a_partial_directory() {
         IdentityKeys::create_or_load(&half, NOW, TTL).is_err(),
         "create_or_load must not create over a half-written directory"
     );
-    assert_eq!(files_of(&half), before, "the half-written files are untouched");
+    assert_eq!(
+        files_of(&half),
+        before,
+        "the half-written files are untouched"
+    );
     assert!(!IdentityKeys::exists(&half));
     assert!(
         temp_siblings(&half).is_empty(),
@@ -231,7 +240,10 @@ fn concurrent_child_helper() {
     let go = dir.parent().unwrap().join("go");
     let deadline = Instant::now() + Duration::from_secs(30);
     while !go.exists() {
-        assert!(Instant::now() < deadline, "the parent never released the child");
+        assert!(
+            Instant::now() < deadline,
+            "the parent never released the child"
+        );
         thread::sleep(Duration::from_millis(2));
     }
     let keys = IdentityKeys::create_or_load(&dir, NOW, TTL).unwrap();
@@ -285,7 +297,10 @@ fn concurrent_create_or_load_agrees_on_one_identity() {
         .unwrap_or_else(|| panic!("the child printed no principal: {stdout}"))
         .to_owned();
 
-    let loaded = IdentityKeys::load_verified(&dir).unwrap().principal_id.to_string();
+    let loaded = IdentityKeys::load_verified(&dir)
+        .unwrap()
+        .principal_id
+        .to_string();
     for result in principals {
         assert_eq!(result.expect("no thread saw an error"), loaded);
     }
@@ -321,7 +336,10 @@ fn load_verified_rejects_wrong_principal_genesis() {
     let (_parent, dir, _keys) = made();
     let stranger = pb::PublicKey::from(&signing_public(&generate()));
     change_delegation(&dir, |d| d.principal_genesis = Some(stranger));
-    rejected_as(IdentityKeys::load_verified(&dir), VerifyCheck::PrincipalGenesis);
+    rejected_as(
+        IdentityKeys::load_verified(&dir),
+        VerifyCheck::PrincipalGenesis,
+    );
 }
 
 #[test]
@@ -415,7 +433,10 @@ fn read_principal_is_none_when_missing() {
 #[test]
 fn read_principal_matches_the_identity_without_reading_private_keys() {
     let (_parent, dir, keys) = made();
-    assert_eq!(read_principal(&dir).unwrap(), Some(keys.principal_id.clone()));
+    assert_eq!(
+        read_principal(&dir).unwrap(),
+        Some(keys.principal_id.clone())
+    );
 
     for name in [ROOT_FILE, DEVICE_FILE] {
         fs::set_permissions(dir.join(name), fs::Permissions::from_mode(0o000)).unwrap();

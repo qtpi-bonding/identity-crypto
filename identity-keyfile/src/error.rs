@@ -16,7 +16,7 @@ pub enum KeyfileError {
     Missing(PathBuf),
     #[error("device delegation does not match the device")]
     DelegationMismatch,
-    #[error("insecure agent directory {0}")]
+    #[error("insecure identity directory {0}")]
     InsecureDir(PathBuf),
     #[error("agent directory is already initialised: {0}")]
     AlreadyInitialised(PathBuf),
