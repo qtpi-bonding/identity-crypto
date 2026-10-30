@@ -211,6 +211,70 @@ impl Drop for Sleeper {
     }
 }
 
+/// `dir` as a 0700 directory holding only a 0600 `.lock`.
+fn make_lock_only(dir: &Path) {
+    fs::create_dir(dir).unwrap();
+    fs::set_permissions(dir, fs::Permissions::from_mode(0o700)).unwrap();
+    fs::write(dir.join(LOCK_FILE), b"").unwrap();
+    fs::set_permissions(dir.join(LOCK_FILE), fs::Permissions::from_mode(0o600)).unwrap();
+}
+
+#[test]
+fn create_or_load_replaces_a_lock_only_directory() {
+    let parent = parent();
+    let dir = parent.path().join("daemon");
+    make_lock_only(&dir);
+    let keys = IdentityKeys::create_or_load(&dir, NOW, TTL).unwrap();
+    assert!(IdentityKeys::exists(&dir));
+    assert_eq!(mode(&dir), 0o700);
+    assert_eq!(
+        IdentityKeys::load_verified(&dir).unwrap().principal_id,
+        keys.principal_id
+    );
+    assert!(temp_siblings(&dir).is_empty());
+}
+
+#[test]
+fn create_or_load_survives_a_leftover_temp_of_its_own_pid() {
+    let parent = parent();
+    let dir = parent.path().join("daemon");
+    // The counter is process-wide and other tests advance it, so cover a
+    // range that includes whatever number the next attempt picks.
+    let pid = std::process::id();
+    for n in 0..64 {
+        let leftover = parent.path().join(format!("daemon.tmp-{pid}-{n}"));
+        fs::create_dir(&leftover).unwrap();
+        fs::write(leftover.join("marker"), b"leftover").unwrap();
+    }
+    let keys = IdentityKeys::create_or_load(&dir, NOW, TTL).unwrap();
+    assert_eq!(
+        IdentityKeys::load_verified(&dir).unwrap().principal_id,
+        keys.principal_id
+    );
+}
+
+#[test]
+fn create_or_load_accepts_a_0755_parent_and_creates_a_missing_parent() {
+    let outer = tempfile::tempdir().unwrap();
+    fs::set_permissions(outer.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    let dir = outer.path().join("daemon");
+    let keys = IdentityKeys::create_or_load(&dir, NOW, TTL).unwrap();
+    assert_eq!(mode(&dir), 0o700);
+    assert_eq!(mode(outer.path()), 0o755, "the parent mode is not touched");
+    assert_eq!(
+        IdentityKeys::load_verified(&dir).unwrap().principal_id,
+        keys.principal_id
+    );
+
+    let nested = outer.path().join("missing").join("daemon");
+    let nested_keys = IdentityKeys::create_or_load(&nested, NOW, TTL).unwrap();
+    assert!(IdentityKeys::exists(&nested));
+    assert_eq!(
+        IdentityKeys::load_verified(&nested).unwrap().principal_id,
+        nested_keys.principal_id
+    );
+}
+
 #[test]
 fn create_or_load_on_an_empty_existing_directory_or_lock_only_directory_creates() {
     let parent = parent();
@@ -252,9 +316,21 @@ fn concurrent_child_helper() {
 
 #[test]
 fn concurrent_create_or_load_agrees_on_one_identity() {
+    concurrent_agreement(false);
+}
+
+#[test]
+fn concurrent_create_or_load_from_a_lock_only_directory_agrees() {
+    concurrent_agreement(true);
+}
+
+fn concurrent_agreement(start_lock_only: bool) {
     const THREADS: usize = 8;
     let parent = parent();
     let dir = parent.path().join("daemon");
+    if start_lock_only {
+        make_lock_only(&dir);
+    }
 
     let child = Command::new(std::env::current_exe().unwrap())
         .args(["--exact", "concurrent_child_helper", "--nocapture"])
@@ -482,7 +558,63 @@ fn read_principal_rejects_a_genesis_that_differs_from_the_signing_root() {
     assert!(read_principal(&dir).is_err());
 }
 
+#[test]
+fn read_principal_rejects_a_wrong_purpose() {
+    let (_parent, dir, _keys) = made();
+    change_delegation(&dir, |d| d.purpose = pb::KeyPurpose::Approval as i32);
+    assert!(matches!(
+        read_principal(&dir),
+        Err(KeyfileError::VerifyFailed(VerifyCheck::Purpose))
+    ));
+}
+
+// ---- rotated roots ----
+
+#[test]
+fn load_verified_and_read_principal_accept_a_rotated_root() {
+    let (_parent, dir, keys) = made();
+    IdentityKeys::rotate_root(&dir, NOW + 1).unwrap();
+    IdentityKeys::renew(&dir, NOW + 2, TTL, false).unwrap();
+    let loaded = IdentityKeys::load_verified(&dir).unwrap();
+    assert_eq!(loaded.principal_id, keys.principal_id);
+    assert_eq!(
+        read_principal(&dir).unwrap(),
+        Some(keys.principal_id.clone())
+    );
+    // A second rotation extends the chain.
+    IdentityKeys::rotate_root(&dir, NOW + 3).unwrap();
+    IdentityKeys::renew(&dir, NOW + 4, TTL, false).unwrap();
+    assert_eq!(
+        IdentityKeys::load_verified(&dir).unwrap().principal_id,
+        keys.principal_id
+    );
+    assert_eq!(read_principal(&dir).unwrap(), Some(keys.principal_id));
+}
+
+#[test]
+fn load_verified_after_rotate_root_before_renew_fails_signing_root() {
+    let (_parent, dir, _keys) = made();
+    IdentityKeys::rotate_root(&dir, NOW + 1).unwrap();
+    rejected_as(IdentityKeys::load_verified(&dir), VerifyCheck::SigningRoot);
+}
+
 // ---- renew_if_due ----
+
+#[test]
+fn renew_if_due_refuses_when_the_device_on_disk_changed() {
+    let (_parent, dir, _keys) = made();
+    let mut stale = IdentityKeys::load_verified(&dir).unwrap();
+    IdentityKeys::rotate_device(&dir, NOW + 1, TTL).unwrap();
+    let file = dir.join(DELEGATION_FILE);
+    let before = fs::read(&file).unwrap();
+    let at_margin = NOW + 15 * DAY;
+    let result = stale.renew_if_due(Some(&dir), at_margin, TTL, 15 * DAY);
+    assert!(
+        matches!(result, Err(KeyfileError::DelegationMismatch)),
+        "got {result:?}"
+    );
+    assert_eq!(fs::read(&file).unwrap(), before, "nothing was written");
+}
 
 #[test]
 fn renew_if_due_renews_at_the_margin_and_not_before() {
@@ -581,4 +713,27 @@ fn load_existing_refuses_a_loose_directory() {
 fn load_existing_refuses_a_symlinked_directory() {
     let (_parent, link) = linked_identity();
     assert!(insecure(IdentityKeys::load_existing(&link)));
+}
+
+#[test]
+fn exists_is_false_for_a_loose_directory() {
+    let (_parent, dir) = loose_identity();
+    assert!(!IdentityKeys::exists(&dir));
+}
+
+#[test]
+fn read_principal_refuses_a_loose_directory() {
+    let (_parent, dir) = loose_identity();
+    assert!(insecure(read_principal(&dir)));
+}
+
+#[test]
+fn renew_if_due_refuses_a_loose_directory() {
+    let (_parent, dir) = loose_identity();
+    let mut keys = IdentityKeys::init(&dir.with_file_name("other"), NOW, TTL).unwrap();
+    let file = dir.join(DELEGATION_FILE);
+    let before = fs::read(&file).unwrap();
+    let result = keys.renew_if_due(Some(&dir), NOW + 15 * DAY, TTL, 15 * DAY);
+    assert!(insecure(result));
+    assert_eq!(fs::read(&file).unwrap(), before);
 }
