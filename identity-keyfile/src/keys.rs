@@ -16,8 +16,8 @@ use std::path::Path;
 /// The keys of one self-rooted agent, as stored in an agent directory.
 ///
 /// The root signs the device delegation and root rotations. The device signs
-/// for the agent day to day. `agent_id` is the principal id derived from the
-/// first root and does not change when the root is rotated.
+/// for the principal day to day. `principal_id` (stored in the `agent_id` file)
+/// is derived from the first root and does not change when the root is rotated.
 pub struct IdentityKeys {
     /// The current root. Private: stored in `root.jwk.json`.
     pub root: KeyDuo,
