@@ -4,6 +4,8 @@
 creates them (`IdentityKeys::init`), re-signs the device delegation (`renew`),
 replaces the device (`rotate_device`, or `renew` with `new_device = true`),
 replaces the root (`rotate_root`), and reads and writes them (`load`, `save`).
+A daemon that keeps one identity per host uses the verified entry points
+instead (see below).
 The crate is Unix-only: key files are written mode `0600`, and other targets
 fail to compile.
 
@@ -44,6 +46,38 @@ Missing `retired_devices.json` or `rotations.json` reads as empty. A file that
 exists but is unreadable, a broken symlink, or unparseable is an error, so
 retired keys are never dropped silently.
 
+## Verified loading and atomic creation
+
+For a long-lived identity (a daemon's), where a crash or two processes
+starting together must never produce a second root:
+
+- `IdentityKeys::create_or_load(dir, now, ttl)` loads and verifies `dir` if it
+  holds an identity. Otherwise it runs `init` in a sibling temp directory
+  (`<dir>.tmp-<pid>-<n>-<suffix>`), fsyncs it, and renames it into place, so a
+  crash leaves nothing or a complete identity. A process that loses the rename
+  race loads the winner's. Temp siblings are removed on failure, and stale ones
+  only when their pid is dead. A directory holding only `.lock` is cleared with
+  unlink and rmdir, never a recursive delete. A directory with key files but
+  no `agent_id` is an error and is left untouched. The parent may be any mode
+  and is created if missing.
+- `IdentityKeys::load_verified(dir)` is `load` plus every consistency check:
+  the rotation chain from `principal_genesis` ends at the root on disk,
+  `agent_id` is that chain's principal, `signing_root` is the current root,
+  `delegated` and `delegated_encryption` are the device's keys, the purpose is
+  Device, and the signature verifies. A failure is `VerifyFailed(check)`.
+  After `rotate_root` and before `renew` it fails with `SigningRoot`.
+- `IdentityKeys::load_existing(dir)` is `Ok(None)` when `dir` or `agent_id` is
+  absent, else `load_verified`. `IdentityKeys::exists(dir)` is true for a
+  secure directory holding `agent_id`.
+- `read_principal(dir)` verifies the same chain, purpose and signature from
+  `agent_id`, `delegation.json` and `rotations.json` without opening a private
+  key file.
+- `renew_if_due(&mut self, dir, now, ttl, margin)` re-signs when
+  `renewal_due` says so and writes `delegation.json` under the exclusive lock.
+  It refuses with `DelegationMismatch` when the root or device on disk no
+  longer match memory (another process rotated). It does not re-read the
+  delegation, so a concurrent renewal is overwritten.
+
 ## Refusals
 
 - `InsecureDir`: the directory has any group or other permission bit set
@@ -54,6 +88,7 @@ retired keys are never dropped silently.
 - `Missing`: `load` could not find a mandatory file (`root.jwk.json`,
   `device.jwk.json`, `delegation.json` or `agent_id`), or the directory itself.
 - `DelegationMismatch`: `device.jwk.json` is not the device the delegation names.
+- `VerifyFailed(check)`: a `load_verified` or `read_principal` check failed.
 - `Crypto`: a `ttl_seconds` that is not in `(0, 31 days]`. The cap is the
   verifier's cap for unlisted devices, applied by `delegate_device`. Nothing
   is written.
@@ -78,7 +113,8 @@ retired keys are never dropped silently.
   re-signs for the current device and repairs it.
 - `rotate_root` writes the whole rotation chain, then the root. A crash between
   the two leaves the old root installed, with the unfinished rotation as the
-  last chain entry. The old root still works. The next `rotate_root` replaces
+  last chain entry. `load` and the old root still work, but `load_verified` and
+  `read_principal` fail with `PrincipalGenesis` until `rotate_root` is run again. The next `rotate_root` replaces
   that pending entry instead of extending the chain past it.
 - `rotate_root` does not re-sign the delegation. `delegation_is_current()` is
   false until `renew` runs under the new root. It compares the root and device

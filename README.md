@@ -8,7 +8,7 @@ Pure: no I/O, no clock, no key storage. Every primitive comes from
 `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
 validation and verification.
 
-The `identity-keyfile/` workspace member (0.6.0) stores a self-rooted principal's keys (an agent's or a daemon's) in a Unix directory, with the history and rotation chain; see its README.
+The `identity-keyfile/` workspace member (0.7.0) stores a self-rooted principal's keys (an agent's or a daemon's) in a Unix directory, with the history and rotation chain; see its README.
 
 ## Attestation (0.5.0)
 

@@ -595,7 +595,8 @@ impl IdentityKeys {
     /// The delegation is not re-signed here: until [`IdentityKeys::renew`] runs,
     /// `delegation_is_current` is false. Write order: the complete rotation chain
     /// first, then `root.jwk.json`. A crash between them leaves the old root on
-    /// disk with a pending final rotation in the chain. The old root still works,
+    /// disk with a pending final rotation in the chain. `load` and the old root
+    /// still work (`load_verified` fails with `PrincipalGenesis` until a retry),
     /// and the next `rotate_root` replaces the pending entry instead of
     /// extending the chain past it.
     ///
