@@ -21,6 +21,7 @@ fn kind_to_pb(kind: PrincipalKind) -> pb::PrincipalKind {
         PrincipalKind::Human => pb::PrincipalKind::Human,
         PrincipalKind::Agent => pb::PrincipalKind::Agent,
         PrincipalKind::Daemon => pb::PrincipalKind::Daemon,
+        PrincipalKind::Service => pb::PrincipalKind::Service,
     }
 }
 
@@ -46,6 +47,7 @@ impl AcceptedChains {
                 Ok(pb::PrincipalKind::Human) => PrincipalKind::Human,
                 Ok(pb::PrincipalKind::Agent) => PrincipalKind::Agent,
                 Ok(pb::PrincipalKind::Daemon) => PrincipalKind::Daemon,
+                Ok(pb::PrincipalKind::Service) => PrincipalKind::Service,
                 _ => {
                     return Err(Error::InvalidField {
                         field: "principals.kind",
@@ -275,6 +277,42 @@ mod tests {
         let resolver = resolver_for(&fleet.owner, registry).unwrap();
         assert!(matches!(
             resolver.check_successor(&accepted),
+            Err(Error::KindChanged { .. })
+        ));
+    }
+
+    #[test]
+    fn service_kind_round_trips_through_accepted_chains() {
+        let mut fleet = Fleet::new();
+        let service = Principal::new();
+        fleet.extra.push(entry(&service, pb::PrincipalKind::Service));
+        let accepted = fleet
+            .resolver()
+            .check_successor(&AcceptedChains::empty())
+            .unwrap();
+        let encoded = accepted.to_proto();
+        let decoded = AcceptedChains::from_proto(&encoded).unwrap();
+        assert_eq!(decoded.to_proto(), encoded);
+        assert_eq!(
+            encoded
+                .principals
+                .iter()
+                .find(|p| p.principal_id == service.id().to_string())
+                .unwrap()
+                .kind,
+            pb::PrincipalKind::Service as i32
+        );
+
+        let mut changed = fleet.registry();
+        changed
+            .entries
+            .iter_mut()
+            .find(|e| e.principal_id == service.id().to_string())
+            .unwrap()
+            .kind = pb::PrincipalKind::Daemon as i32;
+        let changed_resolver = resolver_for(&fleet.owner, changed).unwrap();
+        assert!(matches!(
+            changed_resolver.check_successor(&accepted),
             Err(Error::KindChanged { .. })
         ));
     }

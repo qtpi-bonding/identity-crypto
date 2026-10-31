@@ -272,6 +272,53 @@ mod tests {
     }
 
     #[test]
+    fn service_entry_loads_with_kind_service() {
+        let mut f = Fleet::new();
+        let service = Principal::new();
+        f.extra.push(entry(&service, pb::PrincipalKind::Service));
+        let resolver = f.resolver();
+        let loaded = resolver.entry(&service.id()).unwrap();
+        assert_eq!(loaded.kind(), PrincipalKind::Service);
+        assert!(loaded.is_self_rooted());
+    }
+
+    #[test]
+    fn service_cannot_be_the_authority() {
+        let f = Fleet::new();
+        invalid(mutate(&f, |registry| {
+            registry.entries[0].kind = pb::PrincipalKind::Service as i32;
+        }), "entries");
+    }
+
+    #[test]
+    fn two_human_entries_are_allowed() {
+        let mut f = Fleet::new();
+        let second = Principal::new();
+        f.extra.push(entry(&second, pb::PrincipalKind::Human));
+        let resolver = f.resolver();
+        assert_eq!(resolver.entry(&f.owner.id()).unwrap().kind(), PrincipalKind::Human);
+        assert_eq!(resolver.entry(&second.id()).unwrap().kind(), PrincipalKind::Human);
+    }
+
+    #[test]
+    fn service_with_registry_devices_is_invalid() {
+        let f = Fleet::new();
+        let service = Principal::new();
+        let mut service_entry = entry(&service, pb::PrincipalKind::Service);
+        service_entry.devices = f.registry().entries[0].devices.clone();
+        invalid(mutate(&f, |registry| registry.entries.push(service_entry)), "entries.devices");
+    }
+
+    #[test]
+    fn service_with_allowed_hosts_is_invalid() {
+        let f = Fleet::new();
+        let service = Principal::new();
+        let mut service_entry = entry(&service, pb::PrincipalKind::Service);
+        service_entry.allowed_hosts = vec!["*".into()];
+        invalid(mutate(&f, |registry| registry.entries.push(service_entry)), "entries.allowed_hosts");
+    }
+
+    #[test]
     fn agent_checks() {
         let f = Fleet::new();
         invalid(mutate(&f, |r| r.entries[2].allowed_hosts.clear()), "entries.allowed_hosts");

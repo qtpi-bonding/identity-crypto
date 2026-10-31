@@ -8,7 +8,7 @@ Pure: no I/O, no clock, no key storage. Every primitive comes from
 `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
 validation and verification.
 
-The `identity-keyfile/` workspace member (0.7.0) stores a self-rooted principal's keys (an agent's or a daemon's) in a Unix directory, with the history and rotation chain; see its README.
+The `identity-keyfile/` workspace member (0.8.0) stores a self-rooted principal's keys (an agent's or a daemon's) in a Unix directory, with the history and rotation chain; see its README.
 
 ## Attestation (0.5.0)
 
@@ -117,7 +117,7 @@ generation or storage.
 - `signing_public`, `encryption_public`, `principal_id`: the public halves of a
   duo, and the principal id a genesis duo starts.
 - `delegate_device(root, genesis, device, issued, not_after)`: a root-signed
-  DEVICE delegation for an Agent or Daemon device. Capped at 31 days by the
+  DEVICE delegation for an Agent, Daemon, or Service device. Capped at 31 days by the
   same rule the verifier applies (`check_unlisted_span`).
 - `device_delegation` (unsigned) and `sign_key_delegation`: no cap. For a
   Human's device or an approval key, whose window may be longer.

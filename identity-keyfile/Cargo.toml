@@ -1,6 +1,6 @@
 [package]
 name = "identity-keyfile"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 rust-version = "1.89"
 description = "Key directory for identity-crypto principals: load, save, renew and rotate keys, with a retired-device history"
@@ -10,7 +10,7 @@ description = "Key directory for identity-crypto principals: load, save, renew a
 testkit = ["dep:tempfile"]
 
 [dependencies]
-identity-crypto = { path = "..", version = "0.7.0" }
+identity-crypto = { path = "..", version = "0.8.0" }
 serde_json = "1"
 serde = "1"
 thiserror = "2"

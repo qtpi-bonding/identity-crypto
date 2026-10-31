@@ -11,6 +11,7 @@ pub enum PrincipalKind {
     Human,
     Agent,
     Daemon,
+    Service,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,6 +129,7 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
             Ok(pb::PrincipalKind::Human) => Some(PrincipalKind::Human),
             Ok(pb::PrincipalKind::Agent) => Some(PrincipalKind::Agent),
             Ok(pb::PrincipalKind::Daemon) => Some(PrincipalKind::Daemon),
+            Ok(pb::PrincipalKind::Service) => Some(PrincipalKind::Service),
             Err(_) => None,
         };
         parsed.push((e, id, kind));
@@ -172,7 +174,7 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
             authority_seen = true;
         }
         let self_rooted = match kind {
-            PrincipalKind::Human | PrincipalKind::Daemon => true,
+            PrincipalKind::Human | PrincipalKind::Daemon | PrincipalKind::Service => true,
             PrincipalKind::Agent => e.current_root.is_some(),
         };
 
@@ -181,6 +183,8 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
             PrincipalKind::Human if !e.allowed_hosts.is_empty() => return Err(bad("entries.allowed_hosts", "only for AGENT")),
             PrincipalKind::Daemon if !e.devices.is_empty() => return Err(bad("entries.devices", "only for HUMAN")),
             PrincipalKind::Daemon if !e.allowed_hosts.is_empty() => return Err(bad("entries.allowed_hosts", "only for AGENT")),
+            PrincipalKind::Service if !e.devices.is_empty() => return Err(bad("entries.devices", "only for HUMAN")),
+            PrincipalKind::Service if !e.allowed_hosts.is_empty() => return Err(bad("entries.allowed_hosts", "only for AGENT")),
             PrincipalKind::Agent if !e.devices.is_empty() => return Err(bad("entries.devices", "only for HUMAN")),
             PrincipalKind::Agent if self_rooted && !e.allowed_hosts.is_empty() => {
                 return Err(bad("entries.allowed_hosts", "an AGENT is self-rooted or host-vouched, never both"))

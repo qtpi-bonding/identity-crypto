@@ -122,7 +122,7 @@ fn device_current(d: &pb::KeyDelegation, entry: &VerifiedEntry, r: &Resolver, at
                 }
             }
         }
-        PrincipalKind::Daemon | PrincipalKind::Agent => {
+        PrincipalKind::Daemon | PrincipalKind::Agent | PrincipalKind::Service => {
             check_unlisted_span("device.not_after_unix_seconds", d.issued_at_unix_seconds, d.not_after_unix_seconds)?;
             if d.issued_at_unix_seconds > at.saturating_add(SKEW_SECONDS) {
                 return Err(Error::NotYetValid("device delegation"));
@@ -146,7 +146,7 @@ pub(crate) fn check_session_span(not_before: i64, not_after: i64) -> Result<()> 
     Ok(())
 }
 
-/// The unlisted device-delegation rule (daemons and self-rooted agents): the
+/// The unlisted device-delegation rule (daemons, services, and self-rooted agents): the
 /// span must be in `(0, MAX_UNLISTED_DELEGATION_SECONDS]`. Shared by the
 /// verifier and `keys::delegate_device`, so the signer and the verifier
 /// enforce one cap. Computed in i128 so no pair of i64 bounds can overflow.
@@ -201,6 +201,7 @@ pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Resul
                 },
                 PrincipalKind::Daemon => Host::Daemon(principal.clone()),
                 PrincipalKind::Agent => Host::Unhosted,
+                PrincipalKind::Service => Host::Hostless,
             };
             let (session_key, session_not_after) = check_cert(cert, &device, at)?;
             Ok(VerifiedChain { principal, kind: entry.kind(), host, subject: None, device, session_key, session_not_after })
@@ -552,6 +553,103 @@ mod tests {
         let v = verify_chain(&c, &r, LIVE).unwrap();
         assert_eq!((v.principal(), v.kind(), v.host()), (&f.agent_id(), PrincipalKind::Agent, &Host::Daemon(f.daemon.id())));
         assert_eq!(v.subject(), Some(subject_on(&f.daemon, "i5").as_str()));
+    }
+
+    #[test]
+    fn service_session_chain_verifies_hostless() {
+        let mut f = Fleet::new();
+        let service = Principal::new();
+        f.extra.push(entry(&service, pb::PrincipalKind::Service));
+        let (session, chain) = daemon_chain(&service, T0, T0 + DAY, T0, T0 + 3600);
+        let verified = verify_chain(&chain, &f.resolver(), LIVE).unwrap();
+        assert_eq!(verified.kind(), PrincipalKind::Service);
+        assert_eq!(verified.host(), &Host::Hostless);
+        assert_eq!(verified.session_key(), &session.public());
+    }
+
+    #[test]
+    fn service_device_delegation_expired_is_refused() {
+        let mut f = Fleet::new();
+        let service = Principal::new();
+        f.extra.push(entry(&service, pb::PrincipalKind::Service));
+        let (_, chain) = daemon_chain(&service, T0, T0 + 10, T0, T0 + 3600);
+        assert_eq!(
+            verify_chain(&chain, &f.resolver(), accepted(T0 + 11)).unwrap_err(),
+            Error::Expired("device delegation")
+        );
+    }
+
+    #[test]
+    fn service_cannot_host_vouched_agent() {
+        let mut f = Fleet::new();
+        let service = Principal::new();
+        let agent = Principal::new();
+        let (device, delegation) = service.delegate_device(T0, T0 + DAY);
+        let (_, cert) = session_cert(
+            &device,
+            &agent.genesis(),
+            Some(&service.genesis()),
+            Some(&subject_on(&service, "worker")),
+            T0,
+            T0 + 3600,
+        );
+        f.extra.push(entry(&service, pb::PrincipalKind::Service));
+        let mut agent_entry = entry(&agent, pb::PrincipalKind::Agent);
+        agent_entry.current_root = None;
+        agent_entry.allowed_hosts = vec![service.id().to_string()];
+        f.extra.push(agent_entry);
+        let chain = pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched {
+                host_device: Some(delegation),
+                session: Some(cert),
+            })),
+        };
+        assert_eq!(verify_chain(&chain, &f.resolver(), LIVE).unwrap_err(), Error::WrongKind);
+    }
+
+    #[test]
+    fn service_cannot_sign_approval() {
+        let mut f = Fleet::new();
+        let service = Principal::new();
+        let (device, delegation) = service.delegate_device(T0, T0 + DAY);
+        let (session_signer, cert) = session_cert(
+            &device,
+            &service.genesis(),
+            None,
+            None,
+            T0,
+            T0 + 3600,
+        );
+        f.extra.push(entry(&service, pb::PrincipalKind::Service));
+        let chain = pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: Some(delegation),
+                session: Some(cert),
+            })),
+        };
+        let verified = verify_chain(&chain, &f.resolver(), LIVE).unwrap();
+        let approval = approval(
+            &session_signer,
+            &service.genesis(),
+            verified.device(),
+            "audience",
+            "request",
+            [7; 32],
+            T0,
+        );
+        assert_eq!(
+            verify_approval(
+                &approval,
+                "audience",
+                "request",
+                &verified,
+                &[7; 32],
+                &f.resolver(),
+                LIVE,
+            )
+            .unwrap_err(),
+            Error::WrongKind
+        );
     }
 
     #[test]

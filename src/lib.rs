@@ -118,6 +118,7 @@ mod proto_tests {
         assert_eq!(pb::PrincipalKind::Human as i32, 1);
         assert_eq!(pb::PrincipalKind::Agent as i32, 2);
         assert_eq!(pb::PrincipalKind::Daemon as i32, 3);
+        assert_eq!(pb::PrincipalKind::Service as i32, 4);
     }
 
     fn round_trip<M: Message + Default + PartialEq + std::fmt::Debug>(m: M) {
@@ -158,7 +159,7 @@ mod proto_tests {
         round_trip(pb::Approval { principal_genesis: Some(key(1)), approval_key: Some(key(2)), device: Some(key(3)), audience: "a".into(), request_id: "r1".into(), request_digest: vec![0; 32], accept: true, issued_at_unix_seconds: 1, signature: vec![1; 64] });
         round_trip(pb::PeerRevocation { revoker_genesis: Some(key(1)), approval_key: Some(key(2)), target_genesis: Some(key(3)), revoked: None, issued_at_unix_seconds: 1, signature: vec![1; 64], document_id: vec![5; 32] });
         let entry = pb::RegistryEntry {
-            principal_id: "p256:04".into(), kind: pb::PrincipalKind::Daemon as i32,
+            principal_id: "p256:04".into(), kind: pb::PrincipalKind::Service as i32,
             name: Some("laptop".into()), frozen: true,
             current_root: Some(pb::PublicKeyDuo { signing: Some(key(1)), encryption: Some(key(2)) }),
             rotations: vec![], revocations: vec![],
@@ -166,7 +167,7 @@ mod proto_tests {
             allowed_hosts: vec!["*".into()],
         };
         round_trip(pb::RegistryCarrier { registry: Some(pb::PrincipalRegistry { entries: vec![entry], allow_peer_revocation: true }) });
-        round_trip(pb::AcceptedChains { principals: vec![pb::AcceptedPrincipal { principal_id: "p256:04".into(), kind: 3, rotations: vec![] }] });
+        round_trip(pb::AcceptedChains { principals: vec![pb::AcceptedPrincipal { principal_id: "p256:04".into(), kind: 4, rotations: vec![] }] });
         round_trip(pb::DeliveryAttestation { key_id: "k".into(), batch_sequence: 1, attested_at: Some(Timestamp { seconds: 1, nanos: 2 }), messages: vec![pb::AttestedMessage { message_id: "m".into(), room_id: "r".into(), body_text: "b".into(), delegation_cert: Some(cert()), author_genesis: Some(key(1)) }], signature: vec![1; 64], recipient_devices: vec![key(5), key(6)] });
     }
 

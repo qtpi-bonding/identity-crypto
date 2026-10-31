@@ -82,7 +82,7 @@ message SignerChain {
     HostVouched host_vouched = 2;
   }
 }
-message SelfRooted {                   // humans, daemons
+message SelfRooted {                   // humans, daemons, services
   KeyDelegation device = 1;            // root → device
   DelegationCert session = 2;          // device → session, mode 0
 }
@@ -167,6 +167,7 @@ enum PrincipalKind {
   PRINCIPAL_KIND_HUMAN = 1;
   PRINCIPAL_KIND_AGENT = 2;
   PRINCIPAL_KIND_DAEMON = 3;
+  PRINCIPAL_KIND_SERVICE = 4;
 }
 
 // Who exists and what keys they hold. Carried in a SignedDocument body,

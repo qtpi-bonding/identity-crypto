@@ -62,7 +62,7 @@ pub fn sign_key_delegation(root: &SigningKeyPair, d: &mut pb::KeyDelegation) -> 
 }
 
 /// A root-signed DEVICE delegation of `device` for `[issued_at, not_after]`
-/// (unix seconds). For Agent and Daemon devices, the span must be positive
+/// (unix seconds). For Agent, Daemon, and Service devices, the span must be positive
 /// and at most 31 days, the cap the verifier applies to unlisted devices.
 /// Humans may hold longer windows: build those with [`device_delegation`]
 /// and [`sign_key_delegation`].
