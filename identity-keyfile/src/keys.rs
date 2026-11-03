@@ -6,6 +6,7 @@ use crate::files::{
     DELEGATION_FILE, DEVICE_FILE, HISTORY_FILE, ROOT_FILE, ROTATIONS_FILE,
 };
 use crate::generate;
+use crate::layout::IdentityLayout;
 use identity_crypto::jwk_duo::KeyDuo;
 use identity_crypto::transcripts;
 use identity_crypto::{
@@ -245,14 +246,35 @@ impl IdentityKeys {
         )
     }
 
-    /// Writes every file of `self` into `dir`, creating `dir` (mode 0700) if needed.
-    /// Takes the exclusive lock. Refuses a group- or world-accessible existing `dir`.
-    /// The files are overwritten, not checked: use [`IdentityKeys::init`] to create a
-    /// new agent. `agent_id` is written last.
-    pub fn save(&self, dir: &Path) -> Result<(), KeyfileError> {
-        files::ensure_dir(dir)?;
-        let _lock = files::lock_exclusive(dir)?;
-        write_duo(dir, ROOT_FILE, &self.root)?;
+    /// A fresh root and device, a root-signed delegation of the device over
+    /// `[now, now + ttl_seconds]`, an empty history and an empty rotation chain.
+    /// Nothing is written.
+    fn generate_new(now: i64, ttl_seconds: i64) -> Result<Self, KeyfileError> {
+        let root = generate();
+        let device = generate();
+        let principal_id = principal_id(&root);
+        let delegation = delegate_device(
+            &root,
+            &principal_id,
+            &device,
+            now,
+            now.saturating_add(ttl_seconds),
+        )?;
+        Ok(Self {
+            root,
+            device,
+            delegation,
+            principal_id,
+            retired: Vec::new(),
+            rotations: Vec::new(),
+        })
+    }
+
+    /// Writes every file of `self` into the layout's folders, `agent_id` last.
+    /// The caller holds the exclusive locks.
+    fn write_all(&self, layout: &IdentityLayout) -> Result<(), KeyfileError> {
+        write_duo(layout.dir_of(ROOT_FILE), ROOT_FILE, &self.root)?;
+        let dir = layout.device_dir();
         write_duo(dir, DEVICE_FILE, &self.device)?;
         write_delegation(dir, &self.delegation)?;
         write_history(
@@ -270,6 +292,22 @@ impl IdentityKeys {
         write_principal_id(dir, &self.principal_id)
     }
 
+    /// Writes every file of `self` into `dir`, creating `dir` (mode 0700) if needed.
+    /// Takes the exclusive lock. Refuses a group- or world-accessible existing `dir`.
+    /// The files are overwritten, not checked: use [`IdentityKeys::init`] to create a
+    /// new agent. `agent_id` is written last.
+    pub fn save(&self, dir: &Path) -> Result<(), KeyfileError> {
+        self.save_at(&IdentityLayout::single(dir))
+    }
+
+    /// [`IdentityKeys::save`] for a layout: creates both folders (mode 0700) if
+    /// needed and takes `root_dir/.lock` then `device_dir/.lock`.
+    pub fn save_at(&self, layout: &IdentityLayout) -> Result<(), KeyfileError> {
+        files::ensure_layout(layout)?;
+        let _locks = files::lock_layout_exclusive(layout)?;
+        self.write_all(layout)
+    }
+
     /// Reads the agent directory `dir`. The directory must exist and must not be
     /// group- or world-accessible (`InsecureDir` otherwise). Takes a shared lock
     /// on `.lock`. If `.lock` cannot be created because the directory is read-only,
@@ -279,25 +317,31 @@ impl IdentityKeys {
     /// device key than `device.jwk.json`. A delegation that names an old root is
     /// accepted; [`IdentityKeys::delegation_is_current`] reports it.
     pub fn load(dir: &Path) -> Result<Self, KeyfileError> {
-        files::check_dir(dir)?;
-        let _lock = files::lock_shared(dir)?;
-        Self::load_locked(dir)
+        Self::load_at(&IdentityLayout::single(dir))
     }
 
-    /// The body of `load`, for callers that already hold the lock. Public
-    /// `load` must not be called while holding the exclusive lock, because the
+    /// [`IdentityKeys::load`] for a layout; both folders are checked.
+    pub fn load_at(layout: &IdentityLayout) -> Result<Self, KeyfileError> {
+        files::check_layout(layout)?;
+        let _locks = files::lock_layout_shared(layout)?;
+        Self::load_locked(layout)
+    }
+
+    /// The body of `load_at`, for callers that already hold the locks. Public
+    /// `load_at` must not be called while holding the exclusive lock, because the
     /// file lock would deadlock.
-    fn load_locked(dir: &Path) -> Result<Self, KeyfileError> {
-        files::check_dir(dir)?;
-        let keys = Self::load_files(dir)?;
+    fn load_locked(layout: &IdentityLayout) -> Result<Self, KeyfileError> {
+        files::check_layout(layout)?;
+        let keys = Self::load_files(layout)?;
         check_delegation(&keys.device, &keys.delegation)?;
         Ok(keys)
     }
 
-    /// Reads every file without checking the directory or the delegation.
+    /// Reads every file without checking the directories or the delegation.
     /// `renew` uses this to repair a device/delegation mismatch left by a crash.
-    fn load_files(dir: &Path) -> Result<Self, KeyfileError> {
-        let root = read_duo(dir, ROOT_FILE)?;
+    fn load_files(layout: &IdentityLayout) -> Result<Self, KeyfileError> {
+        let root = read_duo(layout.dir_of(ROOT_FILE), ROOT_FILE)?;
+        let dir = layout.device_dir();
         let device = read_duo(dir, DEVICE_FILE)?;
         let delegation = read_delegation(dir)?;
         let principal_id = read_principal_id(dir)?;
@@ -326,45 +370,28 @@ impl IdentityKeys {
     /// `load` reports `Missing(agent_id)` and `init` reports `AlreadyInitialised`.
     /// Remove the directory and init again.
     pub fn init(dir: &Path, now: i64, ttl_seconds: i64) -> Result<Self, KeyfileError> {
-        files::ensure_dir(dir)?;
-        let root = generate();
-        let device = generate();
-        let principal_id = principal_id(&root);
-        let delegation = delegate_device(
-            &root,
-            &principal_id,
-            &device,
-            now,
-            now.saturating_add(ttl_seconds),
-        )?;
-        let _lock = files::lock_exclusive(dir)?;
-        if AGENT_FILES.iter().any(|name| exists(&dir.join(name))) {
-            return Err(KeyfileError::AlreadyInitialised(dir.to_path_buf()));
+        Self::init_at(&IdentityLayout::single(dir), now, ttl_seconds)
+    }
+
+    /// [`IdentityKeys::init`] for a layout. Refuses (`AlreadyInitialised`) when
+    /// any identity file exists in either folder.
+    pub fn init_at(
+        layout: &IdentityLayout,
+        now: i64,
+        ttl_seconds: i64,
+    ) -> Result<Self, KeyfileError> {
+        files::ensure_layout(layout)?;
+        let keys = Self::generate_new(now, ttl_seconds)?;
+        let _locks = files::lock_layout_exclusive(layout)?;
+        for name in AGENT_FILES {
+            if exists(&layout.dir_of(name).join(name)) {
+                return Err(KeyfileError::AlreadyInitialised(
+                    layout.dir_of(name).to_path_buf(),
+                ));
+            }
         }
-        write_duo(dir, ROOT_FILE, &root)?;
-        write_duo(dir, DEVICE_FILE, &device)?;
-        write_delegation(dir, &delegation)?;
-        write_history(
-            dir,
-            &pb::DeviceHistory {
-                retired: Vec::new(),
-            },
-        )?;
-        write_rotations(
-            dir,
-            &pb::RootRotations {
-                rotations: Vec::new(),
-            },
-        )?;
-        write_principal_id(dir, &principal_id)?;
-        Ok(Self {
-            root,
-            device,
-            delegation,
-            principal_id,
-            retired: Vec::new(),
-            rotations: Vec::new(),
-        })
+        keys.write_all(layout)?;
+        Ok(keys)
     }
 
     /// Re-signs the device delegation over `[now, now + ttl_seconds]` under the
@@ -388,9 +415,21 @@ impl IdentityKeys {
         ttl_seconds: i64,
         new_device: bool,
     ) -> Result<Self, KeyfileError> {
-        files::check_dir(dir)?;
-        let _lock = files::lock_exclusive(dir)?;
-        let mut keys = Self::load_files(dir)?;
+        Self::renew_at(&IdentityLayout::single(dir), now, ttl_seconds, new_device)
+    }
+
+    /// [`IdentityKeys::renew`] for a layout. A missing root file is
+    /// `Missing(root_dir/root.jwk.json)`.
+    pub fn renew_at(
+        layout: &IdentityLayout,
+        now: i64,
+        ttl_seconds: i64,
+        new_device: bool,
+    ) -> Result<Self, KeyfileError> {
+        files::check_layout(layout)?;
+        let _locks = files::lock_layout_exclusive(layout)?;
+        let dir = layout.device_dir();
+        let mut keys = Self::load_files(layout)?;
         let replacement = if new_device { Some(generate()) } else { None };
         let device = replacement.as_ref().unwrap_or(&keys.device);
         let delegation = delegate_device(
@@ -421,9 +460,34 @@ impl IdentityKeys {
     /// Creates the identity in `dir` atomically, or loads and verifies the one that
     /// is already there. See the daemon-identity spec.
     pub fn create_or_load(dir: &Path, now: i64, ttl_seconds: i64) -> Result<Self, KeyfileError> {
-        if Self::exists(dir) {
-            return Self::load_verified(dir);
+        Self::create_or_load_at(&IdentityLayout::single(dir), now, ttl_seconds)
+    }
+
+    /// [`IdentityKeys::create_or_load`] for a layout. A single layout builds the
+    /// identity in a temporary folder and renames it into place. A split layout
+    /// cannot rename across two folders: under both exclusive locks it loads the
+    /// identity when `agent_id` exists, and otherwise writes every file, `agent_id`
+    /// last, over any partial files a crashed earlier attempt left (without
+    /// `agent_id` nothing was committed or registered).
+    pub fn create_or_load_at(
+        layout: &IdentityLayout,
+        now: i64,
+        ttl_seconds: i64,
+    ) -> Result<Self, KeyfileError> {
+        if Self::exists_at(layout) {
+            return Self::load_verified_at(layout);
         }
+        if layout.is_split() {
+            files::ensure_layout(layout)?;
+            let _locks = files::lock_layout_exclusive(layout)?;
+            if exists(&layout.device_dir().join(AGENT_ID_FILE)) {
+                return Self::load_verified_locked(layout);
+            }
+            let keys = Self::generate_new(now, ttl_seconds)?;
+            keys.write_all(layout)?;
+            return Ok(keys);
+        }
+        let dir = layout.device_dir();
         // A symlink or a loose directory is refused, never renamed over.
         match fs::symlink_metadata(dir) {
             Ok(_) => files::check_dir(dir)?,
@@ -508,7 +572,7 @@ impl IdentityKeys {
                     .map_err(|e| crate::error::io(parent, e))?;
                 Ok(keys)
             }
-            Err(error) if rename_collision(&error) => Self::load_verified(dir),
+            Err(error) if rename_collision(&error) => Self::load_verified_at(layout),
             Err(error) => Err(crate::error::io(dir, error)),
         }
     }
@@ -517,15 +581,32 @@ impl IdentityKeys {
     /// rotation, this fails with `SigningRoot` until `renew` re-signs the
     /// delegation under the installed root.
     pub fn load_verified(dir: &Path) -> Result<Self, KeyfileError> {
-        files::check_dir(dir)?;
-        let _lock = files::lock_shared(dir)?;
-        let keys = Self::load_files(dir)?;
+        Self::load_verified_at(&IdentityLayout::single(dir))
+    }
+
+    /// [`IdentityKeys::load_verified`] for a layout.
+    pub fn load_verified_at(layout: &IdentityLayout) -> Result<Self, KeyfileError> {
+        files::check_layout(layout)?;
+        let _locks = files::lock_layout_shared(layout)?;
+        Self::load_verified_locked(layout)
+    }
+
+    /// The body of `load_verified_at`, for callers that already hold the locks.
+    fn load_verified_locked(layout: &IdentityLayout) -> Result<Self, KeyfileError> {
+        let keys = Self::load_files(layout)?;
         verify_identity(&keys)?;
         Ok(keys)
     }
 
     /// `Ok(None)` when `dir` or its `agent_id` marker is absent; otherwise `load_verified`.
     pub fn load_existing(dir: &Path) -> Result<Option<Self>, KeyfileError> {
+        Self::load_existing_at(&IdentityLayout::single(dir))
+    }
+
+    /// [`IdentityKeys::load_existing`] for a layout: `Ok(None)` when `device_dir`
+    /// or its `agent_id` marker is absent.
+    pub fn load_existing_at(layout: &IdentityLayout) -> Result<Option<Self>, KeyfileError> {
+        let dir = layout.device_dir();
         match fs::symlink_metadata(dir) {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(crate::error::io(dir, error)),
@@ -534,15 +615,26 @@ impl IdentityKeys {
         if !exists(&dir.join(AGENT_ID_FILE)) {
             return Ok(None);
         }
-        Self::load_verified(dir).map(Some)
+        Self::load_verified_at(layout).map(Some)
     }
 
     /// True when `dir` exists and holds the `agent_id` marker.
     pub fn exists(dir: &Path) -> bool {
-        fs::symlink_metadata(dir)
-            .map(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0)
-            .unwrap_or(false)
-            && exists(&dir.join(AGENT_ID_FILE))
+        Self::exists_at(&IdentityLayout::single(dir))
+    }
+
+    /// True when `agent_id` is in `device_dir` and `root.jwk.json` is in
+    /// `root_dir`, both folders being private directories.
+    pub fn exists_at(layout: &IdentityLayout) -> bool {
+        let private_dir = |dir: &Path| {
+            fs::symlink_metadata(dir)
+                .map(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0)
+                .unwrap_or(false)
+        };
+        private_dir(layout.root_dir())
+            && private_dir(layout.device_dir())
+            && exists(&layout.device_dir().join(AGENT_ID_FILE))
+            && exists(&layout.root_dir().join(ROOT_FILE))
     }
 
     /// Re-signs the delegation with the in-memory root and device when it is due
@@ -551,6 +643,18 @@ impl IdentityKeys {
     pub fn renew_if_due(
         &mut self,
         dir: Option<&Path>,
+        now: i64,
+        ttl_seconds: i64,
+        margin_seconds: i64,
+    ) -> Result<bool, KeyfileError> {
+        let layout = dir.map(IdentityLayout::single);
+        self.renew_if_due_at(layout.as_ref(), now, ttl_seconds, margin_seconds)
+    }
+
+    /// [`IdentityKeys::renew_if_due`] for a layout.
+    pub fn renew_if_due_at(
+        &mut self,
+        layout: Option<&IdentityLayout>,
         now: i64,
         ttl_seconds: i64,
         margin_seconds: i64,
@@ -565,11 +669,11 @@ impl IdentityKeys {
             now,
             now.saturating_add(ttl_seconds),
         )?;
-        if let Some(dir) = dir {
-            files::check_dir(dir)?;
-            let _lock = files::lock_exclusive(dir)?;
-            let disk_root = read_duo(dir, ROOT_FILE)?;
-            let disk_device = read_duo(dir, DEVICE_FILE)?;
+        if let Some(layout) = layout {
+            files::check_layout(layout)?;
+            let _locks = files::lock_layout_exclusive(layout)?;
+            let disk_root = read_duo(layout.root_dir(), ROOT_FILE)?;
+            let disk_device = read_duo(layout.device_dir(), DEVICE_FILE)?;
             if signing_public(&disk_root) != signing_public(&self.root)
                 || encryption_public(&disk_root) != encryption_public(&self.root)
                 || signing_public(&disk_device) != signing_public(&self.device)
@@ -577,7 +681,7 @@ impl IdentityKeys {
             {
                 return Err(KeyfileError::DelegationMismatch);
             }
-            write_delegation(dir, &delegation)?;
+            write_delegation(layout.device_dir(), &delegation)?;
         }
         self.delegation = delegation;
         Ok(true)
@@ -586,7 +690,16 @@ impl IdentityKeys {
     /// Replaces the device with a new one and retires the old device's public
     /// keys. This is [`IdentityKeys::renew`] with `new_device = true`.
     pub fn rotate_device(dir: &Path, now: i64, ttl_seconds: i64) -> Result<Self, KeyfileError> {
-        Self::renew(dir, now, ttl_seconds, true)
+        Self::rotate_device_at(&IdentityLayout::single(dir), now, ttl_seconds)
+    }
+
+    /// [`IdentityKeys::rotate_device`] for a layout.
+    pub fn rotate_device_at(
+        layout: &IdentityLayout,
+        now: i64,
+        ttl_seconds: i64,
+    ) -> Result<Self, KeyfileError> {
+        Self::renew_at(layout, now, ttl_seconds, true)
     }
 
     /// Replaces the root with a new one. The rotation is signed by the old root
@@ -602,9 +715,18 @@ impl IdentityKeys {
     ///
     /// Takes the exclusive lock. The chain stores public data only.
     pub fn rotate_root(dir: &Path, now: i64) -> Result<pb::RootRotation, KeyfileError> {
-        files::check_dir(dir)?;
-        let _lock = files::lock_exclusive(dir)?;
-        let keys = Self::load_locked(dir)?;
+        Self::rotate_root_at(&IdentityLayout::single(dir), now)
+    }
+
+    /// [`IdentityKeys::rotate_root`] for a layout: the chain goes to
+    /// `device_dir/rotations.json`, the new root to `root_dir/root.jwk.json`.
+    pub fn rotate_root_at(
+        layout: &IdentityLayout,
+        now: i64,
+    ) -> Result<pb::RootRotation, KeyfileError> {
+        files::check_layout(layout)?;
+        let _locks = files::lock_layout_exclusive(layout)?;
+        let keys = Self::load_locked(layout)?;
         let current = pb::PublicKey::from(&signing_public(&keys.root));
         let mut rotations = keys.rotations;
         // A last entry whose old root is the current root was written by a
@@ -619,8 +741,8 @@ impl IdentityKeys {
         let new_root = generate();
         let signed = rotation(&keys.root, &keys.principal_id, &new_root, now)?;
         rotations.push(signed.clone());
-        write_rotations(dir, &pb::RootRotations { rotations })?;
-        write_duo(dir, ROOT_FILE, &new_root)?;
+        write_rotations(layout.device_dir(), &pb::RootRotations { rotations })?;
+        write_duo(layout.root_dir(), ROOT_FILE, &new_root)?;
         Ok(signed)
     }
 

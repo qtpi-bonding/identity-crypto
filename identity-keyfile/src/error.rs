@@ -22,6 +22,8 @@ pub enum KeyfileError {
     AlreadyInitialised(PathBuf),
     #[error("identity check failed: {0:?}")]
     VerifyFailed(VerifyCheck),
+    #[error("invalid identity layout: {0}")]
+    InvalidLayout(&'static str),
 }
 
 /// Which load-time check of `IdentityKeys::load_verified` (or `read_principal`) failed.

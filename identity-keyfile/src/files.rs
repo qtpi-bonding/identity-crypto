@@ -1,4 +1,5 @@
 use crate::error::{io, KeyfileError};
+use crate::layout::IdentityLayout;
 use identity_crypto::jwk_duo::{KeyDuo, KeyDuoSerializer};
 use identity_crypto::{pb, PrincipalId};
 use std::fs::{self, File, OpenOptions};
@@ -289,6 +290,45 @@ pub(crate) fn lock_shared(dir: &Path) -> Result<Option<File>, KeyfileError> {
         }
         Err(e) => Err(io(&lock_path, e)),
     }
+}
+
+/// Creates the layout's directories when missing and checks them.
+pub(crate) fn ensure_layout(layout: &IdentityLayout) -> Result<(), KeyfileError> {
+    if layout.is_split() {
+        ensure_dir(layout.root_dir())?;
+    }
+    ensure_dir(layout.device_dir())
+}
+
+/// Checks the layout's directories (0700, not a symlink); creates nothing.
+pub(crate) fn check_layout(layout: &IdentityLayout) -> Result<(), KeyfileError> {
+    if layout.is_split() {
+        check_dir(layout.root_dir())?;
+    }
+    check_dir(layout.device_dir())
+}
+
+/// Exclusive locks for an operation that touches the root: `root_dir/.lock`,
+/// then `device_dir/.lock`. A single layout has one lock, taken once (two
+/// `flock`s on one file from one process would deadlock).
+pub(crate) fn lock_layout_exclusive(layout: &IdentityLayout) -> Result<Vec<File>, KeyfileError> {
+    let mut locks = Vec::new();
+    if layout.is_split() {
+        locks.push(lock_exclusive(layout.root_dir())?);
+    }
+    locks.push(lock_exclusive(layout.device_dir())?);
+    Ok(locks)
+}
+
+/// Shared locks in the same order as [`lock_layout_exclusive`]. A directory
+/// whose `.lock` cannot be created (read-only) is read without one.
+pub(crate) fn lock_layout_shared(layout: &IdentityLayout) -> Result<Vec<File>, KeyfileError> {
+    let mut locks = Vec::new();
+    if layout.is_split() {
+        locks.extend(lock_shared(layout.root_dir())?);
+    }
+    locks.extend(lock_shared(layout.device_dir())?);
+    Ok(locks)
 }
 
 #[cfg(test)]

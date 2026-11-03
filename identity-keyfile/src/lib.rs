@@ -4,6 +4,7 @@ compile_error!("identity-keyfile writes 0600 key files and needs a unix target")
 mod error;
 mod files;
 mod keys;
+mod layout;
 
 pub use error::{KeyfileError, VerifyCheck};
 pub use files::{
@@ -11,6 +12,7 @@ pub use files::{
     write_duo, write_history, write_principal_id, write_rotations, AGENT_ID_FILE, DELEGATION_FILE,
     DEVICE_FILE, HISTORY_FILE, LOCK_FILE, ROOT_FILE, ROTATIONS_FILE,
 };
+pub use layout::IdentityLayout;
 pub use keys::{device_keys_at, read_principal, DeviceKeys, DevicePublic, IdentityKeys};
 
 #[cfg(feature = "testkit")]
