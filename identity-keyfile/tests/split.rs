@@ -287,3 +287,85 @@ fn single_layout_is_the_classic_folder() {
         keys.principal_id
     );
 }
+
+fn snapshot(dir: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut files: Vec<_> = fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap())
+        .filter(|e| e.path().is_file())
+        .map(|e| {
+            (
+                e.file_name().to_string_lossy().into_owned(),
+                fs::read(e.path()).unwrap(),
+            )
+        })
+        .collect();
+    files.sort();
+    files
+}
+
+#[test]
+fn crossed_split_layout_never_touches_the_other_identitys_root() {
+    let a = split();
+    let b = split();
+    IdentityKeys::init_at(&a.layout, NOW, TTL).unwrap();
+    IdentityKeys::init_at(&b.layout, NOW, TTL).unwrap();
+    // A's device folder with B's root.
+    let crossed = IdentityLayout::split(&b.root, &a.dev).unwrap();
+    let before = (
+        snapshot(&a.root),
+        snapshot(&a.dev),
+        snapshot(&b.root),
+        snapshot(&b.dev),
+    );
+    let mut loaded = IdentityKeys::load_at(&crossed).unwrap();
+    let later = NOW + 40 * DAY;
+
+    assert!(matches!(
+        IdentityKeys::rotate_root_at(&crossed, later),
+        Err(KeyfileError::RootMismatch)
+    ));
+    assert!(matches!(
+        IdentityKeys::renew_at(&crossed, later, TTL, false),
+        Err(KeyfileError::RootMismatch)
+    ));
+    assert!(matches!(
+        IdentityKeys::rotate_device_at(&crossed, later, TTL),
+        Err(KeyfileError::RootMismatch)
+    ));
+    assert!(matches!(
+        loaded.renew_if_due_at(Some(&crossed), later, TTL, 0),
+        Err(KeyfileError::RootMismatch)
+    ));
+    assert!(IdentityKeys::load_verified_at(&crossed).is_err());
+
+    let after = (
+        snapshot(&a.root),
+        snapshot(&a.dev),
+        snapshot(&b.root),
+        snapshot(&b.dev),
+    );
+    assert_eq!(before, after);
+}
+
+#[test]
+fn a_crash_pending_rotation_still_passes_the_root_check() {
+    let s = split();
+    IdentityKeys::init_at(&s.layout, NOW, TTL).unwrap();
+    let root_before = fs::read(s.root.join("root.jwk.json")).unwrap();
+    IdentityKeys::rotate_root_at(&s.layout, NOW + DAY).unwrap();
+    // Put the old root back: the rotation is on file, the root was never installed.
+    fs::write(s.root.join("root.jwk.json"), root_before).unwrap();
+    IdentityKeys::rotate_root_at(&s.layout, NOW + 2 * DAY).unwrap();
+}
+
+#[test]
+fn exists_on_a_device_only_folder_is_true_as_in_0_8_0() {
+    let s = split();
+    IdentityKeys::init_at(&s.layout, NOW, TTL).unwrap();
+    assert!(IdentityKeys::exists(&s.dev));
+    assert!(!IdentityKeys::exists(&s.root));
+    fs::remove_file(s.root.join("root.jwk.json")).unwrap();
+    assert!(IdentityKeys::exists(&s.dev));
+    assert!(!IdentityKeys::exists_at(&s.layout));
+}

@@ -22,6 +22,8 @@ pub enum KeyfileError {
     AlreadyInitialised(PathBuf),
     #[error("identity check failed: {0:?}")]
     VerifyFailed(VerifyCheck),
+    #[error("the root on disk is not the current root of the device folder's identity")]
+    RootMismatch,
     #[error("invalid identity layout: {0}")]
     InvalidLayout(&'static str),
 }

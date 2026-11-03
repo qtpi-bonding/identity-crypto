@@ -235,7 +235,45 @@ fn verify_identity(keys: &IdentityKeys) -> Result<(), KeyfileError> {
     Ok(())
 }
 
+/// Refuses unless `root` is the current root of the identity whose chain is
+/// `rotations` over `genesis`: the chain head, or the old root of a final
+/// rotation that a crashed `rotate_root` never installed. Nothing is signed or
+/// written before this passes, so a crossed split layout cannot touch another
+/// identity's root.
+fn check_root_current(
+    root: &KeyDuo,
+    principal_id: &PrincipalId,
+    genesis: Option<&pb::PublicKey>,
+    rotations: &[pb::RootRotation],
+) -> Result<(), KeyfileError> {
+    let genesis = genesis
+        .and_then(|genesis| PublicKey::try_from(genesis).ok())
+        .ok_or(KeyfileError::RootMismatch)?;
+    let chain =
+        AuthorityChain::from_rotations(genesis, rotations).map_err(|_| KeyfileError::RootMismatch)?;
+    if &chain.principal() != principal_id {
+        return Err(KeyfileError::RootMismatch);
+    }
+    let on_disk = pb::PublicKey::from(&signing_public(root));
+    let pending = rotations
+        .last()
+        .is_some_and(|last| last.old_root.as_ref() == Some(&on_disk));
+    if &signing_public(root) != chain.head() && !pending {
+        return Err(KeyfileError::RootMismatch);
+    }
+    Ok(())
+}
+
 impl IdentityKeys {
+    fn check_root_current(&self) -> Result<(), KeyfileError> {
+        check_root_current(
+            &self.root,
+            &self.principal_id,
+            self.delegation.principal_genesis.as_ref(),
+            &self.rotations,
+        )
+    }
+
     /// Returns public device data without exposing private keys.
     pub fn public(&self) -> DevicePublic {
         DevicePublic::new(
@@ -440,6 +478,7 @@ impl IdentityKeys {
         let _locks = files::lock_layout_exclusive(layout)?;
         let dir = layout.device_dir();
         let mut keys = Self::load_files(layout)?;
+        keys.check_root_current()?;
         let replacement = if new_device { Some(generate()) } else { None };
         let device = replacement.as_ref().unwrap_or(&keys.device);
         let delegation = delegate_device(
@@ -640,13 +679,18 @@ impl IdentityKeys {
         Self::load_verified_at(layout).map(Some)
     }
 
-    /// True when `dir` exists and holds the `agent_id` marker.
+    /// True when `dir` exists and holds the `agent_id` marker. Unchanged from
+    /// 0.8.0: it does not look for `root.jwk.json`.
     pub fn exists(dir: &Path) -> bool {
-        Self::exists_at(&IdentityLayout::single(dir))
+        let private = fs::symlink_metadata(dir)
+            .map(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0)
+            .unwrap_or(false);
+        private && exists(&dir.join(AGENT_ID_FILE))
     }
 
-    /// True when `agent_id` is in `device_dir` and `root.jwk.json` is in
-    /// `root_dir`, both folders being private directories.
+    /// For a split layout: true when `agent_id` is in `device_dir` and
+    /// `root.jwk.json` is in `root_dir`, both being private directories. For a
+    /// single layout it is [`IdentityKeys::exists`].
     pub fn exists_at(layout: &IdentityLayout) -> bool {
         let private_dir = |dir: &Path| {
             fs::symlink_metadata(dir)
@@ -654,9 +698,9 @@ impl IdentityKeys {
                 .unwrap_or(false)
         };
         private_dir(layout.device_dir())
-            && (!layout.is_split() || private_dir(layout.root_dir()))
             && exists(&layout.device_dir().join(AGENT_ID_FILE))
-            && exists(&layout.root_dir().join(ROOT_FILE))
+            && (!layout.is_split()
+                || (private_dir(layout.root_dir()) && exists(&layout.root_dir().join(ROOT_FILE))))
     }
 
     /// Re-signs the delegation with the in-memory root and device when it is due
@@ -683,6 +727,9 @@ impl IdentityKeys {
     ) -> Result<bool, KeyfileError> {
         if !renewal_due(&self.delegation, now, margin_seconds) {
             return Ok(false);
+        }
+        if layout.is_some() {
+            self.check_root_current()?;
         }
         let delegation = delegate_device(
             &self.root,
@@ -749,6 +796,7 @@ impl IdentityKeys {
         files::check_layout(layout)?;
         let _locks = files::lock_layout_exclusive(layout)?;
         let keys = Self::load_locked(layout)?;
+        keys.check_root_current()?;
         let current = pb::PublicKey::from(&signing_public(&keys.root));
         let mut rotations = keys.rotations;
         // A last entry whose old root is the current root was written by a
