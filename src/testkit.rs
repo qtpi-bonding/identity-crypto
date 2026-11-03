@@ -254,6 +254,7 @@ pub struct Fleet {
     pub owner_revocations: Vec<pb::KeyRevocation>,
     pub daemon_revocations: Vec<pb::KeyRevocation>,
     pub extra: Vec<pb::RegistryEntry>,
+    pub daemon_grant: bool,
 }
 
 impl Fleet {
@@ -274,6 +275,7 @@ impl Fleet {
             owner_revocations: vec![],
             daemon_revocations: vec![],
             extra: vec![],
+            daemon_grant: false,
         }
     }
 
@@ -292,6 +294,7 @@ impl Fleet {
         }];
         let mut daemon = entry(&self.daemon, pb::PrincipalKind::Daemon);
         daemon.revocations = self.daemon_revocations.clone();
+        daemon.hosts_held_agents = self.daemon_grant;
         let agent = pb::RegistryEntry {
             principal_id: self.agent_id().to_string(),
             kind: pb::PrincipalKind::Agent as i32,
@@ -420,6 +423,35 @@ pub fn agent_chain(
     let chain = pb::signer_chain::Chain::HostVouched(pb::HostVouched {
         host_device: Some(deleg),
         session: Some(cert),
+    });
+    (session, pb::SignerChain { chain: Some(chain) })
+}
+
+/// A daemon-hosted agent session: fresh 30-day device delegations for both
+/// principals, carrying `agent.rotations`, co-signed by the agent device.
+pub fn hosted_chain(
+    daemon: &Principal,
+    agent: &Principal,
+    subject: &str,
+    nb: i64,
+    na: i64,
+) -> (Signer, pb::SignerChain) {
+    let (host_dev, host_deleg) = daemon.delegate_device(T0, T0 + 30 * DAY);
+    let (agent_dev, agent_deleg) = agent.delegate_device(T0, T0 + 30 * DAY);
+    let (session, cert) = session_cert(
+        &host_dev,
+        &agent.genesis(),
+        Some(&daemon.genesis()),
+        Some(subject),
+        nb,
+        na,
+    );
+    let chain = pb::signer_chain::Chain::DaemonHosted(pb::DaemonHosted {
+        host_device: Some(host_deleg),
+        agent_device: Some(agent_deleg),
+        agent_signature: agent_dev.sign(&hosted_session_transcript(&cert).unwrap()),
+        session: Some(cert),
+        agent_rotations: agent.rotations.clone(),
     });
     (session, pb::SignerChain { chain: Some(chain) })
 }

@@ -65,7 +65,9 @@ pub use keys::{
     challenge_proof, delegate_device, device_delegation, encryption_public, principal_id,
     rename_proof, renewal_due, revocation, rotation, sign_key_delegation, signing_public,
 };
-pub use session::{mint_session, SessionCredential};
+pub use session::{
+    mint_hosted_session, mint_session, HostedAgent, HostedSessionCredential, HostingDaemon, SessionCredential,
+};
 pub use signature::{verify_p256, VerifiedSignature};
 pub use rust_jwk_duo as jwk_duo;
 pub use transcripts::message_nonce;
