@@ -1051,13 +1051,27 @@ mod tests {
         f.daemon_grant = true;
         let r = f.resolver();
         let agent = Principal::new();
-        let mut c = hosted(&f, &agent);
-        let good = hosted_mut(&mut c).clone();
+        // built by hand so the test holds the daemon device that signs the cert
+        let (host_dev, host_deleg) = f.daemon.delegate_device(T0, T0 + 30 * DAY);
+        let (agent_dev, agent_deleg) = agent.delegate_device(T0, T0 + 30 * DAY);
+        let (_, cert) = session_cert(
+            &host_dev, &agent.genesis(), Some(&f.daemon.genesis()), Some(&subject_on(&f.daemon, "i5")), T0, T0 + 3600,
+        );
+        let transcript = hosted_session_transcript(&cert).unwrap();
+        let mut c = pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::DaemonHosted(pb::DaemonHosted {
+                host_device: Some(host_deleg),
+                agent_device: Some(agent_deleg),
+                agent_signature: agent_dev.sign(&transcript),
+                session: Some(cert),
+                agent_rotations: vec![],
+            })),
+        };
+        assert!(verify_chain(&c, &r, LIVE).is_ok());
         hosted_mut(&mut c).agent_signature.clear();
         assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::MissingField("daemon_hosted.agent_signature"));
-        // signed by a different key over the same transcript
-        let other = Signer::new();
-        hosted_mut(&mut c).agent_signature = other.sign(&hosted_session_transcript(good.session.as_ref().unwrap()).unwrap());
+        // the daemon device alone cannot mint a hosted session
+        hosted_mut(&mut c).agent_signature = host_dev.sign(&transcript);
         assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::BadSignature);
     }
 
