@@ -50,6 +50,7 @@ pub struct VerifiedEntry {
     pub(crate) revocations: Vec<(PublicKey, i64)>,
     pub(crate) bindings: Vec<VerifiedBinding>,
     pub(crate) allowed_hosts: Vec<AllowedHost>,
+    pub(crate) hosts_held_agents: bool,
 }
 
 impl VerifiedEntry {
@@ -63,6 +64,8 @@ impl VerifiedEntry {
     pub fn rotations(&self) -> &[pb::RootRotation] { &self.rotations }
     pub fn bindings(&self) -> &[VerifiedBinding] { &self.bindings }
     pub fn allowed_hosts(&self) -> &[AllowedHost] { &self.allowed_hosts }
+    /// A DAEMON's standing grant to host self-rooted agents that name no host.
+    pub fn hosts_held_agents(&self) -> bool { self.hosts_held_agents }
 }
 
 pub(crate) struct CheckedRegistry {
@@ -179,6 +182,9 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
         };
 
         // Kind-specific field rules.
+        if e.hosts_held_agents && kind != PrincipalKind::Daemon {
+            return Err(bad("entries.hosts_held_agents", "only for DAEMON"));
+        }
         match kind {
             PrincipalKind::Human if !e.allowed_hosts.is_empty() => return Err(bad("entries.allowed_hosts", "only for AGENT")),
             PrincipalKind::Daemon if !e.devices.is_empty() => return Err(bad("entries.devices", "only for HUMAN")),
@@ -186,9 +192,6 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
             PrincipalKind::Service if !e.devices.is_empty() => return Err(bad("entries.devices", "only for HUMAN")),
             PrincipalKind::Service if !e.allowed_hosts.is_empty() => return Err(bad("entries.allowed_hosts", "only for AGENT")),
             PrincipalKind::Agent if !e.devices.is_empty() => return Err(bad("entries.devices", "only for HUMAN")),
-            PrincipalKind::Agent if self_rooted && !e.allowed_hosts.is_empty() => {
-                return Err(bad("entries.allowed_hosts", "an AGENT is self-rooted or host-vouched, never both"))
-            }
             PrincipalKind::Agent if !self_rooted && e.allowed_hosts.is_empty() => {
                 return Err(bad("entries.allowed_hosts", "a host-vouched AGENT needs at least one"))
             }
@@ -292,6 +295,7 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
         entries.insert(id.clone(), VerifiedEntry {
             id: id.clone(), kind, name: e.name.clone(), frozen: e.frozen, current_root,
             roots, rotations: e.rotations.clone(), revocations, bindings, allowed_hosts,
+            hosts_held_agents: e.hosts_held_agents,
         });
     }
     if !authority_seen {

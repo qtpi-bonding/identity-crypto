@@ -330,9 +330,22 @@ mod tests {
         let mut a = entry(&agent, pb::PrincipalKind::Agent);
         assert!(mutate(&f, |r| r.entries.push(a.clone())).is_ok());
         a.allowed_hosts = vec!["*".into()];
-        invalid(mutate(&f, |r| r.entries.push(a.clone())), "entries.allowed_hosts");
+        assert!(mutate(&f, |r| r.entries.push(a.clone())).is_ok());
         // a host-vouched agent with revocations
         invalid(mutate(&f, |r| r.entries[2].revocations = vec![f.daemon.revoke(&Signer::new().public(), T0)]), "entries.rotations");
+    }
+
+    #[test]
+    fn hosts_held_agents_only_on_daemon() {
+        let f = Fleet::new();
+        invalid(mutate(&f, |r| r.entries[0].hosts_held_agents = true), "entries.hosts_held_agents");
+        invalid(mutate(&f, |r| r.entries[2].hosts_held_agents = true), "entries.hosts_held_agents");
+        let service = Principal::new();
+        let mut s = entry(&service, pb::PrincipalKind::Service);
+        s.hosts_held_agents = true;
+        invalid(mutate(&f, |r| r.entries.push(s.clone())), "entries.hosts_held_agents");
+        let r = mutate(&f, |r| r.entries[1].hosts_held_agents = true).unwrap();
+        assert!(r.entry(&f.daemon.id()).unwrap().hosts_held_agents());
     }
 
     #[test]
