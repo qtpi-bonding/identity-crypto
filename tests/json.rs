@@ -1,10 +1,8 @@
-//! proto3-JSON for the attestation types (`DeliveryAttestation` and
-//! `AttestedMessage`): the carried form in `_meta`. Every test asserts on
-//! exact output or on a specific rejection; nothing here only checks that
+//! proto3-JSON for `Delivery`: the carried form in `_meta`. Every test asserts
+//! on exact output or on a specific rejection; nothing here only checks that
 //! something parses.
 
 use identity_crypto::jwk_duo::SigningKeyPair;
-use identity_crypto::transcripts::delivery_attestation_transcript;
 use identity_crypto::{pb, PublicKey, Timestamp};
 use serde_json::{json, Value};
 
@@ -27,44 +25,92 @@ fn cert(mode: u32) -> pb::DelegationCert {
     }
 }
 
-fn message(id: &str, mode: u32) -> pb::AttestedMessage {
-    pb::AttestedMessage {
-        message_id: id.into(),
-        room_id: "room-1".into(),
-        body_text: format!("body of {id}"),
-        author_genesis: Some(pk()),
-        delegation_cert: Some(cert(mode)),
+fn target(room: bool) -> pb::Target {
+    pb::Target {
+        target: Some(if room {
+            pb::target::Target::RoomId("design".into())
+        } else {
+            pb::target::Target::RecipientId("p256:04".into())
+        }),
     }
 }
 
-fn full() -> pb::DeliveryAttestation {
-    pb::DeliveryAttestation {
-        key_id: "p256:thumb".into(),
-        batch_sequence: 7,
-        attested_at: Some(Timestamp { seconds: 1_792_836_000, nanos: 0 }),
-        messages: vec![message("m1", 0), message("m2", 1)],
+fn signed_message(id: &str, mode: u32) -> pb::SignedMessage {
+    let session = cert(mode);
+    let signer = if mode == 0 {
+        pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session: Some(session) })
+    } else {
+        pb::signer_chain::Chain::HostVouched(pb::HostVouched { host_device: None, session: Some(session) })
+    };
+    pb::SignedMessage {
+        signer: Some(pb::SignerChain { chain: Some(signer) }),
+        audience: "room-1".into(),
+        nonce: vec![5; 16],
+        issued_at_unix_seconds: 1_792_836_000,
+        in_reply_to_nonce: None,
+        body_type: "type.googleapis.com/identitycrypto.v1.Message".into(),
+        body: format!("body of {id}").into_bytes(),
         signature: vec![0xfb; 64],
-        recipient_devices: vec![pk(), pk()],
     }
 }
 
-fn to_json(a: &pb::DeliveryAttestation) -> Value {
-    serde_json::to_value(a).expect("serialize")
+fn full() -> pb::Delivery {
+    pb::Delivery {
+        delivery_id: "d-1".into(),
+        recipient_id: "p256:04".into(),
+        recipient_devices: vec![pk(), pk()],
+        sequence: u64::MAX,
+        attested_at: Some(Timestamp { seconds: 1_792_836_000, nanos: 0 }),
+        messages: vec![signed_message("m1", 0), signed_message("m2", 1)],
+        via: vec![
+            pb::Targets { targets: vec![target(true)] },
+            pb::Targets { targets: vec![target(false), target(true)] },
+        ],
+        signer_device: Some(pb::KeyDelegation {
+            principal_genesis: Some(pk()),
+            signing_root: Some(pk()),
+            delegated: Some(pk()),
+            issued_at_unix_seconds: 1,
+            not_after_unix_seconds: 2,
+            signature: vec![1; 64],
+            ..Default::default()
+        }),
+        signature: vec![0xfb; 64],
+    }
 }
 
-fn from_json(v: Value) -> Result<pb::DeliveryAttestation, serde_json::Error> {
+fn to_json(d: &pb::Delivery) -> Value {
+    serde_json::to_value(d).expect("serialize")
+}
+
+fn from_json(v: Value) -> Result<pb::Delivery, serde_json::Error> {
     serde_json::from_value(v)
 }
 
-fn transcript(a: &pb::DeliveryAttestation) -> Vec<u8> {
-    delivery_attestation_transcript(a).expect("transcript")
+#[test]
+fn delivery_json_round_trip() {
+    let d = full();
+    let back = from_json(to_json(&d)).expect("decode");
+    assert_eq!(back, d);
 }
 
 #[test]
-fn attestation_json_round_trip() {
-    let a = full();
-    let back = from_json(to_json(&a)).expect("decode");
-    assert_eq!(back, a);
+fn delivery_json_field_names_are_camel_case() {
+    let v = to_json(&full());
+    let mut keys: Vec<&str> = v.as_object().unwrap().keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        ["attestedAt", "deliveryId", "messages", "recipientDevices", "recipientId", "sequence", "signature", "signerDevice", "via"]
+    );
+    assert_eq!(v["sequence"], json!("18446744073709551615"));
+    assert!(v["attestedAt"].as_str().unwrap().ends_with('Z'));
+}
+
+#[test]
+fn message_target_json_uses_the_oneof_field_name() {
+    assert_eq!(serde_json::to_value(target(true)).unwrap(), json!({"roomId": "design"}));
+    assert_eq!(serde_json::to_value(target(false)).unwrap(), json!({"recipientId": "p256:04"}));
 }
 
 #[test]
@@ -118,17 +164,6 @@ fn attested_at_out_of_range_is_rejected() {
     let mut v = to_json(&full());
     v["attestedAt"] = json!("2016-12-31T23:59:60Z");
     assert!(from_json(v).is_err(), "leap second must be rejected");
-
-    // Nanos outside 0..1e9 are rejected by the signed transcript, which is
-    // the only path that signs or verifies them.
-    let mut a = full();
-    a.attested_at = Some(Timestamp { seconds: 1, nanos: 1_000_000_000 });
-    assert!(delivery_attestation_transcript(&a).is_err(), "nanos out of range must reject");
-
-    // A missing attestedAt must reject in the transcript, not default to zero.
-    let mut a = full();
-    a.attested_at = None;
-    assert!(delivery_attestation_transcript(&a).is_err(), "missing attestedAt must reject");
 }
 
 #[test]
@@ -143,7 +178,6 @@ fn bytes_fields_are_emitted_as_padded_standard_base64() {
     // Emission is padded standard base64. Decoding is pbjson's (alphabet- and
     // padding-indifferent): equivalent spellings give the same bytes, and the
     // signed transcript binds the parsed bytes, so leniency is not a hole.
-    // pbjson decodes either alphabet, padded or not, to the same bytes.
     let lenient = standard.replace('+', "-").replace('/', "_");
     let mut w = v.clone();
     w["signature"] = json!(lenient.trim_end_matches('='));
@@ -168,61 +202,35 @@ fn unknown_field_is_rejected() {
     v["recipientDevices"][0]["extra"] = json!("x");
     assert!(from_json(v).is_err(), "unknown field inside a key must reject");
 
+    let mut v = base.clone();
+    v["via"][0]["targets"][0]["extra"] = json!("x");
+    assert!(from_json(v).is_err(), "unknown field inside a target must reject");
+
     let mut v = base;
-    v["messages"][0]["delegationCert"]["extra"] = json!("x");
-    assert!(from_json(v).is_err(), "unknown field inside a cert must reject");
+    v["signerDevice"]["extra"] = json!("x");
+    assert!(from_json(v).is_err(), "unknown field inside a delegation must reject");
 }
 
 #[test]
 fn field_names_accept_camel_and_snake_case() {
     let base = to_json(&full());
-    assert!(base.get("keyId").is_some(), "output uses the camelCase name");
 
     let mut snake = base.clone();
     let obj = snake.as_object_mut().unwrap();
-    let v = obj.remove("keyId").unwrap();
-    obj.insert("key_id".into(), v);
-    let a = from_json(snake).expect("snake_case name accepted");
-    assert_eq!(a, from_json(base.clone()).expect("camel decodes"));
+    let v = obj.remove("deliveryId").unwrap();
+    obj.insert("delivery_id".into(), v);
+    let d = from_json(snake).expect("snake_case name accepted");
+    assert_eq!(d, from_json(base.clone()).expect("camel decodes"));
 
-    let mut dup = base.clone();
-    dup["key_id"] = json!("other");
+    let mut dup = base;
+    dup["delivery_id"] = json!("other");
     assert!(from_json(dup).is_err(), "camelCase and snake_case of one field together must error");
-
-    let text = r#"{"keyId":"a","keyId":"b"}"#;
-    assert!(serde_json::from_str::<pb::DeliveryAttestation>(text).is_err(), "a duplicate field must error");
 }
 
 #[test]
-fn old_verification_outcome_field_is_rejected() {
-    let mut v = to_json(&full());
-    v["messages"][0]["verificationOutcome"] = json!("DELEGATED_KEY");
-    assert!(from_json(v).is_err(), "verificationOutcome is an unknown field after A1");
-}
-
-#[test]
-fn json_round_trip_keeps_the_transcript() {
-    let mut empty_messages = full();
-    empty_messages.messages.clear();
-    let mut seq_zero = full();
-    seq_zero.batch_sequence = 0;
-    let mut empty_key = full();
-    empty_key.key_id = String::new();
-    let mut empty_devices = full();
-    empty_devices.recipient_devices.clear();
-
-    let cases = [
-        ("all fields set", full()),
-        ("empty messages", empty_messages),
-        ("batch_sequence 0", seq_zero),
-        ("empty key_id", empty_key),
-        ("no recipient devices", empty_devices),
-    ];
-    for (name, original) in cases {
-        let decoded = from_json(to_json(&original)).unwrap_or_else(|e| panic!("{name}: {e}"));
-        assert_eq!(decoded, original, "{name}: value round trip");
-        assert_eq!(transcript(&decoded), transcript(&original), "{name}: transcript");
-    }
+fn duplicate_field_is_rejected() {
+    let text = r#"{"deliveryId":"a","deliveryId":"b"}"#;
+    assert!(serde_json::from_str::<pb::Delivery>(text).is_err(), "a duplicate field must error");
 }
 
 fn fixed_key(b: u8) -> pb::PublicKey {

@@ -87,8 +87,8 @@ facts:
   evidence:
   - src/session.rs
   - src/verify.rs
-- id: pbjson-attestation-rejects-unknown-fields
-  assertion: build.rs compiles identitycrypto.v1 into prost types plus pbjson serde impls, and the DeliveryAttestation
+- id: pbjson-delivery-rejects-unknown-fields
+  assertion: build.rs compiles identitycrypto.v1 into prost types plus pbjson serde impls, and the Delivery
     proto3-JSON form rejects unknown fields.
   evidence:
   - build.rs

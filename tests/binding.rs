@@ -246,39 +246,6 @@ fn signed_document_approval_and_peer_revocation_bind_every_field() {
 }
 
 #[test]
-fn delivery_attestation_binds_every_field() {
-    let message = pb::AttestedMessage {
-        message_id: "m".into(), room_id: "r".into(), body_text: "b".into(),
-        delegation_cert: Some(cert(1)), author_genesis: pk(),
-    };
-    let base = pb::DeliveryAttestation {
-        recipient_devices: vec![pb::PublicKey::from(&k())], key_id: "k".into(), batch_sequence: 1,
-        attested_at: Some(identity_crypto::Timestamp { seconds: 1, nanos: 1 }),
-        messages: vec![message.clone(), pb::AttestedMessage { message_id: "n".into(), ..message }],
-        signature: vec![],
-    };
-    assert_binds(
-        "delivery_attestation",
-        base,
-        delivery_attestation_transcript,
-        vec![
-            ("recipient_devices", Box::new(|a| a.recipient_devices.push(pb::PublicKey::from(&k())))),
-            ("key_id", Box::new(|a| a.key_id.push('x'))),
-            ("batch_sequence", Box::new(|a| a.batch_sequence += 1)),
-            ("attested_at.seconds", Box::new(|a| a.attested_at.as_mut().unwrap().seconds += 1)),
-            ("attested_at.nanos", Box::new(|a| a.attested_at.as_mut().unwrap().nanos += 1)),
-            ("messages.message_id", Box::new(|a| a.messages[0].message_id.push('x'))),
-            ("messages.room_id", Box::new(|a| a.messages[0].room_id.push('x'))),
-            ("messages.author_genesis", Box::new(|a| a.messages[0].author_genesis = pk())),
-            ("messages.body_text", Box::new(|a| a.messages[0].body_text.push('x'))),
-            ("messages.delegation_cert", Box::new(|a| a.messages[0].delegation_cert.as_mut().unwrap().not_after_unix_seconds += 1)),
-            ("messages.delegation_cert.signature", Box::new(|a| a.messages[0].delegation_cert.as_mut().unwrap().signature[0] = 2)),
-            ("message order", Box::new(|a| a.messages.swap(0, 1))),
-        ],
-    );
-}
-
-#[test]
 fn request_digest_binds_every_field() {
     let ids: Vec<PrincipalId> = (0..6).map(|_| PrincipalId::from_genesis(k())).collect();
     let base = RequestDigestInput {

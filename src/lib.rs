@@ -165,10 +165,24 @@ mod proto_tests {
             rotations: vec![], revocations: vec![],
             devices: vec![pb::DeviceBinding { device: Some(delegation()), approval: Some(delegation()), host_daemon_id: Some("p256:05".into()) }],
             allowed_hosts: vec!["*".into()],
+            hosts_held_agents: true,
         };
         round_trip(pb::RegistryCarrier { registry: Some(pb::PrincipalRegistry { entries: vec![entry], allow_peer_revocation: true }) });
         round_trip(pb::AcceptedChains { principals: vec![pb::AcceptedPrincipal { principal_id: "p256:04".into(), kind: 4, rotations: vec![] }] });
-        round_trip(pb::DeliveryAttestation { key_id: "k".into(), batch_sequence: 1, attested_at: Some(Timestamp { seconds: 1, nanos: 2 }), messages: vec![pb::AttestedMessage { message_id: "m".into(), room_id: "r".into(), body_text: "b".into(), delegation_cert: Some(cert()), author_genesis: Some(key(1)) }], signature: vec![1; 64], recipient_devices: vec![key(5), key(6)] });
+        let target = |r: bool| pb::Target { target: Some(if r { pb::target::Target::RoomId("design".into()) } else { pb::target::Target::RecipientId("p256:04".into()) }) };
+        let message = pb::Message {
+            message_id: "m-1".into(), to: vec![target(true), target(false)], reply_to: Some("m-0".into()),
+            references: vec!["m-0".into()], mentions: vec!["p256:04".into()],
+            authored_at: Some(Timestamp { seconds: 1, nanos: 2 }), body: "hi".into(),
+        };
+        round_trip(message);
+        let hosted = pb::DaemonHosted { host_device: Some(delegation()), agent_device: Some(delegation()), session: Some(cert()), agent_signature: vec![4; 64], agent_rotations: vec![] };
+        round_trip(pb::SignerChain { chain: Some(pb::signer_chain::Chain::DaemonHosted(hosted)) });
+        round_trip(pb::Delivery {
+            delivery_id: "d-1".into(), recipient_id: "p256:04".into(), recipient_devices: vec![key(5)], sequence: u64::MAX,
+            attested_at: Some(Timestamp { seconds: 1, nanos: 2 }), messages: vec![pb::SignedMessage::default()],
+            via: vec![pb::Targets { targets: vec![target(true)] }], signer_device: Some(delegation()), signature: vec![1; 64],
+        });
     }
 
     #[test]

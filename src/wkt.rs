@@ -1,4 +1,4 @@
-//! `google.protobuf.Timestamp` as the attestation carries it.
+//! `google.protobuf.Timestamp` as the delivery carries it.
 //!
 //! prost-build and pbjson-build map `.google.protobuf` to this module (see
 //! `build.rs`), so generated code uses this type instead of

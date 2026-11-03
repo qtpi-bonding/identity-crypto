@@ -10,25 +10,8 @@ validation and verification.
 
 The `identity-keyfile/` workspace member (0.8.0) stores a self-rooted principal's keys (an agent's or a daemon's) in a Unix directory, with the history and rotation chain; see its README.
 
-## Attestation (0.5.0)
+## Helpers (0.5.0)
 
-The delivery attestation has a JSON form, the one carried in `_meta`.
-Breaking, pre-MVP.
-
-- **JSON form.** `DeliveryAttestation`, `AttestedMessage` and the types they
-  contain implement serde `Serialize` and `Deserialize` as proto3-JSON, via
-  pbjson. Field names are camelCase (snake_case also parses). `attestedAt`
-  is RFC 3339 and is emitted with `Z`; offset forms such as `+02:00` are
-  accepted on parse. `bytes` fields are emitted as padded standard base64
-  (parsing accepts either alphabet). Unknown fields are rejected.
-- **Writer.** The supported writer of this JSON is the message-attestation
-  crate's `attach` function. That function lives in message-attestation, not
-  in this repo; this crate defines the form and the transcript only.
-- **Layout.** `AttestedMessage.verification_outcome` is deleted, along with
-  `VerificationOutcome` (its tag and name are reserved). Every attested
-  message requires `author_genesis` and `delegation_cert`, and a
-  `DeliveryAttestation` requires `attested_at`. The attestation transcript
-  rejects a missing one.
 - **`PublicKey::thumbprint()`** gives the RFC 7638 JWK thumbprint (43
   base64url characters, unpadded): the `key_id` for a `p256:` key.
 - **`mint_session(device, principal_genesis, not_before, not_after)`**
@@ -95,7 +78,7 @@ versions, persistence and policy are the caller's.
   `PublicKey::thumbprint()` gives the RFC 7638 JWK thumbprint, the `key_id` for a `p256:` key.
 - **Proto** (`proto/identitycrypto/v1/identity.proto`, reached as
   `identity_crypto::pb`): keys, delegations, signer chains, signed messages
-  and documents, approvals, revocations, the delivery attestation.
+  and documents, approvals, revocations.
 - **Transcripts** (`identity_crypto::transcripts`): the exact bytes every
   signature covers, thirteen functions under `identitycrypto.*.v1` tags. Each
   validates while it encodes; signer and verifier call the same function.

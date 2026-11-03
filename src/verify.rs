@@ -206,6 +206,7 @@ pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Resul
             let (session_key, session_not_after) = check_cert(cert, &device, at)?;
             Ok(VerifiedChain { principal, kind: entry.kind(), host, subject: None, device, session_key, session_not_after })
         }
+        Chain::DaemonHosted(_) => Err(Error::ChainMismatch("signer.daemon_hosted")),
         Chain::HostVouched(h) => {
             let d = h.host_device.as_ref().ok_or(Error::MissingField("host_vouched.host_device"))?;
             let cert = h.session.as_ref().ok_or(Error::MissingField("host_vouched.session"))?;
@@ -374,6 +375,7 @@ pub fn verify_signed_message_trusted_devices(
     let cert = match chain {
         pb::signer_chain::Chain::SelfRooted(s) => s.session.as_ref().ok_or(Error::MissingField("self_rooted.session"))?,
         pb::signer_chain::Chain::HostVouched(_) => return Err(Error::ChainMismatch("signer.host_vouched")),
+        pb::signer_chain::Chain::DaemonHosted(_) => return Err(Error::ChainMismatch("signer.daemon_hosted")),
     };
     if cert.mode != 0 {
         return Err(Error::ChainMismatch("session.mode"));

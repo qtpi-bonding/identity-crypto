@@ -35,7 +35,6 @@ TAGS = {
     "peer_revocation": "identitycrypto.peer-revocation.v1",
     "request_digest": "identitycrypto.request-digest.v1",
     "client_request_digest": "identitycrypto.client-request-digest.v1",
-    "delivery_attestation": "identitycrypto.delivery-attestation.v1",
 }
 
 
@@ -262,31 +261,6 @@ def peer_revocation(i):
     return tag("peer_revocation") + revoker + approval_key + target + revoked_b + i64(i["issued_at"]) + document_id
 
 
-def delivery_attestation(i):
-    out = tag("delivery_attestation") + u32(len(i["recipient_devices"]))
-    for r in i["recipient_devices"]:
-        out += key(r, "recipient_devices")
-    out += text(i["key_id"]) + u64(i["batch_sequence"])
-    at = i["attested_at"]
-    if at is None:
-        raise VectorError("MissingField", "attested_at")
-    nanos = int(at["nanos"])
-    if not 0 <= nanos <= 999_999_999:
-        raise VectorError("InvalidField", "attested_at.nanos")
-    out += i64(at["seconds"]) + i32(nanos) + u32(len(i["messages"]))
-    for m in i["messages"]:
-        out += text(m["message_id"]) + text(m["room_id"])
-        author, cert = m["author_genesis"], m["delegation_cert"]
-        if author is None:
-            raise VectorError("MissingField", "messages.author_genesis")
-        author_bytes = key(author, "messages.author_genesis")
-        if cert is None:
-            raise VectorError("MissingField", "messages.delegation_cert")
-        out += author_bytes + text(m["body_text"])
-        out += cert_body(cert) + var(bytes.fromhex(cert["signature"]))
-    return out
-
-
 def request_digest(i):
     # Keys first, as tests/vectors.rs converts them before the call.
     requester = key(i["requester_genesis"], "requester")
@@ -323,7 +297,7 @@ def client_request_digest(i):
 
 FUNCTIONS = {f.__name__: f for f in [
     key_challenge, principal_rename, key_delegation, key_revocation, root_rotation, session_delegation,
-    signed_message, signed_document, approval, peer_revocation, delivery_attestation, request_digest,
+    signed_message, signed_document, approval, peer_revocation, request_digest,
     client_request_digest,
 ]}
 
@@ -447,39 +421,6 @@ def cases():
     ok("peer_revocation one key", "peer_revocation", with_(pv, revoked=K(14)))
     ok("peer_revocation missing target", "peer_revocation", with_(pv, target_genesis=None))
     ok("peer_revocation 31-byte document id", "peer_revocation", with_(pv, document_id="33" * 31))
-
-    def message(author=None, delegation=None, body="hi"):
-        return {"message_id": "m1", "room_id": "!room", "author_genesis": author, "body_text": body,
-                "delegation_cert": delegation}
-
-    da = {"recipient_devices": [K(15), K(16)], "key_id": "mm-key-1", "batch_sequence": "7",
-          "attested_at": {"seconds": "1700000000", "nanos": "123456789"},
-          "messages": [message(author=K(2), delegation=CERT1), message(author=K(7), delegation=CERT1)]}
-    ok("delivery_attestation empty", "delivery_attestation",
-       {"recipient_devices": [], "key_id": "", "batch_sequence": "0",
-        "attested_at": {"seconds": "0", "nanos": "0"}, "messages": []})
-    ok("delivery_attestation full", "delivery_attestation", da)
-    ok("delivery_attestation non-ascii body", "delivery_attestation",
-       with_(da, messages=[message(author=K(2), delegation=CERT1, body="héllo wörld ✓")]))
-    ok("delivery_attestation max sequence", "delivery_attestation",
-       with_(da, batch_sequence=str(U64_MAX), attested_at={"seconds": str(I64_MIN), "nanos": "999999999"}))
-    ok("delivery_attestation no timestamp", "delivery_attestation", with_(da, attested_at=None))
-    ok("delivery_attestation nanos too big", "delivery_attestation",
-       with_(da, attested_at={"seconds": "0", "nanos": "1000000000"}))
-    ok("delivery_attestation negative nanos", "delivery_attestation",
-       with_(da, attested_at={"seconds": "0", "nanos": "-1"}))
-    ok("delivery_attestation author missing", "delivery_attestation",
-       with_(da, messages=[message(delegation=CERT1)]))
-    ok("delivery_attestation cert missing", "delivery_attestation",
-       with_(da, messages=[message(author=K(7))]))
-    ok("delivery_attestation author and cert missing", "delivery_attestation",
-       with_(da, messages=[message()]))
-    ok("delivery_attestation off-curve recipient", "delivery_attestation",
-       with_(da, recipient_devices=[OFF_CURVE]))
-    ok("delivery_attestation cert with empty signature", "delivery_attestation",
-       with_(da, messages=[message(author=K(7), delegation=with_(CERT1, signature=""))]))
-    ok("delivery_attestation cert with DER-length signature", "delivery_attestation",
-       with_(da, messages=[message(author=K(7), delegation=with_(CERT1, signature="cd" * 71))]))
 
     rd = {"requester_genesis": K(7), "host_genesis": K(10), "subject": "3b6a27bcceb6a42d/i5",
           "instance_id": "3b6a27bcceb6a42d/i5", "action_id": "send_prompt", "parameters": "0a0568656c6c6f",

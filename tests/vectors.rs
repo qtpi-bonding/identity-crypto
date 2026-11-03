@@ -132,28 +132,6 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
             signature: vec![],
             document_id: bytes(&i["document_id"]),
         }),
-        "delivery_attestation" => delivery_attestation_transcript(&pb::DeliveryAttestation {
-            recipient_devices: i["recipient_devices"].as_array().unwrap().iter().map(|k| key(k).unwrap()).collect(),
-            key_id: s(&i["key_id"]),
-            batch_sequence: int(&i["batch_sequence"]),
-            attested_at: (!i["attested_at"].is_null()).then(|| identity_crypto::Timestamp {
-                seconds: int(&i["attested_at"]["seconds"]),
-                nanos: int(&i["attested_at"]["nanos"]),
-            }),
-            messages: i["messages"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|m| pb::AttestedMessage {
-                    message_id: s(&m["message_id"]),
-                    room_id: s(&m["room_id"]),
-                    body_text: s(&m["body_text"]),
-                    delegation_cert: cert(&m["delegation_cert"]),
-                    author_genesis: key(&m["author_genesis"]),
-                })
-                .collect(),
-            signature: vec![],
-        }),
         "request_digest" => {
             let pid = |f: &str| PublicKey::try_from(&key(&i[f]).unwrap()).map(PrincipalId::from_genesis);
             let (requester, host, target) = (pid("requester_genesis")?, pid("host_genesis")?, pid("target_genesis")?);
@@ -219,7 +197,7 @@ fn transcripts_match_the_independent_generator() {
         }
         checked += 1;
     }
-    assert_eq!(checked, 100, "transcripts.json case count changed");
+    assert_eq!(checked, 87, "transcripts.json case count changed");
 }
 
 #[test]

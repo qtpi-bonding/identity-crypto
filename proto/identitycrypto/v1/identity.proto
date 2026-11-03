@@ -4,7 +4,7 @@ syntax = "proto3";
 // (structmux docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md,
 // section 3.2): P-256 keys, principal ids, key delegations, signer chains,
 // signed messages and documents, approvals and revocations, and the
-// delivery attestation. Every signature covers a canonical transcript built
+// message delivery. Every signature covers a canonical transcript built
 // by identity_crypto::transcripts, never these encoded bytes.
 package identitycrypto.v1;
 
@@ -80,6 +80,7 @@ message SignerChain {
   oneof chain {
     SelfRooted self_rooted = 1;
     HostVouched host_vouched = 2;
+    DaemonHosted daemon_hosted = 3;
   }
 }
 message SelfRooted {                   // humans, daemons, services
@@ -89,6 +90,48 @@ message SelfRooted {                   // humans, daemons, services
 message HostVouched {                  // agent identities
   KeyDelegation host_device = 1;       // daemon root → daemon device
   DelegationCert session = 2;          // daemon device → agent session, mode 1
+}
+
+message DaemonHosted {                 // an agent with its own keys, run by a daemon that holds them
+  KeyDelegation host_device = 1;       // daemon root -> daemon device
+  KeyDelegation agent_device = 2;      // agent root -> agent device
+  DelegationCert session = 3;          // daemon device -> session, mode 1, principal_genesis = the agent
+  bytes agent_signature = 4;           // agent device over hosted-session.v1
+  repeated RootRotation agent_rotations = 5;  // agent genesis -> ... -> agent_device.signing_root; read only when the agent has no registry entry
+}
+
+message Target {
+  oneof target {
+    string room_id = 1;
+    string recipient_id = 2;           // canonical p256:<hex>
+  }
+}
+message Targets { repeated Target targets = 1; }
+
+// The body of an author's SignedMessage. The author is the SignedMessage
+// signer, never a field.
+message Message {
+  string message_id = 1;
+  repeated Target to = 2;
+  optional string reply_to = 3;
+  repeated string references = 4;
+  repeated string mentions = 5;        // canonical p256:<hex> ids
+  google.protobuf.Timestamp authored_at = 6;
+  string body = 7;
+}
+
+// Per recipient, signed by the deliverer. messages are carried verbatim;
+// via[i] belongs to messages[i].
+message Delivery {
+  string delivery_id = 1;
+  string recipient_id = 2;
+  repeated PublicKey recipient_devices = 3;
+  uint64 sequence = 4;                 // per (recipient_id, signer principal)
+  google.protobuf.Timestamp attested_at = 5;
+  repeated SignedMessage messages = 6;
+  repeated Targets via = 7;
+  KeyDelegation signer_device = 8;     // the deliverer's root -> device delegation; the deliverer is its principal_genesis
+  bytes signature = 9;                 // the signer_device's key over delivery.v1
 }
 
 message SignedMessage {
@@ -137,31 +180,6 @@ message PeerRevocation {               // the authority, present, freezes a prin
   bytes document_id = 7;               // 32 bytes: the id of the document in force (SHA-256 of its signed-document.v1 transcript)
 }
 
-// One message inside a signed delivery batch. body_text is authoritative.
-message AttestedMessage {
-  string message_id = 1;
-  string room_id = 2;
-  reserved 3;                               // was: string author_agent_id
-  string body_text = 4;
-  reserved 5;                               // was: VerificationOutcome verification_outcome
-  reserved "verification_outcome";
-  DelegationCert delegation_cert = 6;       // required: the agent's session delegation
-  PublicKey author_genesis = 7;             // required: the author's genesis key
-}
-
-// Signed once per delivery batch by the delivering service's own key.
-// recipient_devices is the target's set of DEVICE keys; a verifier checks
-// that its own device key is a member.
-message DeliveryAttestation {
-  reserved 1;                               // was: repeated bytes recipient_device_public_keys
-  string key_id = 2;
-  uint64 batch_sequence = 3;
-  google.protobuf.Timestamp attested_at = 4;  // required
-  repeated AttestedMessage messages = 5;
-  bytes signature = 6;
-  repeated PublicKey recipient_devices = 7; // the target's DEVICE keys
-}
-
 enum PrincipalKind {
   PRINCIPAL_KIND_UNSPECIFIED = 0;
   PRINCIPAL_KIND_HUMAN = 1;
@@ -191,16 +209,17 @@ message RegistryEntry {
   PrincipalKind kind = 2;              // an unknown kind is skipped: it grants nothing
   optional string name = 3;            // non-empty; unique among non-frozen entries; never 16 hex chars
   bool frozen = 4;
-  // Self-rooted (HUMAN, DAEMON; an AGENT is self-rooted or host-vouched, never both):
+  // Self-rooted (HUMAN, DAEMON, SERVICE, and an AGENT with keys)
   PublicKeyDuo current_root = 5;       // delegations use its signing half
   repeated RootRotation rotations = 6; // genesis -> ... -> current_root.signing; empty for the authority
   repeated KeyRevocation revocations = 7;
   reserved 8;
   // HUMAN:
   repeated DeviceBinding devices = 9;
-  // AGENT (host-vouched):
-  repeated string allowed_hosts = 10;  // DAEMON principal ids, or "*"
+  // AGENT: DAEMON principal ids, or "*". Required for an AGENT without keys; for an AGENT with keys it overrides any daemon's hosts_held_agents.
+  repeated string allowed_hosts = 10;
   reserved 11;                         // future: steward, the HUMAN responsible for a DAEMON or AGENT; grant-only
+  bool hosts_held_agents = 12;         // DAEMON: may host any agent whose device key it holds (DaemonHosted). Grant-only.
 }
 
 message DeviceBinding {                // one human device
