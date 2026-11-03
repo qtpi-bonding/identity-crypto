@@ -59,6 +59,33 @@ pub(crate) fn sign(key: &jwk_duo::SigningKeyPair, message: &[u8]) -> Result<[u8;
         .map_err(|e| Error::InvalidKey(format!("cannot sign with this key pair: {e}")))
 }
 
+/// Builds a `SignedMessage` carrying `chain` and signs `signed-message.v1`
+/// with the session key; the one construction both credentials share.
+#[allow(clippy::too_many_arguments)] // the wire fields, one per argument
+fn sign_with_chain(
+    key: &jwk_duo::SigningKeyPair,
+    chain: pb::signer_chain::Chain,
+    audience: &str,
+    nonce: [u8; 16],
+    issued_at_unix: i64,
+    in_reply_to_nonce: Option<[u8; 16]>,
+    body_type: &str,
+    body: &[u8],
+) -> Result<pb::SignedMessage> {
+    let mut message = pb::SignedMessage {
+        signer: Some(pb::SignerChain { chain: Some(chain) }),
+        audience: audience.into(),
+        nonce: nonce.to_vec(),
+        issued_at_unix_seconds: issued_at_unix,
+        in_reply_to_nonce: in_reply_to_nonce.map(|n| n.to_vec()),
+        body_type: body_type.into(),
+        body: body.to_vec(),
+        signature: vec![],
+    };
+    message.signature = sign(key, &signed_message_transcript(&message)?)?.to_vec();
+    Ok(message)
+}
+
 impl SessionCredential {
     pub fn cert(&self) -> &pb::DelegationCert {
         &self.cert
@@ -89,23 +116,19 @@ impl SessionCredential {
         body_type: &str,
         body: &[u8],
     ) -> Result<pb::SignedMessage> {
-        let mut message = pb::SignedMessage {
-            signer: Some(pb::SignerChain {
-                chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
-                    device: device_delegation,
-                    session: Some(self.cert.clone()),
-                })),
+        sign_with_chain(
+            &self.key,
+            pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: device_delegation,
+                session: Some(self.cert.clone()),
             }),
-            audience: audience.into(),
-            nonce: nonce.to_vec(),
-            issued_at_unix_seconds: issued_at_unix,
-            in_reply_to_nonce: in_reply_to_nonce.map(|n| n.to_vec()),
-            body_type: body_type.into(),
-            body: body.to_vec(),
-            signature: vec![],
-        };
-        message.signature = sign(&self.key, &signed_message_transcript(&message)?)?.to_vec();
-        Ok(message)
+            audience,
+            nonce,
+            issued_at_unix,
+            in_reply_to_nonce,
+            body_type,
+            body,
+        )
     }
 }
 
@@ -210,10 +233,12 @@ pub fn mint_hosted_session(
 }
 
 impl HostedSessionCredential {
+    /// The mode-1 certificate the daemon device signed for the session key.
     pub fn cert(&self) -> &pb::DelegationCert {
         self.chain.session.as_ref().expect("minted with a session cert")
     }
 
+    /// The public half of the session key.
     pub fn session_public_key(&self) -> PublicKey {
         PublicKey::from(&self.key)
     }
@@ -235,20 +260,16 @@ impl HostedSessionCredential {
         body_type: &str,
         body: &[u8],
     ) -> Result<pb::SignedMessage> {
-        let mut message = pb::SignedMessage {
-            signer: Some(pb::SignerChain {
-                chain: Some(pb::signer_chain::Chain::DaemonHosted(self.chain.clone())),
-            }),
-            audience: audience.into(),
-            nonce: nonce.to_vec(),
-            issued_at_unix_seconds: issued_at_unix,
-            in_reply_to_nonce: in_reply_to_nonce.map(|n| n.to_vec()),
-            body_type: body_type.into(),
-            body: body.to_vec(),
-            signature: vec![],
-        };
-        message.signature = sign(&self.key, &signed_message_transcript(&message)?)?.to_vec();
-        Ok(message)
+        sign_with_chain(
+            &self.key,
+            pb::signer_chain::Chain::DaemonHosted(self.chain.clone()),
+            audience,
+            nonce,
+            issued_at_unix,
+            in_reply_to_nonce,
+            body_type,
+            body,
+        )
     }
 }
 
