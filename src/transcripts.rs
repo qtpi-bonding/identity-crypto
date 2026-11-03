@@ -980,6 +980,8 @@ mod tests {
         assert_eq!(run(&|d| d.attested_at = Some(crate::Timestamp { seconds: 0, nanos: -1 })), Err(Error::InvalidField { field: "attested_at.nanos", reason: "out of range" }));
         assert_eq!(run(&|d| d.messages = vec![message()]), Err(Error::InvalidField { field: "via", reason: "one entry per message" }));
         assert_eq!(run(&|d| d.via = vec![pb::Targets::default()]), Err(Error::InvalidField { field: "via", reason: "one entry per message" }));
+        // A message is checked before its target: a message with no signer is
+        // reported even when its target is also missing.
         assert_eq!(
             run(&|d| { with_msg(d, pb::Target { target: None }); d.messages[0].signer = None; }),
             Err(Error::MissingField("signer"))

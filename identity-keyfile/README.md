@@ -46,6 +46,35 @@ Missing `retired_devices.json` or `rotations.json` reads as empty. A file that
 exists but is unreadable, a broken symlink, or unparseable is an error, so
 retired keys are never dropped silently.
 
+## Split layout
+
+`IdentityLayout::single(dir)` is the layout above. `IdentityLayout::split(root_dir,
+device_dir)` puts the root where an agent cannot reach it:
+
+- `root_dir` holds only `root.jwk.json` (and its `.lock`).
+- `device_dir` holds everything else: `device.jwk.json`, `delegation.json`,
+  `agent_id`, `retired_devices.json`, `rotations.json` and its own `.lock`. This
+  is the folder an agent may be shown.
+
+Both paths must be absolute with no `.` or `..` components. They are compared
+after symlinks are resolved; `root_dir` may not be `device_dir`, inside it, or
+contain it (`KeyfileError::InvalidLayout`). Use one `root_dir` per identity.
+
+Every operation has an `_at(&IdentityLayout)` form: `init_at`, `save_at`,
+`load_at`, `load_verified_at`, `load_existing_at`, `exists_at`,
+`create_or_load_at`, `renew_at`, `rotate_device_at`, `rotate_root_at`,
+`renew_if_due_at`. The `dir` functions (`init(dir, ..)` and the rest) call them
+with `IdentityLayout::single(dir)`, so the `_at` functions are the single
+layout implementation and the `dir` behaviour is unchanged.
+
+Lock order: `root_dir/.lock` first, then `device_dir/.lock`, exclusive for
+writes and shared for reads. A single layout has one lock, taken once.
+
+`create_or_load_at` cannot rename across two folders, so it runs under both
+exclusive locks. In a split layout an existing `root.jwk.json` is never
+overwritten: if `root_dir` already holds a root but `device_dir` has no
+identity, that root becomes the genesis of the new identity.
+
 ## Verified loading and atomic creation
 
 For a long-lived identity (a daemon's), where a crash or two processes

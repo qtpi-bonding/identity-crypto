@@ -84,7 +84,7 @@ pub fn proto_include_dir() -> &'static str {
 
 /// Generated from `proto/identitycrypto/v1/identity.proto`. Private: the
 /// only public path to these types is [`pb`].
-#[allow(clippy::useless_borrows_in_formatting)] // pbjson-build 0.7 output
+#[allow(clippy::useless_borrows_in_formatting, clippy::large_enum_variant)] // generated code
 mod proto {
     pub mod identitycrypto {
         pub mod v1 {

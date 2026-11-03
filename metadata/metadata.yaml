@@ -94,6 +94,26 @@ facts:
   - build.rs
   - proto/identitycrypto/v1/identity.proto
   - tests/json.rs
+- id: daemon-hosted-chain-needs-agent-cosignature
+  assertion: verify_chain accepts a DaemonHosted chain only when the cert is a mode-1 cert signed by
+    the hosting DAEMON's device and the agent's device has co-signed it under hosted-session.v1; mint_hosted_session
+    produces both signatures.
+  evidence:
+  - src/verify.rs
+  - src/session.rs
+- id: explicit-allowed-hosts-override-grant
+  assertion: A registered self-rooted AGENT with a non-empty allowed_hosts is hosted according to that
+    list alone; the hosting DAEMON's hosts_held_agents grant applies only when the list is empty, and
+    an unregistered agent needs the grant.
+  evidence:
+  - src/verify.rs
+  - src/registry.rs
+- id: keyfile-split-layout-root-outside-device-dir
+  assertion: With IdentityLayout::split, root.jwk.json lives in root_dir and every other identity file
+    lives in device_dir, and the two directories may not be equal or nested.
+  evidence:
+  - identity-keyfile/src/layout.rs
+  - identity-keyfile/tests/split.rs
 - id: testkit-feature-off-by-default
   assertion: The testkit Cargo feature is declared empty with no default, and identity_crypto::testkit
     is compiled only under cfg(any(test, feature = "testkit")).

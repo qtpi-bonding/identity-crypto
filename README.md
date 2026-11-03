@@ -8,7 +8,7 @@ Pure: no I/O, no clock, no key storage. Every primitive comes from
 `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
 validation and verification.
 
-The `identity-keyfile/` workspace member (0.8.0) stores a self-rooted principal's keys (an agent's or a daemon's) in a Unix directory, with the history and rotation chain; see its README.
+The `identity-keyfile/` workspace member (0.9.0) stores a self-rooted principal's keys (an agent's or a daemon's) in a Unix directory, with the history and rotation chain; see its README.
 
 ## Helpers (0.5.0)
 
@@ -35,6 +35,40 @@ The `identity-keyfile/` workspace member (0.8.0) stores a self-rooted principal'
   removing a device from the set is the caller's revocation. `issued_at` is
   not tied to the cert window. This function is deleted, not kept, when the
   step-2 `Resolver` verifier lands.
+
+## Messages and ids (0.9.0)
+
+- **`pb::Message`** is the body of an author's `SignedMessage` (`message_id`,
+  `to: [Target]`, `reply_to`, `references`, `mentions`, `authored_at`, `body`).
+  The author is the `SignedMessage` signer, never a field. `pb::Target` is a
+  `RoomId` or a `RecipientId`; `pb::Targets` is one message's list.
+- **`pb::Delivery`** is signed per recipient by the deliverer under
+  `delivery.v1` (`delivery_transcript`). It carries the `SignedMessage`s
+  verbatim, `via[i]` for `messages[i]`, and `signer_device`: the deliverer's
+  root-to-device delegation. A deliverer signs with its device, never its root.
+  `verify_root_device_delegation(d, &principal, at)` checks that delegation
+  against a trusted deliverer's principal id and returns the device key.
+- **`DaemonHosted`** is a third `SignerChain` arm: an agent with its own keys
+  that a daemon holds and runs. The daemon device signs the mode-1 session cert;
+  the agent device co-signs it under `hosted-session.v1`
+  (`hosted_session_transcript`). `mint_hosted_session(HostingDaemon,
+  HostedAgent, subject, not_before, not_after)` builds one and returns a
+  `HostedSessionCredential` whose `sign_message` produces the `SignedMessage`.
+- **`hosts_held_agents`** on a DAEMON `RegistryEntry` lets that daemon host any
+  agent whose device key it holds. Precedence: an agent with a non-empty
+  `allowed_hosts` is governed by that list alone and the daemon's grant is
+  ignored; an agent that names no host needs the grant. `verify_chain` accepts
+  `DaemonHosted` only from a DAEMON entry.
+- **`verify_carried_message(msg, audience)`** checks a message's chain for
+  integrity with no registry and no clock and returns a `CarriedMessage`. It
+  proves authorship only after the enclosing `Delivery` has been verified.
+  Never call it on its own: it checks a self-rooted delegation only under its
+  own `signing_root`, so on its own a fabricated chain passes.
+
+A hosted agent with no registry entry cannot be revoked one at a time. Its
+session expiry (at most 31 days through the device delegations) bounds it.
+Revoking the hosting daemon, or removing its `hosts_held_agents` grant, cuts
+all of them off.
 
 ## Request digests (0.4.0)
 

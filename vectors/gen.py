@@ -509,7 +509,10 @@ def cases():
           "messages": [{"message": sm, "signature": "ab" * 64}], "via": [[{"room_id": "design"}]]}
     ok("delivery one message", "delivery", dl)
     ok("delivery room and recipient via, two messages", "delivery", with_(
-        dl, messages=[{"message": sm, "signature": "ab" * 64}, {"message": with_(sm, chain="host_vouched", session=CERT1), "signature": "cd" * 64}],
+        dl, messages=[
+            {"message": sm, "signature": "ab" * 64},
+            {"message": with_(sm, chain="host_vouched", session=CERT1), "signature": "cd" * 64},
+        ],
         via=[[{"room_id": "design"}, {"recipient_id": "p256:" + raw_pub(8).hex()}], [{"room_id": "ünï"}]]))
     ok("delivery empty messages", "delivery", with_(dl, messages=[], via=[]))
     ok("delivery max sequence and min seconds", "delivery", with_(
