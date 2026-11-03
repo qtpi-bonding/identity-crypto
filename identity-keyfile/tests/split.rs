@@ -1,11 +1,11 @@
 //! The split layout: the root key in one folder, everything else in the device
 //! folder an agent may be shown.
 
-use identity_crypto::signing_public;
+use identity_crypto::{principal_id, signing_public};
 use identity_keyfile::*;
 use std::collections::BTreeSet;
 use std::fs;
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -69,7 +69,13 @@ fn split_refuses_relative_paths_and_root_inside_device_dir() {
             ))
         ));
     }
-    assert!(IdentityLayout::split(&s.root, &s.root.join("dev")).is_ok());
+    assert!(matches!(
+        IdentityLayout::split(&s.root, &s.root.join("dev")),
+        Err(KeyfileError::InvalidLayout(
+            "device_dir must not be inside root_dir"
+        ))
+    ));
+    assert!(IdentityLayout::split(&s.root, &s.dev).is_ok());
 }
 
 #[test]
@@ -81,10 +87,7 @@ fn split_init_keeps_the_root_out_of_the_device_dir() {
     assert!(!names(&s.dev).contains("root.jwk.json"));
     let device = DeviceKeys::load(&s.dev).unwrap();
     assert_eq!(device.principal_id, keys.principal_id);
-    assert_eq!(
-        signing_public(&device.device),
-        signing_public(&keys.device)
-    );
+    assert_eq!(signing_public(&device.device), signing_public(&keys.device));
     assert_eq!(read_principal(&s.dev).unwrap(), Some(keys.principal_id));
 }
 
@@ -95,6 +98,57 @@ fn split_init_refuses_when_either_folder_holds_identity_files() {
     assert!(matches!(
         IdentityKeys::init_at(&s.layout, NOW, TTL),
         Err(KeyfileError::AlreadyInitialised(_))
+    ));
+    // A root-only leftover.
+    fs::remove_dir_all(&s.dev).unwrap();
+    assert!(matches!(
+        IdentityKeys::init_at(&s.layout, NOW, TTL),
+        Err(KeyfileError::AlreadyInitialised(p)) if p == s.root
+    ));
+    // A device-only leftover.
+    fs::remove_file(s.root.join("root.jwk.json")).unwrap();
+    fs::write(s.dev.join("agent_id"), b"x").unwrap();
+    assert!(matches!(
+        IdentityKeys::init_at(&s.layout, NOW, TTL),
+        Err(KeyfileError::AlreadyInitialised(p)) if p == s.dev
+    ));
+}
+
+#[test]
+fn split_resolves_dot_components_and_symlink_aliases() {
+    let s = split();
+    fs::create_dir(&s.dev).unwrap();
+    let dotted = s.dev.parent().unwrap().join("x").join("..").join("dev");
+    assert!(matches!(
+        IdentityLayout::split(&s.root, &dotted),
+        Err(KeyfileError::InvalidLayout(_))
+    ));
+    let alias = s.dev.parent().unwrap().join("alias");
+    symlink(&s.dev, &alias).unwrap();
+    // root inside the device folder, reached through the alias.
+    assert!(matches!(
+        IdentityLayout::split(&alias.join("r"), &s.dev),
+        Err(KeyfileError::InvalidLayout(
+            "root_dir must not be device_dir or inside it"
+        ))
+    ));
+    // The same folder under two names.
+    assert!(matches!(
+        IdentityLayout::split(&alias, &s.dev),
+        Err(KeyfileError::InvalidLayout(
+            "root_dir must not be device_dir or inside it"
+        ))
+    ));
+    // The device folder inside the root folder, through an alias.
+    let outer = s.dev.parent().unwrap().join("outer");
+    fs::create_dir(&outer).unwrap();
+    let outer_alias = s.dev.parent().unwrap().join("outer_alias");
+    symlink(&outer, &outer_alias).unwrap();
+    assert!(matches!(
+        IdentityLayout::split(&outer, &outer_alias.join("dev")),
+        Err(KeyfileError::InvalidLayout(
+            "device_dir must not be inside root_dir"
+        ))
     ));
 }
 
@@ -138,17 +192,31 @@ fn split_rotate_root_then_renew() {
 }
 
 #[test]
-fn split_create_or_load_is_idempotent_and_recovers_an_uncommitted_attempt() {
+fn split_create_or_load_is_idempotent_and_recommits_an_uncommitted_attempt() {
     let s = split();
     let first = IdentityKeys::create_or_load_at(&s.layout, NOW, TTL).unwrap();
     let again = IdentityKeys::create_or_load_at(&s.layout, NOW, TTL).unwrap();
     assert_eq!(first.principal_id, again.principal_id);
     fs::remove_file(s.dev.join("agent_id")).unwrap();
     let second = IdentityKeys::create_or_load_at(&s.layout, NOW, TTL).unwrap();
-    assert_ne!(second.principal_id, first.principal_id);
+    assert_eq!(second.principal_id, first.principal_id);
     let loaded = IdentityKeys::load_verified_at(&s.layout).unwrap();
-    assert_eq!(loaded.principal_id, second.principal_id);
-    assert_eq!(signing_public(&loaded.root), signing_public(&second.root));
+    assert_eq!(signing_public(&loaded.root), signing_public(&first.root));
+}
+
+#[test]
+fn split_create_or_load_keeps_an_orphan_root_as_the_genesis() {
+    let s = split();
+    fs::create_dir(&s.root).unwrap();
+    fs::set_permissions(&s.root, fs::Permissions::from_mode(0o700)).unwrap();
+    let root = generate();
+    let expected = principal_id(&root);
+    write_duo(&s.root, ROOT_FILE, &root).unwrap();
+    let keys = IdentityKeys::create_or_load_at(&s.layout, NOW, TTL).unwrap();
+    assert_eq!(keys.principal_id, expected);
+    assert_eq!(signing_public(&keys.root), signing_public(&root));
+    let loaded = IdentityKeys::load_verified_at(&s.layout).unwrap();
+    assert_eq!(loaded.principal_id, expected);
 }
 
 #[test]

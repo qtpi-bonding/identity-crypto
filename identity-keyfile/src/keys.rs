@@ -250,7 +250,12 @@ impl IdentityKeys {
     /// `[now, now + ttl_seconds]`, an empty history and an empty rotation chain.
     /// Nothing is written.
     fn generate_new(now: i64, ttl_seconds: i64) -> Result<Self, KeyfileError> {
-        let root = generate();
+        Self::generate_under(generate(), now, ttl_seconds)
+    }
+
+    /// [`IdentityKeys::generate_new`] under the given `root`, which becomes the
+    /// genesis: the principal id is derived from it.
+    fn generate_under(root: KeyDuo, now: i64, ttl_seconds: i64) -> Result<Self, KeyfileError> {
         let device = generate();
         let principal_id = principal_id(&root);
         let delegation = delegate_device(
@@ -274,6 +279,11 @@ impl IdentityKeys {
     /// The caller holds the exclusive locks.
     fn write_all(&self, layout: &IdentityLayout) -> Result<(), KeyfileError> {
         write_duo(layout.dir_of(ROOT_FILE), ROOT_FILE, &self.root)?;
+        self.write_device_files(layout)
+    }
+
+    /// Writes every file except the root into `device_dir`, `agent_id` last.
+    fn write_device_files(&self, layout: &IdentityLayout) -> Result<(), KeyfileError> {
         let dir = layout.device_dir();
         write_duo(dir, DEVICE_FILE, &self.device)?;
         write_delegation(dir, &self.delegation)?;
@@ -466,9 +476,11 @@ impl IdentityKeys {
     /// [`IdentityKeys::create_or_load`] for a layout. A single layout builds the
     /// identity in a temporary folder and renames it into place. A split layout
     /// cannot rename across two folders: under both exclusive locks it loads the
-    /// identity when `agent_id` exists, and otherwise writes every file, `agent_id`
-    /// last, over any partial files a crashed earlier attempt left (without
-    /// `agent_id` nothing was committed or registered).
+    /// identity when `agent_id` exists. Otherwise it writes the device files,
+    /// `agent_id` last, over any partial ones a crashed attempt left (without
+    /// `agent_id` nothing was committed or registered). An existing
+    /// `root.jwk.json` is never overwritten: it becomes the genesis of the new
+    /// identity, so a wiped device folder cannot destroy a live root.
     pub fn create_or_load_at(
         layout: &IdentityLayout,
         now: i64,
@@ -482,6 +494,16 @@ impl IdentityKeys {
             let _locks = files::lock_layout_exclusive(layout)?;
             if exists(&layout.device_dir().join(AGENT_ID_FILE)) {
                 return Self::load_verified_locked(layout);
+            }
+            let root_path = layout.root_dir().join(ROOT_FILE);
+            if exists(&root_path) {
+                let keys = Self::generate_under(
+                    read_duo(layout.root_dir(), ROOT_FILE)?,
+                    now,
+                    ttl_seconds,
+                )?;
+                keys.write_device_files(layout)?;
+                return Ok(keys);
             }
             let keys = Self::generate_new(now, ttl_seconds)?;
             keys.write_all(layout)?;
@@ -631,8 +653,8 @@ impl IdentityKeys {
                 .map(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0)
                 .unwrap_or(false)
         };
-        private_dir(layout.root_dir())
-            && private_dir(layout.device_dir())
+        private_dir(layout.device_dir())
+            && (!layout.is_split() || private_dir(layout.root_dir()))
             && exists(&layout.device_dir().join(AGENT_ID_FILE))
             && exists(&layout.root_dir().join(ROOT_FILE))
     }

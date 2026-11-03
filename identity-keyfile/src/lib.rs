@@ -12,8 +12,8 @@ pub use files::{
     write_duo, write_history, write_principal_id, write_rotations, AGENT_ID_FILE, DELEGATION_FILE,
     DEVICE_FILE, HISTORY_FILE, LOCK_FILE, ROOT_FILE, ROTATIONS_FILE,
 };
-pub use layout::IdentityLayout;
 pub use keys::{device_keys_at, read_principal, DeviceKeys, DevicePublic, IdentityKeys};
+pub use layout::IdentityLayout;
 
 #[cfg(feature = "testkit")]
 pub mod testkit;
