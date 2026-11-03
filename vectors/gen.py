@@ -35,6 +35,8 @@ TAGS = {
     "peer_revocation": "identitycrypto.peer-revocation.v1",
     "request_digest": "identitycrypto.request-digest.v1",
     "client_request_digest": "identitycrypto.client-request-digest.v1",
+    "hosted_session": "identitycrypto.hosted-session.v1",
+    "delivery": "identitycrypto.delivery.v1",
 }
 
 
@@ -295,10 +297,49 @@ def client_request_digest(i):
     return out + text(i["request_id"]) + target
 
 
+def hosted_session(i):
+    if int(i["mode"]) != 1:
+        raise VectorError("InvalidField", "mode")
+    return tag("hosted_session") + cert_body(i)
+
+
+def delivery(i):
+    sd = i["signer_device"]
+    if sd is None:
+        raise VectorError("MissingField", "signer_device")
+    principal = key(sd["principal_genesis"], "signer_device.principal_genesis")
+    device = key(sd["delegated"], "signer_device.delegated")
+    non_empty("delivery_id", i["delivery_id"].encode())
+    non_empty("recipient_id", i["recipient_id"].encode())
+    devices = [key(k, "recipient_devices") for k in i["recipient_devices"]]
+    at = i["attested_at"]
+    if at is None:
+        raise VectorError("MissingField", "attested_at")
+    if not 0 <= int(at["nanos"]) <= 999_999_999:
+        raise VectorError("InvalidField", "attested_at.nanos")
+    if len(i["via"]) != len(i["messages"]):
+        raise VectorError("InvalidField", "via")
+    out = tag("delivery") + principal + device + text(i["delivery_id"]) + text(i["recipient_id"])
+    out += u32(len(devices)) + b"".join(devices)
+    out += u64(i["sequence"]) + i64(at["seconds"]) + i32(at["nanos"]) + u32(len(i["messages"]))
+    for entry, via in zip(i["messages"], i["via"]):
+        out += var(signed_message(entry["message"])) + var(bytes.fromhex(entry["signature"])) + u32(len(via))
+        for target in via:
+            if "room_id" in target:
+                kind, value = 1, target["room_id"]
+            elif "recipient_id" in target:
+                kind, value = 2, target["recipient_id"]
+            else:
+                raise VectorError("MissingField", "via.target")
+            non_empty("via.target", value.encode())
+            out += bytes([kind]) + text(value)
+    return out
+
+
 FUNCTIONS = {f.__name__: f for f in [
     key_challenge, principal_rename, key_delegation, key_revocation, root_rotation, session_delegation,
     signed_message, signed_document, approval, peer_revocation, request_digest,
-    client_request_digest,
+    client_request_digest, hosted_session, delivery,
 ]}
 
 # ---- cases ----
@@ -450,6 +491,39 @@ def cases():
        with_(crd, resource={"kind": "instance", "id": ""}))
     ok("client_request_digest empty message kind", "client_request_digest", with_(crd, message_kind=""))
     ok("client_request_digest empty request id", "client_request_digest", with_(crd, request_id=""))
+
+    hs = CERT1
+    ok("hosted_session", "hosted_session", hs)
+    ok("hosted_session non-ascii subject", "hosted_session", with_(hs, subject="sübject/ñ"))
+    ok("hosted_session mode 0", "hosted_session", cert())
+    ok("hosted_session without subject", "hosted_session", with_(hs, subject=None))
+    ok("hosted_session session is device", "hosted_session", with_(hs, session=K(8)))
+
+    ok("signed_message daemon-hosted", "signed_message", with_(sm, chain="daemon_hosted", session=CERT1))
+    ok("signed_message daemon-hosted missing session", "signed_message",
+       with_(sm, chain="daemon_hosted", session=None))
+
+    dl = {"signer_device": {"principal_genesis": K(20), "delegated": K(21)}, "delivery_id": "d-1",
+          "recipient_id": "p256:" + raw_pub(7).hex(), "recipient_devices": [K(15), K(16)], "sequence": "7",
+          "attested_at": {"seconds": "1700000000", "nanos": "123456789"},
+          "messages": [{"message": sm, "signature": "ab" * 64}], "via": [[{"room_id": "design"}]]}
+    ok("delivery one message", "delivery", dl)
+    ok("delivery room and recipient via, two messages", "delivery", with_(
+        dl, messages=[{"message": sm, "signature": "ab" * 64}, {"message": with_(sm, chain="host_vouched", session=CERT1), "signature": "cd" * 64}],
+        via=[[{"room_id": "design"}, {"recipient_id": "p256:" + raw_pub(8).hex()}], [{"room_id": "ünï"}]]))
+    ok("delivery empty messages", "delivery", with_(dl, messages=[], via=[]))
+    ok("delivery max sequence and min seconds", "delivery", with_(
+        dl, sequence=str(U64_MAX), attested_at={"seconds": str(I64_MIN), "nanos": "999999999"}))
+    ok("delivery no timestamp", "delivery", with_(dl, attested_at=None))
+    ok("delivery nanos too big", "delivery", with_(dl, attested_at={"seconds": "1", "nanos": "1000000000"}))
+    ok("delivery empty delivery id", "delivery", with_(dl, delivery_id=""))
+    ok("delivery empty recipient id", "delivery", with_(dl, recipient_id=""))
+    ok("delivery via count differs", "delivery", with_(dl, via=[]))
+    ok("delivery target unset", "delivery", with_(dl, via=[[{}]]))
+    ok("delivery off-curve recipient device", "delivery", with_(dl, recipient_devices=[OFF_CURVE]))
+    ok("delivery message missing session", "delivery", with_(
+        dl, messages=[{"message": with_(sm, session=None), "signature": "ab" * 64}]))
+    ok("delivery signer device missing", "delivery", with_(dl, signer_device=None))
     return c
 
 
@@ -569,6 +643,7 @@ def message_nonces():
 
 
 DEVICE_SCALAR, SESSION_SCALAR = 31, 32
+DAEMON_DEVICE_SCALAR, AGENT_GENESIS_SCALAR, DAEMON_GENESIS_SCALAR, AGENT_DEVICE_SCALAR = 33, 34, 35, 36
 
 
 def sign_r_s(scalar, message):
@@ -599,11 +674,33 @@ def messages():
             "signature_hex": sign_r_s(SESSION_SCALAR, transcript).hex(),
         }
 
+    def hosted_case():
+        # The daemon device signs the mode-1 cert; the agent device signs hosted-session.v1 over the same body.
+        hosted_cert = cert(mode=1, principal=AGENT_GENESIS_SCALAR, device=DAEMON_DEVICE_SCALAR,
+                           session=SESSION_SCALAR, host=DAEMON_GENESIS_SCALAR, subject="3b6a27bcceb6a42d/i5",
+                           not_before=not_before, not_after=not_after)
+        hosted_cert["signature"] = sign_r_s(DAEMON_DEVICE_SCALAR, session_delegation(hosted_cert)).hex()
+        hosted = hosted_session(hosted_cert)
+        msg_in = {"chain": "daemon_hosted", "session": hosted_cert,
+                  "audience": "structmux-fleet:3b6a27bcceb6a42d", "nonce": message_nonce("m3").hex(),
+                  "issued_at": "1700000060", "in_reply_to_nonce": None,
+                  "body_type": "type.googleapis.com/structmux.v1.FleetRequest", "body": "0a0b0c"}
+        transcript = signed_message(msg_in)
+        return {
+            "name": "daemon-hosted message", "device_key": K(DAEMON_DEVICE_SCALAR), "session_key_hex": session_key,
+            "cert": hosted_cert, "cert_transcript_hex": session_delegation(hosted_cert).hex(),
+            "message": msg_in, "transcript_hex": transcript.hex(),
+            "signature_hex": sign_r_s(SESSION_SCALAR, transcript).hex(),
+            "agent_device_key": K(AGENT_DEVICE_SCALAR), "hosted_transcript_hex": hosted.hex(),
+            "agent_signature_hex": sign_r_s(AGENT_DEVICE_SCALAR, hosted).hex(),
+        }
+
     return {"cases": [
         case("self-rooted message with reply", "1e" * 16, "0a0b0c", "type.googleapis.com/structmux.v1.FleetRequest",
              "structmux-fleet:3b6a27bcceb6a42d", "m1"),
         case("self-rooted message without reply, empty body", None, "", "type.googleapis.com/structmux.v1.FleetRequest",
              "structmux-fleet:3b6a27bcceb6a42d", ""),
+        hosted_case(),
     ]}
 
 

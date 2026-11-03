@@ -281,3 +281,87 @@ fn no_concatenation_ambiguity() {
         principal_rename_transcript(b"a", &p, "bc").unwrap()
     );
 }
+
+#[test]
+fn hosted_session_binds_every_field() {
+    assert_binds(
+        "hosted_session",
+        cert(1),
+        hosted_session_transcript,
+        vec![
+            ("principal_genesis", Box::new(|c| c.principal_genesis = pk())),
+            ("host_genesis", Box::new(|c| c.host_genesis = pk())),
+            ("subject", Box::new(|c| c.subject.as_mut().unwrap().push('x'))),
+            ("device", Box::new(|c| c.device = pk())),
+            ("session", Box::new(|c| c.session = pk())),
+            ("not_before", Box::new(|c| c.not_before_unix_seconds += 1)),
+            ("not_after", Box::new(|c| c.not_after_unix_seconds += 1)),
+        ],
+    );
+}
+
+fn signed(body: u8) -> pb::SignedMessage {
+    pb::SignedMessage {
+        signer: Some(pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session: Some(cert(0)) })),
+        }),
+        audience: "a".into(), nonce: vec![1; 16], issued_at_unix_seconds: 1, in_reply_to_nonce: None,
+        body_type: "t".into(), body: vec![body], signature: vec![9; 64],
+    }
+}
+
+fn room(s: &str) -> pb::Target {
+    pb::Target { target: Some(pb::target::Target::RoomId(s.into())) }
+}
+fn recipient(s: &str) -> pb::Target {
+    pb::Target { target: Some(pb::target::Target::RecipientId(s.into())) }
+}
+
+fn delivery() -> pb::Delivery {
+    pb::Delivery {
+        delivery_id: "d-1".into(), recipient_id: "p256:aa".into(), recipient_devices: vec![pb::PublicKey::from(&k())],
+        sequence: 7, attested_at: Some(identity_crypto::Timestamp { seconds: 100, nanos: 5 }),
+        messages: vec![signed(1)], via: vec![pb::Targets { targets: vec![room("design")] }],
+        signer_device: Some(pb::KeyDelegation {
+            principal_genesis: pk(), delegated: pk(), ..Default::default()
+        }),
+        signature: vec![],
+    }
+}
+
+#[test]
+fn delivery_binds_every_field() {
+    assert_binds(
+        "delivery",
+        delivery(),
+        delivery_transcript,
+        vec![
+            ("signer_device.principal_genesis", Box::new(|d| d.signer_device.as_mut().unwrap().principal_genesis = pk())),
+            ("signer_device.delegated", Box::new(|d| d.signer_device.as_mut().unwrap().delegated = pk())),
+            ("delivery_id", Box::new(|d| d.delivery_id.push('x'))),
+            ("recipient_id", Box::new(|d| d.recipient_id.push('x'))),
+            ("recipient_devices", Box::new(|d| d.recipient_devices.push(pb::PublicKey::from(&k())))),
+            ("sequence", Box::new(|d| d.sequence += 1)),
+            ("attested_at.seconds", Box::new(|d| d.attested_at.as_mut().unwrap().seconds += 1)),
+            ("attested_at.nanos", Box::new(|d| d.attested_at.as_mut().unwrap().nanos += 1)),
+            ("messages[0].body", Box::new(|d| d.messages[0].body.push(2))),
+            ("messages[0].signature", Box::new(|d| d.messages[0].signature[0] ^= 1)),
+            ("via[0] room to recipient", Box::new(|d| d.via[0].targets[0] = recipient("design"))),
+            ("via[0] push", Box::new(|d| d.via[0].targets.push(room("other")))),
+        ],
+    );
+}
+
+#[test]
+fn delivery_entry_boundaries_do_not_collide() {
+    let at = |first: &str, second: &str| {
+        let mut d = delivery();
+        d.messages = vec![signed(1), signed(2)];
+        d.via = vec![
+            pb::Targets { targets: vec![room(first)] },
+            pb::Targets { targets: vec![room(second)] },
+        ];
+        delivery_transcript(&d).unwrap()
+    };
+    assert_ne!(at("ab", "c"), at("a", "bc"));
+}

@@ -34,7 +34,7 @@ facts:
   - vectors/principals.json
   - tests/vectors.rs
 - id: transcripts-tagged-and-validated
-  assertion: src/transcripts.rs defines 13 `*_transcript` functions, each starting with its own NUL-terminated
+  assertion: src/transcripts.rs defines 14 `*_transcript` functions, each starting with its own NUL-terminated
     `identitycrypto.*.v1` tag, and each returns Err instead of bytes when a required field is missing
     or invalid.
   evidence:
@@ -56,7 +56,7 @@ facts:
   - src/keys.rs
 - id: vectors-cross-language-checked
   assertion: tests/vectors.rs checks the crate against six JSON files written by the independent Python
-    generator vectors/gen.py, asserting 100 transcript cases, 5 thumbprints, 5 message nonces and 2 signed
+    generator vectors/gen.py, asserting 107 transcript cases, 5 thumbprints, 5 message nonces and 3 signed
     messages, plus principal ids and signatures in both S forms.
   evidence:
   - tests/vectors.rs

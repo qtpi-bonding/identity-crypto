@@ -2208,6 +2208,1170 @@
         }
       },
       "name": "client_request_digest empty request id"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e686f737465642d73657373696f6e2e763100010300000041048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b401030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af07730100000013336236613237626363656236613432642f693503000000410462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e030000004104ea68d7b6fedf0b71878938d51d71f8729e0acb8c2c6df8b3d79e8a4b90949ee02a2744c972c9fce787014a964a8ea0c84d714feaa4de823fe85a224a4dd048fa000000006553f100000000006553ff10",
+      "function": "hosted_session",
+      "input": {
+        "device": {
+          "key": "0462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e",
+          "scheme": "3"
+        },
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "mode": "1",
+        "not_after": "1700003600",
+        "not_before": "1700000000",
+        "principal_genesis": {
+          "key": "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+          "scheme": "3"
+        },
+        "session": {
+          "key": "04ea68d7b6fedf0b71878938d51d71f8729e0acb8c2c6df8b3d79e8a4b90949ee02a2744c972c9fce787014a964a8ea0c84d714feaa4de823fe85a224a4dd048fa",
+          "scheme": "3"
+        },
+        "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+        "subject": "3b6a27bcceb6a42d/i5"
+      },
+      "name": "hosted_session"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e686f737465642d73657373696f6e2e763100010300000041048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b401030000004104cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773010000000b73c3bc626a6563742fc3b103000000410462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e030000004104ea68d7b6fedf0b71878938d51d71f8729e0acb8c2c6df8b3d79e8a4b90949ee02a2744c972c9fce787014a964a8ea0c84d714feaa4de823fe85a224a4dd048fa000000006553f100000000006553ff10",
+      "function": "hosted_session",
+      "input": {
+        "device": {
+          "key": "0462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e",
+          "scheme": "3"
+        },
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "mode": "1",
+        "not_after": "1700003600",
+        "not_before": "1700000000",
+        "principal_genesis": {
+          "key": "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+          "scheme": "3"
+        },
+        "session": {
+          "key": "04ea68d7b6fedf0b71878938d51d71f8729e0acb8c2c6df8b3d79e8a4b90949ee02a2744c972c9fce787014a964a8ea0c84d714feaa4de823fe85a224a4dd048fa",
+          "scheme": "3"
+        },
+        "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+        "subject": "sübject/ñ"
+      },
+      "name": "hosted_session non-ascii subject"
+    },
+    {
+      "error": {
+        "field": "mode",
+        "variant": "InvalidField"
+      },
+      "function": "hosted_session",
+      "input": {
+        "device": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "host_genesis": null,
+        "mode": "0",
+        "not_after": "1700003600",
+        "not_before": "1700000000",
+        "principal_genesis": {
+          "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+          "scheme": "3"
+        },
+        "session": {
+          "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+          "scheme": "3"
+        },
+        "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+        "subject": null
+      },
+      "name": "hosted_session mode 0"
+    },
+    {
+      "error": {
+        "field": "subject",
+        "variant": "MissingField"
+      },
+      "function": "hosted_session",
+      "input": {
+        "device": {
+          "key": "0462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e",
+          "scheme": "3"
+        },
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "mode": "1",
+        "not_after": "1700003600",
+        "not_before": "1700000000",
+        "principal_genesis": {
+          "key": "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+          "scheme": "3"
+        },
+        "session": {
+          "key": "04ea68d7b6fedf0b71878938d51d71f8729e0acb8c2c6df8b3d79e8a4b90949ee02a2744c972c9fce787014a964a8ea0c84d714feaa4de823fe85a224a4dd048fa",
+          "scheme": "3"
+        },
+        "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+        "subject": null
+      },
+      "name": "hosted_session without subject"
+    },
+    {
+      "error": {
+        "field": "device, session",
+        "variant": "NotDistinct"
+      },
+      "function": "hosted_session",
+      "input": {
+        "device": {
+          "key": "0462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e",
+          "scheme": "3"
+        },
+        "host_genesis": {
+          "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+          "scheme": "3"
+        },
+        "mode": "1",
+        "not_after": "1700003600",
+        "not_before": "1700000000",
+        "principal_genesis": {
+          "key": "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+          "scheme": "3"
+        },
+        "session": {
+          "key": "0462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e",
+          "scheme": "3"
+        },
+        "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+        "subject": "3b6a27bcceb6a42d/i5"
+      },
+      "name": "hosted_session session is device"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e7369676e65642d6d6573736167652e7631000300000041048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4030000004104ea68d7b6fedf0b71878938d51d71f8729e0acb8c2c6df8b3d79e8a4b90949ee02a2744c972c9fce787014a964a8ea0c84d714feaa4de823fe85a224a4dd048fa000000207374727563746d75782d666c6565743a336236613237626363656236613432640f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f000000006553f100000000002d747970652e676f6f676c65617069732e636f6d2f7374727563746d75782e76312e466c65657452657175657374000000030a0b0c",
+      "function": "signed_message",
+      "input": {
+        "audience": "structmux-fleet:3b6a27bcceb6a42d",
+        "body": "0a0b0c",
+        "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+        "chain": "daemon_hosted",
+        "in_reply_to_nonce": null,
+        "issued_at": "1700000000",
+        "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "session": {
+          "device": {
+            "key": "0462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e",
+            "scheme": "3"
+          },
+          "host_genesis": {
+            "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+            "scheme": "3"
+          },
+          "mode": "1",
+          "not_after": "1700003600",
+          "not_before": "1700000000",
+          "principal_genesis": {
+            "key": "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+            "scheme": "3"
+          },
+          "session": {
+            "key": "04ea68d7b6fedf0b71878938d51d71f8729e0acb8c2c6df8b3d79e8a4b90949ee02a2744c972c9fce787014a964a8ea0c84d714feaa4de823fe85a224a4dd048fa",
+            "scheme": "3"
+          },
+          "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+          "subject": "3b6a27bcceb6a42d/i5"
+        }
+      },
+      "name": "signed_message daemon-hosted"
+    },
+    {
+      "error": {
+        "field": "signer.daemon_hosted.session",
+        "variant": "MissingField"
+      },
+      "function": "signed_message",
+      "input": {
+        "audience": "structmux-fleet:3b6a27bcceb6a42d",
+        "body": "0a0b0c",
+        "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+        "chain": "daemon_hosted",
+        "in_reply_to_nonce": null,
+        "issued_at": "1700000000",
+        "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+        "session": null
+      },
+      "name": "signed_message daemon-hosted missing session"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e64656c69766572792e76310003000000410483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b80300000041043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c0900000003642d3100000087703235363a3034386535333362366661306266376234363235626233303636376330316662363037656639663862386138306665663562333030363238373033313837623261333733656231646264653033333138333636643036396638336136663539303030353363373336333363623034316232316335356531613836633166343030623400000002030000004104f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f3603000000410476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c51100000000000000007000000006553f100075bcd1500000001000001226964656e7469747963727970746f2e7369676e65642d6d6573736167652e7631000300000041046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f50300000041047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1000000207374727563746d75782d666c6565743a336236613237626363656236613432640f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f000000006553f100000000002d747970652e676f6f676c65617069732e636f6d2f7374727563746d75782e76312e466c65657452657175657374000000030a0b0c00000040abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab00000001010000000664657369676e",
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {
+              "room_id": "design"
+            }
+          ]
+        ]
+      },
+      "name": "delivery one message"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e64656c69766572792e76310003000000410483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b80300000041043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c0900000003642d3100000087703235363a3034386535333362366661306266376234363235626233303636376330316662363037656639663862386138306665663562333030363238373033313837623261333733656231646264653033333138333636643036396638336136663539303030353363373336333363623034316232316335356531613836633166343030623400000002030000004104f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f3603000000410476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c51100000000000000007000000006553f100075bcd1500000002000001226964656e7469747963727970746f2e7369676e65642d6d6573736167652e7631000300000041046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f50300000041047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1000000207374727563746d75782d666c6565743a336236613237626363656236613432640f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f000000006553f100000000002d747970652e676f6f676c65617069732e636f6d2f7374727563746d75782e76312e466c65657452657175657374000000030a0b0c00000040abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab00000002010000000664657369676e0200000087703235363a30343632643937373964626565396230353334303432373432643361623534636164633164323338393830666365393764626234646439646331646236666233393361643561636362643931653964383234346666313564373731313637636565306132656435316636626265373661373864613534306136613066303939353765000001226964656e7469747963727970746f2e7369676e65642d6d6573736167652e7631000300000041048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4030000004104ea68d7b6fedf0b71878938d51d71f8729e0acb8c2c6df8b3d79e8a4b90949ee02a2744c972c9fce787014a964a8ea0c84d714feaa4de823fe85a224a4dd048fa000000207374727563746d75782d666c6565743a336236613237626363656236613432640f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f000000006553f100000000002d747970652e676f6f676c65617069732e636f6d2f7374727563746d75782e76312e466c65657452657175657374000000030a0b0c00000040cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd000000010100000005c3bc6ec3af",
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          },
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "host_vouched",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "0462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e",
+                  "scheme": "3"
+                },
+                "host_genesis": {
+                  "key": "04cef66d6b2a3a993e591214d1ea223fb545ca6c471c48306e4c36069404c5723f878662a229aaae906e123cdd9d3b4c10590ded29fe751eeeca34bbaa44af0773",
+                  "scheme": "3"
+                },
+                "mode": "1",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "04ea68d7b6fedf0b71878938d51d71f8729e0acb8c2c6df8b3d79e8a4b90949ee02a2744c972c9fce787014a964a8ea0c84d714feaa4de823fe85a224a4dd048fa",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": "3b6a27bcceb6a42d/i5"
+              }
+            },
+            "signature": "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {
+              "room_id": "design"
+            },
+            {
+              "recipient_id": "p256:0462d9779dbee9b0534042742d3ab54cadc1d238980fce97dbb4dd9dc1db6fb393ad5accbd91e9d8244ff15d771167cee0a2ed51f6bbe76a78da540a6a0f09957e"
+            }
+          ],
+          [
+            {
+              "room_id": "ünï"
+            }
+          ]
+        ]
+      },
+      "name": "delivery room and recipient via, two messages"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e64656c69766572792e76310003000000410483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b80300000041043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c0900000003642d3100000087703235363a3034386535333362366661306266376234363235626233303636376330316662363037656639663862386138306665663562333030363238373033313837623261333733656231646264653033333138333636643036396638336136663539303030353363373336333363623034316232316335356531613836633166343030623400000002030000004104f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f3603000000410476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c51100000000000000007000000006553f100075bcd1500000000",
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "d-1",
+        "messages": [],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": []
+      },
+      "name": "delivery empty messages"
+    },
+    {
+      "expected_hex": "6964656e7469747963727970746f2e64656c69766572792e76310003000000410483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b80300000041043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c0900000003642d3100000087703235363a3034386535333362366661306266376234363235626233303636376330316662363037656639663862386138306665663562333030363238373033313837623261333733656231646264653033333138333636643036396638336136663539303030353363373336333363623034316232316335356531613836633166343030623400000002030000004104f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f3603000000410476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110ffffffffffffffff80000000000000003b9ac9ff00000001000001226964656e7469747963727970746f2e7369676e65642d6d6573736167652e7631000300000041046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f50300000041047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1000000207374727563746d75782d666c6565743a336236613237626363656236613432640f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f000000006553f100000000002d747970652e676f6f676c65617069732e636f6d2f7374727563746d75782e76312e466c65657452657175657374000000030a0b0c00000040abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab00000001010000000664657369676e",
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "999999999",
+          "seconds": "-9223372036854775808"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "18446744073709551615",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {
+              "room_id": "design"
+            }
+          ]
+        ]
+      },
+      "name": "delivery max sequence and min seconds"
+    },
+    {
+      "error": {
+        "field": "attested_at",
+        "variant": "MissingField"
+      },
+      "function": "delivery",
+      "input": {
+        "attested_at": null,
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {
+              "room_id": "design"
+            }
+          ]
+        ]
+      },
+      "name": "delivery no timestamp"
+    },
+    {
+      "error": {
+        "field": "attested_at.nanos",
+        "variant": "InvalidField"
+      },
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "1000000000",
+          "seconds": "1"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {
+              "room_id": "design"
+            }
+          ]
+        ]
+      },
+      "name": "delivery nanos too big"
+    },
+    {
+      "error": {
+        "field": "delivery_id",
+        "variant": "InvalidField"
+      },
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {
+              "room_id": "design"
+            }
+          ]
+        ]
+      },
+      "name": "delivery empty delivery id"
+    },
+    {
+      "error": {
+        "field": "recipient_id",
+        "variant": "InvalidField"
+      },
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {
+              "room_id": "design"
+            }
+          ]
+        ]
+      },
+      "name": "delivery empty recipient id"
+    },
+    {
+      "error": {
+        "field": "via",
+        "variant": "InvalidField"
+      },
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": []
+      },
+      "name": "delivery via count differs"
+    },
+    {
+      "error": {
+        "field": "via.target",
+        "variant": "MissingField"
+      },
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {}
+          ]
+        ]
+      },
+      "name": "delivery target unset"
+    },
+    {
+      "error": {
+        "field": null,
+        "variant": "InvalidKey"
+      },
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "0400000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {
+              "room_id": "design"
+            }
+          ]
+        ]
+      },
+      "name": "delivery off-curve recipient device"
+    },
+    {
+      "error": {
+        "field": "signer.self_rooted.session",
+        "variant": "MissingField"
+      },
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": null
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": {
+          "delegated": {
+            "key": "043250fcf686637c7b2e4ac86eb473bca53a582139f42b1523fd76364e67399e8342e7c342667d359397b3090d1d7eb88c897cd3c33b566a8215de24a071d48c09",
+            "scheme": "3"
+          },
+          "principal_genesis": {
+            "key": "0483a01a9378395bab9bcd6a0ad03cc56d56e6b19250465a94a234dc4c6b28da9a76e49b6de2f73234ae6a5eb9d612b75c9f2202bb6923f54ff8240aaa86f640b8",
+            "scheme": "3"
+          }
+        },
+        "via": [
+          [
+            {
+              "room_id": "design"
+            }
+          ]
+        ]
+      },
+      "name": "delivery message missing session"
+    },
+    {
+      "error": {
+        "field": "signer_device",
+        "variant": "MissingField"
+      },
+      "function": "delivery",
+      "input": {
+        "attested_at": {
+          "nanos": "123456789",
+          "seconds": "1700000000"
+        },
+        "delivery_id": "d-1",
+        "messages": [
+          {
+            "message": {
+              "audience": "structmux-fleet:3b6a27bcceb6a42d",
+              "body": "0a0b0c",
+              "body_type": "type.googleapis.com/structmux.v1.FleetRequest",
+              "chain": "self_rooted",
+              "in_reply_to_nonce": null,
+              "issued_at": "1700000000",
+              "nonce": "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f",
+              "session": {
+                "device": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "host_genesis": null,
+                "mode": "0",
+                "not_after": "1700003600",
+                "not_before": "1700000000",
+                "principal_genesis": {
+                  "key": "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c2964fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5",
+                  "scheme": "3"
+                },
+                "session": {
+                  "key": "047cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc4766997807775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1",
+                  "scheme": "3"
+                },
+                "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab",
+                "subject": null
+              }
+            },
+            "signature": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+          }
+        ],
+        "recipient_devices": [
+          {
+            "key": "04f0454dc6971abae7adfb378999888265ae03af92de3a0ef163668c63e59b9d5fb5b93ee3592e2d1f4e6594e51f9643e62a3b21ce75b5fa3f47e59cde0d034f36",
+            "scheme": "3"
+          },
+          {
+            "key": "0476a94d138a6b41858b821c629836315fcd28392eff6ca038a5eb4787e1277c6ea985fe61341f260e6cb0a1b5e11e87208599a0040fc78baa0e9ddd724b8c5110",
+            "scheme": "3"
+          }
+        ],
+        "recipient_id": "p256:048e533b6fa0bf7b4625bb30667c01fb607ef9f8b8a80fef5b300628703187b2a373eb1dbde03318366d069f83a6f5900053c73633cb041b21c55e1a86c1f400b4",
+        "sequence": "7",
+        "signer_device": null,
+        "via": [
+          [
+            {
+              "room_id": "design"
+            }
+          ]
+        ]
+      },
+      "name": "delivery signer device missing"
     }
   ]
 }

@@ -43,6 +43,33 @@ fn cert(v: &Value) -> Option<pb::DelegationCert> {
     })
 }
 
+fn chain_of(i: &Value, session: Option<pb::DelegationCert>) -> Option<pb::signer_chain::Chain> {
+    match i["chain"].as_str() {
+        None => None,
+        Some("self_rooted") => Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session })),
+        Some("host_vouched") => {
+            Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched { host_device: None, session }))
+        }
+        Some("daemon_hosted") => {
+            Some(pb::signer_chain::Chain::DaemonHosted(pb::DaemonHosted { session, ..Default::default() }))
+        }
+        Some(other) => panic!("unknown chain {other}"),
+    }
+}
+
+fn signed_message(i: &Value, chain: Option<pb::signer_chain::Chain>, signature: Vec<u8>) -> pb::SignedMessage {
+    pb::SignedMessage {
+        signer: Some(pb::SignerChain { chain }),
+        audience: s(&i["audience"]),
+        nonce: bytes(&i["nonce"]),
+        issued_at_unix_seconds: int(&i["issued_at"]),
+        in_reply_to_nonce: (!i["in_reply_to_nonce"].is_null()).then(|| bytes(&i["in_reply_to_nonce"])),
+        body_type: s(&i["body_type"]),
+        body: bytes(&i["body"]),
+        signature,
+    }
+}
+
 fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
     match function {
         "key_challenge" => {
@@ -79,28 +106,56 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
         }),
         "session_delegation" => session_delegation_transcript(&cert(i).unwrap()),
         "signed_message" => {
-            let session = cert(&i["session"]);
-            let chain = match i["chain"].as_str() {
-                None => None,
-                Some("self_rooted") => {
-                    Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session }))
-                }
-                Some("host_vouched") => {
-                    Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched { host_device: None, session }))
-                }
-                Some(other) => panic!("unknown chain {other}"),
-            };
-            signed_message_transcript(&pb::SignedMessage {
-                signer: Some(pb::SignerChain { chain }),
-                audience: s(&i["audience"]),
-                nonce: bytes(&i["nonce"]),
-                issued_at_unix_seconds: int(&i["issued_at"]),
-                in_reply_to_nonce: (!i["in_reply_to_nonce"].is_null()).then(|| bytes(&i["in_reply_to_nonce"])),
-                body_type: s(&i["body_type"]),
-                body: bytes(&i["body"]),
-                signature: vec![],
-            })
+            let chain = chain_of(i, cert(&i["session"]));
+            signed_message_transcript(&signed_message(i, chain, vec![]))
         }
+        "hosted_session" => hosted_session_transcript(&cert(i).unwrap()),
+        "delivery" => delivery_transcript(&pb::Delivery {
+            delivery_id: s(&i["delivery_id"]),
+            recipient_id: s(&i["recipient_id"]),
+            recipient_devices: i["recipient_devices"].as_array().unwrap().iter().map(|k| key(k).unwrap()).collect(),
+            sequence: int(&i["sequence"]),
+            attested_at: (!i["attested_at"].is_null()).then(|| identity_crypto::Timestamp {
+                seconds: int(&i["attested_at"]["seconds"]),
+                nanos: int(&i["attested_at"]["nanos"]),
+            }),
+            messages: i["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|e| {
+                    let m = &e["message"];
+                    signed_message(m, chain_of(m, cert(&m["session"])), bytes(&e["signature"]))
+                })
+                .collect(),
+            via: i["via"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|targets| pb::Targets {
+                    targets: targets
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .map(|t| pb::Target {
+                            target: if !t["room_id"].is_null() {
+                                Some(pb::target::Target::RoomId(s(&t["room_id"])))
+                            } else if !t["recipient_id"].is_null() {
+                                Some(pb::target::Target::RecipientId(s(&t["recipient_id"])))
+                            } else {
+                                None
+                            },
+                        })
+                        .collect(),
+                })
+                .collect(),
+            signer_device: (!i["signer_device"].is_null()).then(|| pb::KeyDelegation {
+                principal_genesis: key(&i["signer_device"]["principal_genesis"]),
+                delegated: key(&i["signer_device"]["delegated"]),
+                ..Default::default()
+            }),
+            signature: vec![],
+        }),
         "signed_document" => signed_document_transcript(&pb::SignedDocument {
             signer_genesis: key(&i["signer_genesis"]),
             signing: key(&i["signing"]),
@@ -197,7 +252,7 @@ fn transcripts_match_the_independent_generator() {
         }
         checked += 1;
     }
-    assert_eq!(checked, 87, "transcripts.json case count changed");
+    assert_eq!(checked, 107, "transcripts.json case count changed");
 }
 
 #[test]
@@ -287,22 +342,20 @@ fn message_vector() {
 
         // The message: the Python transcript and signature, verified by Rust under the session key.
         let m_in = &case["message"];
-        let message = pb::SignedMessage {
-            signer: Some(pb::SignerChain {
-                chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session: Some(cert) })),
-            }),
-            audience: s(&m_in["audience"]),
-            nonce: bytes(&m_in["nonce"]),
-            issued_at_unix_seconds: int(&m_in["issued_at"]),
-            in_reply_to_nonce: (!m_in["in_reply_to_nonce"].is_null()).then(|| bytes(&m_in["in_reply_to_nonce"])),
-            body_type: s(&m_in["body_type"]),
-            body: bytes(&m_in["body"]),
-            signature: bytes(&case["signature_hex"]),
-        };
+        let message = signed_message(m_in, chain_of(m_in, Some(cert.clone())), bytes(&case["signature_hex"]));
         let transcript = signed_message_transcript(&message).unwrap();
         assert_eq!(hex::encode(&transcript), s(&case["transcript_hex"]), "{name}: message");
         verify_p256(&session, &transcript, &message.signature).unwrap_or_else(|e| panic!("{name}: message: {e}"));
+
+        // A daemon-hosted message also carries the agent device's signature over hosted-session.v1.
+        if m_in["chain"] == "daemon_hosted" {
+            let agent_device = PublicKey::try_from(&key(&case["agent_device_key"]).unwrap()).unwrap();
+            let hosted = hosted_session_transcript(&cert).unwrap();
+            assert_eq!(hex::encode(&hosted), s(&case["hosted_transcript_hex"]), "{name}: hosted session");
+            verify_p256(&agent_device, &hosted, &bytes(&case["agent_signature_hex"]))
+                .unwrap_or_else(|e| panic!("{name}: agent signature: {e}"));
+        }
         checked += 1;
     }
-    assert_eq!(checked, 2, "messages.json case count changed");
+    assert_eq!(checked, 3, "messages.json case count changed");
 }

@@ -23,8 +23,10 @@ pub const PEER_REVOCATION_TAG: &str = "identitycrypto.peer-revocation.v1";
 pub const REQUEST_DIGEST_TAG: &str = "identitycrypto.request-digest.v1";
 
 pub const CLIENT_REQUEST_DIGEST_TAG: &str = "identitycrypto.client-request-digest.v1";
+pub const HOSTED_SESSION_TAG: &str = "identitycrypto.hosted-session.v1";
+pub const DELIVERY_TAG: &str = "identitycrypto.delivery.v1";
 
-pub const ALL_TAGS: [&str; 12] = [
+pub const ALL_TAGS: [&str; 14] = [
     KEY_CHALLENGE_TAG,
     PRINCIPAL_RENAME_TAG,
     KEY_DELEGATION_TAG,
@@ -37,6 +39,8 @@ pub const ALL_TAGS: [&str; 12] = [
     PEER_REVOCATION_TAG,
     REQUEST_DIGEST_TAG,
     CLIENT_REQUEST_DIGEST_TAG,
+    HOSTED_SESSION_TAG,
+    DELIVERY_TAG,
 ];
 
 struct Enc(Vec<u8>);
@@ -239,6 +243,68 @@ pub fn signed_message_transcript(m: &pb::SignedMessage) -> Result<Vec<u8>> {
     e.fixed("nonce", &m.nonce, 16)?; e.i64(m.issued_at_unix_seconds);
     match &m.in_reply_to_nonce { Some(n) => { e.present(); e.fixed("in_reply_to_nonce", n, 16)?; }, None => e.absent() }
     e.var(m.body_type.as_bytes())?; e.var(&m.body)?;
+    Ok(e.finish())
+}
+
+/// `hosted-session.v1 := tag ‖ CERT body (as session-delegation.v1, without its tag)`.
+/// The cert must be mode 1; the agent device signs these bytes.
+pub fn hosted_session_transcript(c: &pb::DelegationCert) -> Result<Vec<u8>> {
+    if c.mode != 1 { return Err(Error::InvalidField { field: "mode", reason: "must be 1 for a hosted session" }); }
+    let mut e = Enc::new(HOSTED_SESSION_TAG);
+    encode_cert_body(&mut e, c)?;
+    Ok(e.finish())
+}
+
+/// ```text
+/// delivery.v1 := tag ‖ PRINCIPAL(signer_device.principal_genesis) ‖ KEY(signer_device.delegated)
+///                ‖ len(delivery_id) ‖ len(recipient_id)
+///                ‖ u32 count ‖ KEY(recipient_device)…
+///                ‖ sequence u64 ‖ attested_at.seconds i64 ‖ attested_at.nanos i32
+///                ‖ u32 count ‖ ENTRY…
+/// ENTRY  := len(signed-message.v1 bytes of messages[i]) ‖ len(messages[i].signature) ‖ TARGETS(via[i])
+/// TARGETS:= u32 count ‖ TARGET…
+/// TARGET := kind u8 (1 room_id, 2 recipient_id) ‖ len(value)
+/// ```
+///
+/// The deliverer signs each message's `signed-message.v1` bytes and its signature, not the
+/// signer-chain bytes: that transcript already fixes the author's genesis, session key, audience
+/// and body. The delegation's own signature and window are not transcript concerns.
+pub fn delivery_transcript(d: &pb::Delivery) -> Result<Vec<u8>> {
+    let signer = d.signer_device.as_ref().ok_or(Error::MissingField("signer_device"))?;
+    let principal = req(signer.principal_genesis.as_ref(), "signer_device.principal_genesis")?;
+    let device = req(signer.delegated.as_ref(), "signer_device.delegated")?;
+    non_empty("delivery_id", d.delivery_id.as_bytes())?;
+    non_empty("recipient_id", d.recipient_id.as_bytes())?;
+    let recipient_devices = d.recipient_devices.iter().map(PublicKey::try_from).collect::<Result<Vec<_>>>()?;
+    let at = d.attested_at.as_ref().ok_or(Error::MissingField("attested_at"))?;
+    if !(0..=999_999_999).contains(&at.nanos) {
+        return Err(Error::InvalidField { field: "attested_at.nanos", reason: "out of range" });
+    }
+    if d.via.len() != d.messages.len() {
+        return Err(Error::InvalidField { field: "via", reason: "one entry per message" });
+    }
+    let mut e = Enc::new(DELIVERY_TAG);
+    e.principal(&principal)?; e.key(&device)?;
+    e.var(d.delivery_id.as_bytes())?; e.var(d.recipient_id.as_bytes())?;
+    e.u32("recipient_devices", recipient_devices.len())?;
+    for k in &recipient_devices { e.key(k)?; }
+    e.u64(d.sequence); e.i64(at.seconds); e.i32(at.nanos);
+    e.u32("messages", d.messages.len())?;
+    for (m, via) in d.messages.iter().zip(&d.via) {
+        e.var(&signed_message_transcript(m)?)?;
+        e.var(&m.signature)?;
+        e.u32("via", via.targets.len())?;
+        for t in &via.targets {
+            use pb::target::Target;
+            let (kind, value) = match t.target.as_ref().ok_or(Error::MissingField("via.target"))? {
+                Target::RoomId(v) => (1, v),
+                Target::RecipientId(v) => (2, v),
+            };
+            non_empty("via.target", value.as_bytes())?;
+            e.u8("kind", kind)?;
+            e.var(value.as_bytes())?;
+        }
+    }
     Ok(e.finish())
 }
 
@@ -830,5 +896,97 @@ mod tests {
         let common = a.iter().zip(&c).take_while(|(x, y)| x == y).count();
         assert!(common < REQUEST_DIGEST_TAG.len(), "the transcripts diverge inside the tag");
         assert_eq!(Sha256::digest(&c).as_slice(), client_request_digest(&client).unwrap().as_slice());
+    }
+
+    #[test]
+    fn hosted_session_layout() {
+        let c = cert1();
+        let mut want = b"identitycrypto.hosted-session.v1\0".to_vec();
+        want.extend_from_slice(&session_delegation_transcript(&c).unwrap()[SESSION_DELEGATION_TAG.len() + 1..]);
+        assert_eq!(hosted_session_transcript(&c).unwrap(), want);
+    }
+
+    #[test]
+    fn hosted_session_requires_mode_1() {
+        assert_eq!(
+            hosted_session_transcript(&cert0()),
+            Err(Error::InvalidField { field: "mode", reason: "must be 1 for a hosted session" })
+        );
+    }
+
+    fn target(t: pb::target::Target) -> pb::Target { pb::Target { target: Some(t) } }
+
+    fn delivery_base() -> pb::Delivery {
+        pb::Delivery {
+            delivery_id: "d".into(), recipient_id: "r".into(), recipient_devices: vec![], sequence: 1,
+            attested_at: Some(crate::Timestamp { seconds: 2, nanos: 3 }), messages: vec![], via: vec![],
+            signer_device: Some(delegation(pb::KeyPurpose::Device)), signature: vec![],
+        }
+    }
+
+    #[test]
+    fn delivery_empty_layout() {
+        let d = delivery_base();
+        let sd = d.signer_device.as_ref().unwrap();
+        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let mut want = b"identitycrypto.delivery.v1\0".to_vec();
+        want.extend(key(&sd.principal_genesis)); want.extend(key(&sd.delegated));
+        want.extend([0, 0, 0, 1, b'd']); want.extend([0, 0, 0, 1, b'r']); want.extend([0, 0, 0, 0]);
+        want.extend(1u64.to_be_bytes()); want.extend(2i64.to_be_bytes()); want.extend(3i32.to_be_bytes());
+        want.extend([0, 0, 0, 0]);
+        assert_eq!(delivery_transcript(&d).unwrap(), want);
+    }
+
+    #[test]
+    fn delivery_entry_layout() {
+        use pb::target::Target as T;
+        let m = message();
+        let base = delivery_base();
+        let mut d = base.clone();
+        d.messages = vec![m.clone()];
+        d.via = vec![pb::Targets { targets: vec![target(T::RoomId("a".into())), target(T::RecipientId("p256:04".into()))] }];
+        let empty = delivery_transcript(&base).unwrap();
+        let prefix = empty.len() - 4;
+        let got = delivery_transcript(&d).unwrap();
+        assert_eq!(&got[..prefix], &empty[..prefix]);
+        let st = signed_message_transcript(&m).unwrap();
+        let mut want = vec![0, 0, 0, 1];
+        want.extend((st.len() as u32).to_be_bytes()); want.extend(&st);
+        want.extend((m.signature.len() as u32).to_be_bytes()); want.extend(&m.signature);
+        want.extend([0, 0, 0, 2, 1, 0, 0, 0, 1, b'a', 2, 0, 0, 0, 7]); want.extend(b"p256:04");
+        assert_eq!(&got[prefix..], &want[..]);
+    }
+
+    #[test]
+    fn delivery_checks() {
+        use pb::target::Target as T;
+        let run = |f: &dyn Fn(&mut pb::Delivery)| { let mut d = delivery_base(); f(&mut d); delivery_transcript(&d) };
+        let with_msg = |d: &mut pb::Delivery, t: pb::Target| {
+            d.messages = vec![message()];
+            d.via = vec![pb::Targets { targets: vec![t] }];
+        };
+        assert_eq!(run(&|d| d.signer_device = None), Err(Error::MissingField("signer_device")));
+        assert_eq!(run(&|d| d.signer_device.as_mut().unwrap().principal_genesis = None), Err(Error::MissingField("signer_device.principal_genesis")));
+        assert_eq!(run(&|d| d.signer_device.as_mut().unwrap().delegated = None), Err(Error::MissingField("signer_device.delegated")));
+        let off_curve = pb::PublicKey { scheme: 3, key: vec![4; 65] };
+        let bad_key = PublicKey::try_from(&off_curve).map(|_| vec![]);
+        assert!(bad_key.is_err());
+        assert_eq!(run(&|d| d.signer_device.as_mut().unwrap().delegated = Some(off_curve.clone())), bad_key);
+        assert_eq!(run(&|d| d.delivery_id.clear()), Err(Error::InvalidField { field: "delivery_id", reason: "empty" }));
+        assert_eq!(run(&|d| d.recipient_id.clear()), Err(Error::InvalidField { field: "recipient_id", reason: "empty" }));
+        assert_eq!(run(&|d| d.recipient_devices = vec![off_curve.clone()]), bad_key);
+        assert_eq!(run(&|d| d.attested_at = None), Err(Error::MissingField("attested_at")));
+        assert_eq!(run(&|d| d.attested_at = Some(crate::Timestamp { seconds: 0, nanos: 1_000_000_000 })), Err(Error::InvalidField { field: "attested_at.nanos", reason: "out of range" }));
+        assert_eq!(run(&|d| d.attested_at = Some(crate::Timestamp { seconds: 0, nanos: -1 })), Err(Error::InvalidField { field: "attested_at.nanos", reason: "out of range" }));
+        assert_eq!(run(&|d| d.messages = vec![message()]), Err(Error::InvalidField { field: "via", reason: "one entry per message" }));
+        assert_eq!(run(&|d| d.via = vec![pb::Targets::default()]), Err(Error::InvalidField { field: "via", reason: "one entry per message" }));
+        assert_eq!(
+            run(&|d| { with_msg(d, pb::Target { target: None }); d.messages[0].signer = None; }),
+            Err(Error::MissingField("signer"))
+        );
+        assert_eq!(run(&|d| with_msg(d, pb::Target { target: None })), Err(Error::MissingField("via.target")));
+        assert_eq!(run(&|d| with_msg(d, target(T::RoomId(String::new())))), Err(Error::InvalidField { field: "via.target", reason: "empty" }));
+        assert_eq!(run(&|d| with_msg(d, target(T::RecipientId(String::new())))), Err(Error::InvalidField { field: "via.target", reason: "empty" }));
+        assert!(run(&|d| with_msg(d, target(T::RoomId("a".into())))).is_ok());
     }
 }
