@@ -56,8 +56,9 @@ pub use public_key::{PublicKey, PublicKeyDuo};
 pub use registry::{AllowedHost, PrincipalKind, VerifiedBinding, VerifiedEntry};
 pub use resolver::{Resolver, VerifiedPeerRevocation};
 pub use verify::{
-    verify_approval, verify_chain, verify_peer_revocation, verify_signed_message,
-    verify_signed_message_trusted_devices, AcceptedAt, AuthorDevices, Host, VerifiedApproval,
+    verify_approval, verify_carried_message, verify_chain, verify_peer_revocation, verify_root_device_delegation,
+    verify_signed_message,
+    verify_signed_message_trusted_devices, AcceptedAt, AuthorDevices, CarriedMessage, Host, VerifiedApproval,
     VerifiedChain, VerifiedMessage, VerifiedTrustedMessage, When,
     MAX_SESSION_SECONDS, MAX_UNLISTED_DELEGATION_SECONDS, SKEW_SECONDS,
 };

@@ -105,11 +105,9 @@ fn device_current(d: &pb::KeyDelegation, entry: &VerifiedEntry, r: &Resolver, at
     if r.is_revoked(principal, &device, at) {
         return Err(Error::KeyRevoked);
     }
-    if d.not_after_unix_seconds == 0 {
-        return Err(Error::InvalidField { field: "device.not_after_unix_seconds", reason: "0 is not an expiry" });
-    }
     match entry.kind() {
         PrincipalKind::Human => {
+            check_expiry_set(d, "device.not_after_unix_seconds")?;
             let b = r.binding(principal, &device).ok_or(Error::NotBound)?;
             if b.device_delegation() != d {
                 return Err(Error::ChainMismatch("device delegation differs from the bound one"));
@@ -124,13 +122,7 @@ fn device_current(d: &pb::KeyDelegation, entry: &VerifiedEntry, r: &Resolver, at
             }
         }
         PrincipalKind::Daemon | PrincipalKind::Agent | PrincipalKind::Service => {
-            check_unlisted_span("device.not_after_unix_seconds", d.issued_at_unix_seconds, d.not_after_unix_seconds)?;
-            if d.issued_at_unix_seconds > at.saturating_add(SKEW_SECONDS) {
-                return Err(Error::NotYetValid("device delegation"));
-            }
-            if at > d.not_after_unix_seconds {
-                return Err(Error::Expired("device delegation"));
-            }
+            check_unlisted_window(d, at, "device.not_after_unix_seconds", "device delegation")?;
         }
     }
     Ok(device)
@@ -150,17 +142,51 @@ fn carried_device(d: &pb::KeyDelegation, agent: &PrincipalId, rotations: &[pb::R
     }
     verify_p256(&root, &key_delegation_transcript(d)?, &d.signature)?;
     let device = key(&d.delegated, "agent_device.delegated")?;
+    check_unlisted_window(d, at, "agent_device.not_after_unix_seconds", "agent device delegation")?;
+    Ok(device)
+}
+
+/// A delegation with `not_after == 0` has no expiry, which no verifier accepts.
+fn check_expiry_set(d: &pb::KeyDelegation, field: &'static str) -> Result<()> {
     if d.not_after_unix_seconds == 0 {
-        return Err(Error::InvalidField { field: "agent_device.not_after_unix_seconds", reason: "0 is not an expiry" });
+        return Err(Error::InvalidField { field, reason: "0 is not an expiry" });
     }
-    check_unlisted_span("agent_device.not_after_unix_seconds", d.issued_at_unix_seconds, d.not_after_unix_seconds)?;
+    Ok(())
+}
+
+/// The window rules for an unlisted device delegation (daemons, services,
+/// self-rooted and carried agents, trusted deliverers): an expiry is set, the
+/// span is capped, and `at` is inside it. `field` and `what` name the
+/// delegation in errors. The one place the rule lives.
+pub(crate) fn check_unlisted_window(d: &pb::KeyDelegation, at: i64, field: &'static str, what: &'static str) -> Result<()> {
+    check_expiry_set(d, field)?;
+    check_unlisted_span(field, d.issued_at_unix_seconds, d.not_after_unix_seconds)?;
     if d.issued_at_unix_seconds > at.saturating_add(SKEW_SECONDS) {
-        return Err(Error::NotYetValid("agent device delegation"));
+        return Err(Error::NotYetValid(what));
     }
     if at > d.not_after_unix_seconds {
-        return Err(Error::Expired("agent device delegation"));
+        return Err(Error::Expired(what));
     }
-    Ok(device)
+    Ok(())
+}
+
+/// A trusted principal's device, for a Delivery signer: the delegation is
+/// from `principal`'s genesis root (a deliverer is trusted by principal id,
+/// which is its root key; a root rotation means updating the trust list) and
+/// current at `at`. Returns the device key.
+pub fn verify_root_device_delegation(d: &pb::KeyDelegation, principal: &PrincipalId, at: i64) -> Result<PublicKey> {
+    if &key(&d.principal_genesis, "device.principal_genesis")? != principal.genesis() {
+        return Err(Error::ChainMismatch("device.principal_genesis"));
+    }
+    if &key(&d.signing_root, "device.signing_root")? != principal.genesis() {
+        return Err(Error::ChainMismatch("device.signing_root"));
+    }
+    if d.purpose != pb::KeyPurpose::Device as i32 {
+        return Err(Error::ChainMismatch("device.purpose"));
+    }
+    check_unlisted_window(d, at, "device.not_after_unix_seconds", "device delegation")?;
+    verify_p256(principal.genesis(), &key_delegation_transcript(d)?, &d.signature)?;
+    key(&d.delegated, "device.delegated")
 }
 
 /// The session window rule, shared by `mint_session` and `check_cert`: the
@@ -186,12 +212,19 @@ pub(crate) fn check_unlisted_span(field: &'static str, issued: i64, not_after: i
     Ok(())
 }
 
-/// Step 5: the session cert under `device`. Returns `(session key, not_after)`.
-pub(crate) fn check_cert(c: &pb::DelegationCert, device: &PublicKey, at: i64) -> Result<(PublicKey, i64)> {
+/// The session cert names `device` and is signed by it. Returns the session
+/// key. The signature rule `check_cert` and `verify_carried_message` share.
+pub(crate) fn check_cert_signature(c: &pb::DelegationCert, device: &PublicKey) -> Result<PublicKey> {
     if &key(&c.device, "session.device")? != device {
         return Err(Error::ChainMismatch("session.device"));
     }
     verify_p256(device, &session_delegation_transcript(c)?, &c.signature)?;
+    key(&c.session, "session.session")
+}
+
+/// Step 5: the session cert under `device`. Returns `(session key, not_after)`.
+pub(crate) fn check_cert(c: &pb::DelegationCert, device: &PublicKey, at: i64) -> Result<(PublicKey, i64)> {
+    let session = check_cert_signature(c, device)?;
     let (nb, na) = (c.not_before_unix_seconds, c.not_after_unix_seconds);
     check_session_span(nb, na)?;
     if at < nb.saturating_sub(SKEW_SECONDS) {
@@ -200,7 +233,7 @@ pub(crate) fn check_cert(c: &pb::DelegationCert, device: &PublicKey, at: i64) ->
     if at > na {
         return Err(Error::Expired("session cert"));
     }
-    Ok((key(&c.session, "session.session")?, na))
+    Ok((session, na))
 }
 
 pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Result<VerifiedChain> {
@@ -392,6 +425,106 @@ pub fn verify_signed_message(msg: &pb::SignedMessage, expected_audience: &str, r
         chain, nonce: msg.nonce.clone(), issued_at: msg.issued_at_unix_seconds,
         in_reply_to_nonce: msg.in_reply_to_nonce.clone(), body_type: msg.body_type.clone(), body: msg.body.clone(),
     })
+}
+
+/// A message as a recipient sees it inside a Delivery: intact, with no
+/// registry, revocation, freeze or clock check. Trust comes from the
+/// Delivery signature over its transcript.
+#[derive(Clone, Debug)]
+pub struct CarriedMessage {
+    author: PrincipalId,
+    session_key: PublicKey,
+    nonce: Vec<u8>,
+    issued_at: i64,
+    body_type: String,
+    body: Vec<u8>,
+}
+
+impl CarriedMessage {
+    pub fn author(&self) -> &PrincipalId { &self.author }
+    pub fn session_key(&self) -> &PublicKey { &self.session_key }
+    pub fn nonce(&self) -> &[u8] { &self.nonce }
+    pub fn issued_at(&self) -> i64 { self.issued_at }
+    pub fn body_type(&self) -> &str { &self.body_type }
+    pub fn body(&self) -> &[u8] { &self.body }
+}
+
+/// A delegation signed by its own `signing_root`; returns the delegated key.
+fn check_delegation_signature(d: &pb::KeyDelegation, field: &'static str) -> Result<PublicKey> {
+    let root = key(&d.signing_root, field)?;
+    verify_p256(&root, &key_delegation_transcript(d)?, &d.signature)?;
+    key(&d.delegated, field)
+}
+
+/// Integrity of a message's chain with no registry and no clock: every
+/// signature links to the next, and the cert, delegations and message agree
+/// on who and what. Whether the signer is trusted is the caller's (the
+/// Delivery signature); whether it was current is the receiver's record.
+pub fn verify_carried_message(msg: &pb::SignedMessage, expected_audience: &str) -> Result<CarriedMessage> {
+    use pb::signer_chain::Chain;
+    if msg.signature.is_empty() {
+        return Err(Error::EmptySignature);
+    }
+    let signer = msg.signer.as_ref().ok_or(Error::MissingField("signer"))?;
+    let (cert, session_key) = match signer.chain.as_ref().ok_or(Error::MissingField("chain"))? {
+        Chain::SelfRooted(s) => {
+            let d = s.device.as_ref().ok_or(Error::MissingField("self_rooted.device"))?;
+            let cert = s.session.as_ref().ok_or(Error::MissingField("self_rooted.session"))?;
+            if key(&d.principal_genesis, "device.principal_genesis")? != key(&cert.principal_genesis, "session.principal_genesis")? {
+                return Err(Error::ChainMismatch("device.principal_genesis"));
+            }
+            let device = check_delegation_signature(d, "device.signing_root")?;
+            if cert.mode != 0 {
+                return Err(Error::ChainMismatch("session.mode"));
+            }
+            let session_key = check_cert_signature(cert, &device)?;
+            (cert, session_key)
+        }
+        Chain::HostVouched(h) => {
+            let d = h.host_device.as_ref().ok_or(Error::MissingField("host_vouched.host_device"))?;
+            let cert = h.session.as_ref().ok_or(Error::MissingField("host_vouched.session"))?;
+            let device = check_host_device(d, cert)?;
+            (cert, check_cert_signature(cert, &device)?)
+        }
+        Chain::DaemonHosted(h) => {
+            let d = h.host_device.as_ref().ok_or(Error::MissingField("daemon_hosted.host_device"))?;
+            let a = h.agent_device.as_ref().ok_or(Error::MissingField("daemon_hosted.agent_device"))?;
+            let cert = h.session.as_ref().ok_or(Error::MissingField("daemon_hosted.session"))?;
+            let device = check_host_device(d, cert)?;
+            if key(&a.principal_genesis, "agent_device.principal_genesis")? != key(&cert.principal_genesis, "session.principal_genesis")? {
+                return Err(Error::ChainMismatch("agent_device.principal_genesis"));
+            }
+            let agent_device = check_delegation_signature(a, "agent_device.signing_root")?;
+            let session_key = check_cert_signature(cert, &device)?;
+            verify_p256(&agent_device, &hosted_session_transcript(cert)?, &h.agent_signature)?;
+            (cert, session_key)
+        }
+    };
+    if msg.audience != expected_audience {
+        return Err(Error::WrongAudience);
+    }
+    verify_p256(&session_key, &signed_message_transcript(msg)?, &msg.signature)?;
+    Ok(CarriedMessage {
+        author: PrincipalId::from_genesis(key(&cert.principal_genesis, "session.principal_genesis")?),
+        session_key,
+        nonce: msg.nonce.clone(),
+        issued_at: msg.issued_at_unix_seconds,
+        body_type: msg.body_type.clone(),
+        body: msg.body.clone(),
+    })
+}
+
+/// The host-device half shared by the HostVouched and DaemonHosted arms:
+/// the cert is the host's mode-1 cert and the delegation is the host's own.
+fn check_host_device(d: &pb::KeyDelegation, cert: &pb::DelegationCert) -> Result<PublicKey> {
+    if key(&cert.host_genesis, "session.host_genesis")? != key(&d.principal_genesis, "host_device.principal_genesis")? {
+        return Err(Error::ChainMismatch("session.host_genesis"));
+    }
+    let device = check_delegation_signature(d, "host_device.signing_root")?;
+    if cert.mode != 1 {
+        return Err(Error::ChainMismatch("session.mode"));
+    }
+    Ok(device)
 }
 
 /// The author and that author's device keys, as one value. They travel
@@ -1792,5 +1925,112 @@ mod tests {
         let mut with_bogus = msg.clone();
         self_rooted_mut(&mut with_bogus).device = Some(pb::KeyDelegation::default());
         assert!(trusted(&with_bogus, &owner, &devices, LIVE).is_ok());
+    }
+
+    fn carried_hosted_mut(m: &mut pb::SignedMessage) -> &mut pb::DaemonHosted {
+        hosted_mut(m.signer.as_mut().unwrap())
+    }
+
+    #[test]
+    fn carried_self_rooted_message_verifies() {
+        let agent = Principal::new();
+        let (s, c) = daemon_chain(&agent, T0, T0 + DAY, T0, T0 + 3600);
+        let m = signed_message(&s, c, AUD, T0 + 60);
+        let v = verify_carried_message(&m, AUD).unwrap();
+        assert_eq!(v.author(), &agent.id());
+        assert_eq!(v.body(), &[1, 2]);
+        assert_eq!(v.session_key(), &s.public());
+        assert_eq!((v.nonce(), v.issued_at(), v.body_type()), (&[7u8; 16][..], T0 + 60, "type.googleapis.com/test.v1.Body"));
+    }
+
+    #[test]
+    fn expired_session_still_verifies_when_carried() {
+        let agent = Principal::new();
+        let (s, c) = daemon_chain(&agent, T0, T0 + DAY, T0, T0 + 3600);
+        let m = signed_message(&s, c, AUD, T0 + 10 * DAY);
+        assert_eq!(verify_carried_message(&m, AUD).unwrap().author(), &agent.id());
+    }
+
+    #[test]
+    fn carried_daemon_hosted_message_verifies() {
+        let f = Fleet::new();
+        let agent = Principal::new();
+        let (s, c) = hosted_chain(&f.daemon, &agent, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
+        let m = signed_message(&s, c, AUD, T0 + 60);
+        assert_eq!(verify_carried_message(&m, AUD).unwrap().author(), &agent.id());
+    }
+
+    #[test]
+    fn carried_host_vouched_message_verifies() {
+        let f = Fleet::new();
+        let (s, c) = agent_chain(&f, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
+        let m = signed_message(&s, c, AUD, T0 + 60);
+        assert_eq!(verify_carried_message(&m, AUD).unwrap().author(), &f.agent_id());
+    }
+
+    #[test]
+    fn root_device_delegation_rules() {
+        let mut p = Principal::new();
+        let (device, d) = p.delegate_device(T0, T0 + DAY);
+        assert_eq!(verify_root_device_delegation(&d, &p.id(), T0 + 60).unwrap(), device.public());
+        let other = Principal::new();
+        assert_eq!(
+            verify_root_device_delegation(&d, &other.id(), T0 + 60).unwrap_err(),
+            Error::ChainMismatch("device.principal_genesis")
+        );
+        assert_eq!(
+            verify_root_device_delegation(&d, &p.id(), T0 + DAY + 1).unwrap_err(),
+            Error::Expired("device delegation")
+        );
+        let (_, late) = p.delegate_device(T0 + 3600, T0 + DAY);
+        assert_eq!(
+            verify_root_device_delegation(&late, &p.id(), T0).unwrap_err(),
+            Error::NotYetValid("device delegation")
+        );
+        let mut tampered = d.clone();
+        tampered.not_after_unix_seconds -= 5;
+        assert_eq!(verify_root_device_delegation(&tampered, &p.id(), T0 + 60).unwrap_err(), Error::BadSignature);
+        p.rotate(T0);
+        let (_, rotated) = p.delegate_device(T0, T0 + DAY);
+        assert_eq!(
+            verify_root_device_delegation(&rotated, &p.id(), T0 + 60).unwrap_err(),
+            Error::ChainMismatch("device.signing_root")
+        );
+    }
+
+    #[test]
+    fn carried_rejections() {
+        let agent = Principal::new();
+        let (s, c) = daemon_chain(&agent, T0, T0 + DAY, T0, T0 + 3600);
+        let good = signed_message(&s, c, AUD, T0 + 60);
+        assert_eq!(verify_carried_message(&good, "other").unwrap_err(), Error::WrongAudience);
+        let mut m = good.clone();
+        m.body = vec![9];
+        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::BadSignature);
+        let mut m = good.clone();
+        m.signature.clear();
+        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::EmptySignature);
+        let mut m = good.clone();
+        self_rooted_mut(&mut m).device = None;
+        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::MissingField("self_rooted.device"));
+        let mut m = good.clone();
+        let d = self_rooted_mut(&mut m).device.as_mut().unwrap();
+        d.principal_genesis = pk(&Principal::new().genesis());
+        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::ChainMismatch("device.principal_genesis"));
+        // every signature valid, but the cert is signed by a device the delegation does not name
+        let (_, deleg) = agent.delegate_device(T0, T0 + DAY);
+        let stray = Signer::new();
+        let (s2, cert) = session_cert(&stray, &agent.genesis(), None, None, T0, T0 + 3600);
+        let c = pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: Some(deleg), session: Some(cert) })),
+        };
+        let m = signed_message(&s2, c, AUD, T0 + 60);
+        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::ChainMismatch("session.device"));
+        let f = Fleet::new();
+        let (s3, c3) = hosted_chain(&f.daemon, &agent, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
+        let mut m = signed_message(&s3, c3, AUD, T0 + 60);
+        assert!(verify_carried_message(&m, AUD).is_ok());
+        carried_hosted_mut(&mut m).agent_signature = Signer::new().sign(b"x");
+        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::BadSignature);
     }
 }
