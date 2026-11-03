@@ -65,9 +65,9 @@ The `identity-keyfile/` workspace member (0.9.0) stores a self-rooted principal'
   Never call it on its own: it checks a self-rooted delegation only under its
   own `signing_root`, so on its own a fabricated chain passes.
 
-A hosted agent with no registry entry is bounded by its session expiry (at
-most 31 days through the device delegations) only until it is registered:
-registering it with `frozen` status blocks it. Revoking the hosting daemon, or
+A hosted agent with no registry entry cannot be revoked one device at a time:
+each device delegation lasts at most 31 days, but whoever holds the agent's
+root can keep issuing new ones. Registering it with `frozen` status blocks it. Revoking the hosting daemon, or
 removing its `hosts_held_agents` grant, cuts off all unregistered ones at once.
 
 ## Request digests (0.4.0)
