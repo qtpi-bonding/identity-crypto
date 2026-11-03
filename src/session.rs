@@ -187,7 +187,8 @@ fn check_device_purpose(delegation: &pb::KeyDelegation, field: &'static str) -> 
 /// Mints a hosted session for the agent whose device is `agent.device`, run by
 /// the daemon whose device is `daemon.device`, valid over
 /// `[not_before_unix, not_after_unix]` (span in `(0, 24 h]`). `subject` must
-/// start with the daemon's short id and `/`. Refuses before signing anything.
+/// start with the daemon's short id and `/`. `agent.rotations` must end at the
+/// root that signed the agent device delegation. Refuses before signing anything.
 pub fn mint_hosted_session(
     daemon: HostingDaemon<'_>,
     agent: HostedAgent<'_>,
@@ -200,6 +201,11 @@ pub fn mint_hosted_session(
     delegated_device(agent.device_delegation, agent.device, "agent_device.delegated")?;
     check_device_purpose(daemon.device_delegation, "host_device.purpose")?;
     check_device_purpose(agent.device_delegation, "agent_device.purpose")?;
+    let agent_root = agent.device_delegation.signing_root.as_ref().ok_or(Error::MissingField("agent_device.signing_root"))?;
+    let agent_genesis_key = PublicKey::try_from(agent.device_delegation.principal_genesis.as_ref().ok_or(Error::MissingField("agent_device.principal_genesis"))?)?;
+    if &pb::PublicKey::from(crate::AuthorityChain::from_rotations(agent_genesis_key, agent.rotations)?.head()) != agent_root {
+        return Err(Error::ChainMismatch("agent_device.signing_root"));
+    }
     let host_genesis = daemon.device_delegation.principal_genesis.clone().ok_or(Error::MissingField("host_device.principal_genesis"))?;
     let agent_genesis = agent.device_delegation.principal_genesis.clone().ok_or(Error::MissingField("agent_device.principal_genesis"))?;
     let host_id = PrincipalId::from_genesis(PublicKey::try_from(&host_genesis)?);
@@ -485,7 +491,7 @@ mod tests {
         let f = hosted_fixture();
         let good = subject_on(&f.0, "a1");
         let daemon = |deleg| HostingDaemon { device: f.2.key_pair(), device_delegation: deleg };
-        let agent = |deleg| HostedAgent { device: f.4.key_pair(), device_delegation: deleg, rotations: &[] };
+        let agent = |deleg| HostedAgent { device: f.4.key_pair(), device_delegation: deleg, rotations: &f.1.rotations };
         let mint = |d: HostingDaemon<'_>, a: HostedAgent<'_>, subject: &str, na: i64| {
             mint_hosted_session(d, a, subject, T0, na).err()
         };
@@ -499,6 +505,8 @@ mod tests {
         let mut approval = f.5.clone();
         approval.purpose = pb::KeyPurpose::Approval as i32;
         assert_eq!(mint(daemon(&f.3), agent(&approval), &good, T0 + 60), Some(Error::ChainMismatch("agent_device.purpose")));
+        let stale = HostedAgent { device: f.4.key_pair(), device_delegation: &f.5, rotations: &[] };
+        assert_eq!(mint(daemon(&f.3), stale, &good, T0 + 60), Some(Error::ChainMismatch("agent_device.signing_root")));
         let bad = || Error::InvalidField { field: "subject", reason: "must start with the host daemon's short id and /" };
         let short = f.0.id().short_id().to_string();
         for subject in ["a1", "", &short, &format!("{short}x/a"), &format!("{}/a", f.1.id().short_id())] {

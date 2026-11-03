@@ -37,7 +37,7 @@ message DelegationCert {               // device → session
   int64 not_after_unix_seconds = 5;
   bytes signature = 6;                 // device key over session-delegation.v1
   PublicKey principal_genesis = 7;     // for an agent: its discarded genesis key
-  uint32 mode = 8;                     // 0 self-rooted, 1 host-vouched
+  uint32 mode = 8;                     // 0 self-rooted, 1 daemon-signed (HostVouched or DaemonHosted)
   PublicKey device = 9;
   PublicKey session = 10;
   optional PublicKey host_genesis = 11;  // mode 1: the vouching daemon
@@ -87,7 +87,7 @@ message SelfRooted {                   // humans, daemons, services
   KeyDelegation device = 1;            // root → device
   DelegationCert session = 2;          // device → session, mode 0
 }
-message HostVouched {                  // agent identities
+message HostVouched {                  // agents without keys of their own
   KeyDelegation host_device = 1;       // daemon root → daemon device
   DelegationCert session = 2;          // daemon device → agent session, mode 1
 }
@@ -122,6 +122,11 @@ message Message {
 
 // Per recipient, signed by the deliverer. messages are carried verbatim;
 // via[i] belongs to messages[i].
+//
+// delivery.v1 does not sign the carried messages' signer chains. Never read
+// `messages[i].signer` beyond what `CarriedMessage` exposes (author and session
+// key); everything else in a chain can be swapped by a relay without breaking
+// the Delivery signature.
 message Delivery {
   string delivery_id = 1;
   string recipient_id = 2;

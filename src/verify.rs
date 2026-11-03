@@ -430,6 +430,10 @@ pub fn verify_signed_message(msg: &pb::SignedMessage, expected_audience: &str, r
 /// A message as a recipient sees it inside a Delivery: intact, with no
 /// registry, revocation, freeze or clock check. Trust comes from the
 /// Delivery signature over its transcript.
+///
+/// The Delivery signature does not cover a carried message's signer chain, only
+/// its author genesis and session key. Callers must never read `msg.signer` of a
+/// Delivery's messages for host, subject, mode or windows: it is unsigned data.
 #[derive(Clone, Debug)]
 pub struct CarriedMessage {
     author: PrincipalId,
@@ -1129,6 +1133,34 @@ mod tests {
         match c.chain.as_mut() {
             Some(pb::signer_chain::Chain::DaemonHosted(h)) => h,
             _ => panic!("not daemon-hosted"),
+        }
+    }
+
+    #[test]
+    fn host_vouched_chain_cannot_stand_in_for_a_keyed_agent() {
+        // A keyed agent whose allowed_hosts names the daemon is governed by
+        // DaemonHosted, which needs the agent device's co-signature. The daemon
+        // alone must not be able to mint a HostVouched session for it.
+        for allowed in [vec!["daemon"], vec!["*"]] {
+            let mut f = Fleet::new();
+            let agent = Principal::new();
+            let allowed = allowed
+                .into_iter()
+                .map(|a| if a == "daemon" { f.daemon.id().to_string() } else { a.to_string() })
+                .collect();
+            with_agent(&mut f, &agent, allowed);
+            let daemon_hosted = hosted(&f, &agent);
+            assert!(verify_chain(&daemon_hosted, &f.resolver(), LIVE).is_ok());
+            let forged = match daemon_hosted.chain {
+                Some(pb::signer_chain::Chain::DaemonHosted(h)) => pb::SignerChain {
+                    chain: Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched {
+                        host_device: h.host_device,
+                        session: h.session,
+                    })),
+                },
+                _ => panic!("not daemon-hosted"),
+            };
+            assert_eq!(verify_chain(&forged, &f.resolver(), LIVE).unwrap_err(), Error::WrongKind);
         }
     }
 
