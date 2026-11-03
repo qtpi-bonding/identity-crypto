@@ -80,7 +80,7 @@ versions, persistence and policy are the caller's.
   `identity_crypto::pb`): keys, delegations, signer chains, signed messages
   and documents, approvals, revocations.
 - **Transcripts** (`identity_crypto::transcripts`): the exact bytes every
-  signature covers, thirteen functions under `identitycrypto.*.v1` tags. Each
+  signature covers, twelve functions under `identitycrypto.*.v1` tags. Each
   validates while it encodes; signer and verifier call the same function.
 - **`verify_p256`:** 64-byte `r‖s`, both S forms, returning a
   `VerifiedSignature` witness bound to the key and the message.
