@@ -36,7 +36,7 @@ TAGS = {
     "request_digest": "identitycrypto.request-digest.v1",
     "client_request_digest": "identitycrypto.client-request-digest.v1",
     "hosted_session": "identitycrypto.hosted-session.v1",
-    "delivery": "identitycrypto.delivery.v1",
+    "delivery": "identitycrypto.delivery.v2",
 }
 
 
@@ -333,6 +333,18 @@ def delivery(i):
                 raise VectorError("MissingField", "via.target")
             non_empty("via.target", value.encode())
             out += bytes([kind]) + text(value)
+    prev = None
+    for n in i["names"]:
+        parsed = parse_principal(n["principal_id"], True)
+        if "error" in parsed:
+            raise VectorError("InvalidField", "names.principal_id")
+        non_empty("names.name", n["name"].encode())
+        if prev is not None and not prev < n["principal_id"].encode():
+            raise VectorError("InvalidField", "names")
+        prev = n["principal_id"].encode()
+    out += u32(len(i["names"]))
+    for n in i["names"]:
+        out += text(n["principal_id"]) + text(n["name"])
     return out
 
 
@@ -506,7 +518,7 @@ def cases():
     dl = {"signer_device": {"principal_genesis": K(20), "delegated": K(21)}, "delivery_id": "d-1",
           "recipient_id": "p256:" + raw_pub(7).hex(), "recipient_devices": [K(15), K(16)], "sequence": "7",
           "attested_at": {"seconds": "1700000000", "nanos": "123456789"},
-          "messages": [{"message": sm, "signature": "ab" * 64}], "via": [[{"room_id": "design"}]]}
+          "messages": [{"message": sm, "signature": "ab" * 64}], "via": [[{"room_id": "design"}]], "names": []}
     ok("delivery one message", "delivery", dl)
     ok("delivery room and recipient via, two messages", "delivery", with_(
         dl, messages=[
@@ -514,6 +526,13 @@ def cases():
             {"message": with_(sm, chain="host_vouched", session=CERT1), "signature": "cd" * 64},
         ],
         via=[[{"room_id": "design"}, {"recipient_id": "p256:" + raw_pub(8).hex()}], [{"room_id": "ünï"}]]))
+    p1, p2 = "p256:" + raw_pub(30).hex(), "p256:" + raw_pub(31).hex()
+    lo, hi = sorted([p1, p2])
+    ok("delivery with names", "delivery", with_(dl, names=[
+        {"principal_id": lo, "name": "alice"}, {"principal_id": hi, "name": "bób \u202e"}]))
+    ok("delivery names unsorted", "delivery", with_(dl, names=[
+        {"principal_id": hi, "name": "b"}, {"principal_id": lo, "name": "a"}]))
+    ok("delivery name empty", "delivery", with_(dl, names=[{"principal_id": lo, "name": ""}]))
     ok("delivery empty messages", "delivery", with_(dl, messages=[], via=[]))
     ok("delivery max sequence and min seconds", "delivery", with_(
         dl, sequence=str(U64_MAX), attested_at={"seconds": str(I64_MIN), "nanos": "999999999"}))

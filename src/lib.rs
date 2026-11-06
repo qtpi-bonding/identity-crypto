@@ -185,6 +185,7 @@ mod proto_tests {
             delivery_id: "d-1".into(), recipient_id: "p256:04".into(), recipient_devices: vec![key(5)], sequence: u64::MAX,
             attested_at: Some(Timestamp { seconds: 1, nanos: 2 }), messages: vec![pb::SignedMessage::default()],
             via: vec![pb::Targets { targets: vec![target(true)] }], signer_device: Some(delegation()), signature: vec![1; 64],
+            names: vec![pb::PrincipalName { principal_id: "p256:04".into(), name: "alice".into() }],
         });
     }
 

@@ -326,6 +326,7 @@ fn delivery() -> pb::Delivery {
             principal_genesis: pk(), delegated: pk(), ..Default::default()
         }),
         signature: vec![],
+        names: vec![pb::PrincipalName { principal_id: PrincipalId::from_genesis(k()).to_string(), name: "alice".into() }],
     }
 }
 
@@ -347,6 +348,9 @@ fn delivery_binds_every_field() {
             ("messages[0].body", Box::new(|d| d.messages[0].body.push(2))),
             ("messages[0].signature", Box::new(|d| d.messages[0].signature[0] ^= 1)),
             ("via[0] room to recipient", Box::new(|d| d.via[0].targets[0] = recipient("design"))),
+            ("names[0].name", Box::new(|d| d.names[0].name.push('x'))),
+            ("names[0].principal_id", Box::new(|d| d.names[0].principal_id = PrincipalId::from_genesis(k()).to_string())),
+            ("names cleared", Box::new(|d| d.names.clear())),
             ("via[0] push", Box::new(|d| d.via[0].targets.push(room("other")))),
         ],
     );

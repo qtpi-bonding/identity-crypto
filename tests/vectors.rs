@@ -155,6 +155,12 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
                 ..Default::default()
             }),
             signature: vec![],
+            names: i["names"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|n| pb::PrincipalName { principal_id: s(&n["principal_id"]), name: s(&n["name"]) })
+                .collect(),
         }),
         "signed_document" => signed_document_transcript(&pb::SignedDocument {
             signer_genesis: key(&i["signer_genesis"]),
@@ -252,7 +258,7 @@ fn transcripts_match_the_independent_generator() {
         }
         checked += 1;
     }
-    assert_eq!(checked, 107, "transcripts.json case count changed");
+    assert_eq!(checked, 110, "transcripts.json case count changed");
 }
 
 #[test]

@@ -76,6 +76,7 @@ fn full() -> pb::Delivery {
             ..Default::default()
         }),
         signature: vec![0xfb; 64],
+        names: vec![pb::PrincipalName { principal_id: format!("p256:{}", "04".repeat(65)), name: "alice".into() }],
     }
 }
 
@@ -101,7 +102,7 @@ fn delivery_json_field_names_are_camel_case() {
     keys.sort_unstable();
     assert_eq!(
         keys,
-        ["attestedAt", "deliveryId", "messages", "recipientDevices", "recipientId", "sequence", "signature", "signerDevice", "via"]
+        ["attestedAt", "deliveryId", "messages", "names", "recipientDevices", "recipientId", "sequence", "signature", "signerDevice", "via"]
     );
     assert_eq!(v["sequence"], json!("18446744073709551615"));
     assert!(v["attestedAt"].as_str().unwrap().ends_with('Z'));

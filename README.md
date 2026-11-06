@@ -43,9 +43,11 @@ The `identity-keyfile/` workspace member (0.9.0) stores a self-rooted principal'
   The author is the `SignedMessage` signer, never a field. `pb::Target` is a
   `RoomId` or a `RecipientId`; `pb::Targets` is one message's list.
 - **`pb::Delivery`** is signed per recipient by the deliverer under
-  `delivery.v1` (`delivery_transcript`). It carries the `SignedMessage`s
+  `delivery.v2` (`delivery_transcript`). It carries the `SignedMessage`s
   verbatim, `via[i]` for `messages[i]`, and `signer_device`: the deliverer's
   root-to-device delegation. A deliverer signs with its device, never its root.
+  `names` (sorted strictly ascending by `principal_id`, each canonical, each
+  name non-empty) is signed with it: one display name per author principal.
   `verify_root_device_delegation(d, &principal, at)` checks that delegation
   against a trusted deliverer's principal id and returns the device key.
 - **`DaemonHosted`** is a third `SignerChain` arm: an agent with its own keys

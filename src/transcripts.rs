@@ -24,7 +24,7 @@ pub const REQUEST_DIGEST_TAG: &str = "identitycrypto.request-digest.v1";
 
 pub const CLIENT_REQUEST_DIGEST_TAG: &str = "identitycrypto.client-request-digest.v1";
 pub const HOSTED_SESSION_TAG: &str = "identitycrypto.hosted-session.v1";
-pub const DELIVERY_TAG: &str = "identitycrypto.delivery.v1";
+pub const DELIVERY_TAG: &str = "identitycrypto.delivery.v2";
 
 pub const ALL_TAGS: [&str; 14] = [
     KEY_CHALLENGE_TAG,
@@ -256,15 +256,21 @@ pub fn hosted_session_transcript(c: &pb::DelegationCert) -> Result<Vec<u8>> {
 }
 
 /// ```text
-/// delivery.v1 := tag ‖ PRINCIPAL(signer_device.principal_genesis) ‖ KEY(signer_device.delegated)
+/// delivery.v2 := tag ‖ PRINCIPAL(signer_device.principal_genesis) ‖ KEY(signer_device.delegated)
 ///                ‖ len(delivery_id) ‖ len(recipient_id)
 ///                ‖ u32 count ‖ KEY(recipient_device)…
 ///                ‖ sequence u64 ‖ attested_at.seconds i64 ‖ attested_at.nanos i32
 ///                ‖ u32 count ‖ ENTRY…
+///                ‖ u32 count ‖ NAME…
 /// ENTRY  := len(signed-message.v1 bytes of messages[i]) ‖ len(messages[i].signature) ‖ TARGETS(via[i])
 /// TARGETS:= u32 count ‖ TARGET…
 /// TARGET := kind u8 (1 room_id, 2 recipient_id) ‖ len(value)
+/// NAME   := len(principal_id) ‖ len(name)
 /// ```
+///
+/// `names` binds a display name to each author principal. It must be strictly ascending by
+/// `principal_id` bytes (so unique), each `principal_id` canonical and each name non-empty. The
+/// name's syntax is the verifier's rule, not the transcript's.
 ///
 /// The deliverer signs each message's `signed-message.v1` bytes and its signature, not the
 /// signer-chain bytes: that transcript already fixes the author's genesis, session key, audience
@@ -304,6 +310,21 @@ pub fn delivery_transcript(d: &pb::Delivery) -> Result<Vec<u8>> {
             e.u8("kind", kind)?;
             e.var(value.as_bytes())?;
         }
+    }
+    let mut prev: Option<&str> = None;
+    for n in &d.names {
+        PrincipalId::parse_canonical(&n.principal_id)
+            .map_err(|_| Error::InvalidField { field: "names.principal_id", reason: "not canonical" })?;
+        non_empty("names.name", n.name.as_bytes())?;
+        if prev.is_some_and(|p| p >= n.principal_id.as_str()) {
+            return Err(Error::InvalidField { field: "names", reason: "not sorted" });
+        }
+        prev = Some(&n.principal_id);
+    }
+    e.u32("names", d.names.len())?;
+    for n in &d.names {
+        e.var(n.principal_id.as_bytes())?;
+        e.var(n.name.as_bytes())?;
     }
     Ok(e.finish())
 }
@@ -474,7 +495,7 @@ mod tests {
     #[test]
     fn tags_are_distinct_and_prefix_free() {
         for (i, a) in ALL_TAGS.iter().enumerate() {
-            assert!(a.starts_with("identitycrypto.") && a.ends_with(".v1"), "{a}");
+            assert!(a.starts_with("identitycrypto.") && (a.ends_with(".v1") || *a == DELIVERY_TAG), "{a}");
             for (j, b) in ALL_TAGS.iter().enumerate() {
                 if i != j {
                     assert!(!b.starts_with(a), "{a} is a prefix of {b}");
@@ -920,7 +941,7 @@ mod tests {
         pb::Delivery {
             delivery_id: "d".into(), recipient_id: "r".into(), recipient_devices: vec![], sequence: 1,
             attested_at: Some(crate::Timestamp { seconds: 2, nanos: 3 }), messages: vec![], via: vec![],
-            signer_device: Some(delegation(pb::KeyPurpose::Device)), signature: vec![],
+            signer_device: Some(delegation(pb::KeyPurpose::Device)), signature: vec![], names: vec![],
         }
     }
 
@@ -929,12 +950,62 @@ mod tests {
         let d = delivery_base();
         let sd = d.signer_device.as_ref().unwrap();
         let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
-        let mut want = b"identitycrypto.delivery.v1\0".to_vec();
+        let mut want = b"identitycrypto.delivery.v2\0".to_vec();
         want.extend(key(&sd.principal_genesis)); want.extend(key(&sd.delegated));
         want.extend([0, 0, 0, 1, b'd']); want.extend([0, 0, 0, 1, b'r']); want.extend([0, 0, 0, 0]);
         want.extend(1u64.to_be_bytes()); want.extend(2i64.to_be_bytes()); want.extend(3i32.to_be_bytes());
         want.extend([0, 0, 0, 0]);
+        want.extend([0, 0, 0, 0]); // names
         assert_eq!(delivery_transcript(&d).unwrap(), want);
+    }
+
+    fn pid() -> String { PrincipalId::from_genesis(k()).to_string() }
+    fn sorted_pids() -> (String, String) {
+        let (a, b) = (pid(), pid());
+        if a < b { (a, b) } else { (b, a) }
+    }
+    fn name(id: &str, n: &str) -> pb::PrincipalName { pb::PrincipalName { principal_id: id.into(), name: n.into() } }
+
+    #[test]
+    fn delivery_names_layout() {
+        let (a, b) = sorted_pids();
+        let base = delivery_base();
+        let mut d = base.clone();
+        d.names = vec![name(&a, "alice"), name(&b, "bob")];
+        let empty = delivery_transcript(&base).unwrap();
+        let got = delivery_transcript(&d).unwrap();
+        let prefix = empty.len() - 4;
+        assert_eq!(&got[..prefix], &empty[..prefix]);
+        let var = |s: &str| { let mut v = (s.len() as u32).to_be_bytes().to_vec(); v.extend(s.as_bytes()); v };
+        let mut want = vec![0, 0, 0, 2];
+        for (i, n) in [(&a, "alice"), (&b, "bob")] { want.extend(var(i)); want.extend(var(n)); }
+        assert_eq!(&got[prefix..], &want[..]);
+    }
+
+    #[test]
+    fn delivery_names_must_be_sorted_and_unique() {
+        let (lo, hi) = sorted_pids();
+        let not_sorted = Err(Error::InvalidField { field: "names", reason: "not sorted" });
+        let run = |names: Vec<pb::PrincipalName>| { let mut d = delivery_base(); d.names = names; delivery_transcript(&d) };
+        assert!(run(vec![name(&lo, "x"), name(&hi, "y")]).is_ok());
+        assert_eq!(run(vec![name(&hi, "y"), name(&lo, "x")]), not_sorted);
+        assert_eq!(run(vec![name(&lo, "x"), name(&lo, "x")]), not_sorted);
+    }
+
+    #[test]
+    fn delivery_name_must_be_non_empty() {
+        let mut d = delivery_base();
+        d.names = vec![name(&pid(), "")];
+        assert_eq!(delivery_transcript(&d), Err(Error::InvalidField { field: "names.name", reason: "empty" }));
+    }
+
+    #[test]
+    fn delivery_name_principal_must_be_canonical() {
+        let run = |id: String| { let mut d = delivery_base(); d.names = vec![name(&id, "x")]; delivery_transcript(&d) };
+        let bad = Err(Error::InvalidField { field: "names.principal_id", reason: "not canonical" });
+        assert_eq!(run(pid().to_uppercase().replacen("P256:", "p256:", 1)), bad);
+        assert_eq!(run("p256:04".into()), bad);
+        assert_eq!(run(String::new()), bad);
     }
 
     #[test]
@@ -946,7 +1017,7 @@ mod tests {
         d.messages = vec![m.clone()];
         d.via = vec![pb::Targets { targets: vec![target(T::RoomId("a".into())), target(T::RecipientId("p256:04".into()))] }];
         let empty = delivery_transcript(&base).unwrap();
-        let prefix = empty.len() - 4;
+        let prefix = empty.len() - 8;
         let got = delivery_transcript(&d).unwrap();
         assert_eq!(&got[..prefix], &empty[..prefix]);
         let st = signed_message_transcript(&m).unwrap();
@@ -954,6 +1025,7 @@ mod tests {
         want.extend((st.len() as u32).to_be_bytes()); want.extend(&st);
         want.extend((m.signature.len() as u32).to_be_bytes()); want.extend(&m.signature);
         want.extend([0, 0, 0, 2, 1, 0, 0, 0, 1, b'a', 2, 0, 0, 0, 7]); want.extend(b"p256:04");
+        want.extend([0, 0, 0, 0]); // names
         assert_eq!(&got[prefix..], &want[..]);
     }
 

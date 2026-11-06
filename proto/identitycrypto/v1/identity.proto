@@ -123,10 +123,14 @@ message Message {
 // Per recipient, signed by the deliverer. messages are carried verbatim;
 // via[i] belongs to messages[i].
 //
-// delivery.v1 does not sign the carried messages' signer chains. Never read
+// delivery.v2 does not sign the carried messages' signer chains. Never read
 // `messages[i].signer` beyond what `CarriedMessage` exposes (author and session
 // key); everything else in a chain can be swapped by a relay without breaking
 // the Delivery signature.
+//
+// names binds one display name to each author principal in this Delivery:
+// sorted strictly ascending by principal_id, unique. The transcript fixes
+// only which bytes are signed; the name syntax is the verifier's rule.
 message Delivery {
   string delivery_id = 1;
   string recipient_id = 2;
@@ -136,7 +140,13 @@ message Delivery {
   repeated SignedMessage messages = 6;
   repeated Targets via = 7;
   KeyDelegation signer_device = 8;     // the deliverer's root -> device delegation; the deliverer is its principal_genesis
-  bytes signature = 9;                 // the signer_device's key over delivery.v1
+  bytes signature = 9;                 // the signer_device's key over delivery.v2
+  repeated PrincipalName names = 10;   // sorted by principal_id, unique
+}
+
+message PrincipalName {
+  string principal_id = 1;             // canonical p256:<130 hex>
+  string name = 2;                     // non-empty UTF-8
 }
 
 message SignedMessage {
