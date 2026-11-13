@@ -2,21 +2,47 @@ use crate::nonce::Insert;
 use crate::{AuthError, ClockTolerance, NonceCache};
 use identity_crypto::{
     pb, verify_signed_message, verify_signed_message_trusted_devices, AuthorDevices, PrincipalId,
-    PublicKey, Resolver, When,
+    PublicKey, Resolver, VerifiedChain, When,
 };
 
-/// The largest request body accepted, in bytes (4 MiB). Checked before any
-/// signature work.
+/// 4 MiB: the tonic layer's default body limit, in bytes. The core applies no
+/// limit of its own; a caller passes `max_body` to [`precheck_request`],
+/// [`check_request`] and [`open_signed_request`] (`None` for no limit).
 pub const MAX_BODY_BYTES: usize = 4 * 1024 * 1024;
 
 /// The caller of an accepted request. Layers put it in request extensions.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug)]
 pub struct VerifiedCaller {
     principal: PrincipalId,
     device: PublicKey,
     session_not_after: i64,
     issued_at: i64,
+    chain: Option<VerifiedChain>,
 }
+
+impl PartialEq for VerifiedCaller {
+    fn eq(&self, other: &Self) -> bool {
+        self.principal == other.principal
+            && self.device == other.device
+            && self.session_not_after == other.session_not_after
+            && self.issued_at == other.issued_at
+            && match (&self.chain, &other.chain) {
+                (None, None) => true,
+                (Some(a), Some(b)) => {
+                    a.principal() == b.principal()
+                        && a.kind() == b.kind()
+                        && a.host() == b.host()
+                        && a.subject() == b.subject()
+                        && a.device() == b.device()
+                        && a.session_key() == b.session_key()
+                        && a.session_not_after() == b.session_not_after()
+                }
+                _ => false,
+            }
+    }
+}
+
+impl Eq for VerifiedCaller {}
 
 impl VerifiedCaller {
     /// When the request was issued (Unix seconds, by the caller's clock).
@@ -37,6 +63,13 @@ impl VerifiedCaller {
     pub fn session_not_after(&self) -> i64 {
         self.session_not_after
     }
+
+    /// The verified chain behind this caller: `Some` when a [`Resolver`]
+    /// verified the request, `None` when a [`TrustedDeviceSet`] did, because
+    /// that form checks one author's device keys and never builds a chain.
+    pub fn chain(&self) -> Option<&VerifiedChain> {
+        self.chain.as_ref()
+    }
 }
 
 /// Who signed an accepted message, as a [`SignerVerifier`] reports it.
@@ -48,6 +81,10 @@ pub struct VerifiedSigner {
     pub session_not_after: i64,
     pub nonce: Vec<u8>,
     pub issued_at: i64,
+    /// The chain the verifier built. `Some` when the [`Resolver`] verifier ran
+    /// (it has the chain from `verify_signed_message`); `None` for the
+    /// [`TrustedDeviceSet`] form, which checks device keys and never builds one.
+    pub chain: Option<VerifiedChain>,
 }
 
 /// Judges who signed a message: the signature, the signer's chain, the audience
@@ -84,6 +121,7 @@ impl SignerVerifier for Resolver {
             session_not_after: chain.session_not_after(),
             nonce: checked.nonce().to_vec(),
             issued_at: checked.issued_at(),
+            chain: Some(chain.clone()),
         })
     }
 }
@@ -158,6 +196,7 @@ impl SignerVerifier for TrustedDeviceSet {
             session_not_after: checked.session_not_after(),
             nonce: checked.nonce().to_vec(),
             issued_at: checked.issued_at(),
+            chain: None,
         })
     }
 }
@@ -186,7 +225,8 @@ pub fn claimed_genesis(signed: &pb::SignedMessage) -> Result<PublicKey, AuthErro
 }
 
 /// The checks that need no key and no state, in this order: the body is within
-/// [`MAX_BODY_BYTES`]; the audience and the body type equal the expected
+/// `max_body` bytes (`None`: no size check; this crate applies no limit of its
+/// own, and [`MAX_BODY_BYTES`] is only the tonic layer's default); the audience and the body type equal the expected
 /// strings (compared for equality, never parsed); the signature is not empty;
 /// the nonce is 16 bytes. Each has its own [`AuthError`].
 pub fn precheck_request(
@@ -194,12 +234,15 @@ pub fn precheck_request(
     expected_audience: &str,
     expected_body_type: &str,
     received_body: &[u8],
+    max_body: Option<usize>,
 ) -> Result<(), AuthError> {
-    if received_body.len() > MAX_BODY_BYTES {
-        return Err(AuthError::BodyTooLarge {
-            len: received_body.len(),
-            max: MAX_BODY_BYTES,
-        });
+    if let Some(max) = max_body {
+        if received_body.len() > max {
+            return Err(AuthError::BodyTooLarge {
+                len: received_body.len(),
+                max,
+            });
+        }
     }
     if signed.audience != expected_audience {
         return Err(AuthError::Audience);
@@ -217,6 +260,13 @@ pub fn precheck_request(
 }
 
 /// A request that passed every check but the replay cache.
+///
+/// Holding one has consumed nothing: [`check_request`] is side-effect free, so
+/// it may be called any number of times on one message, and a `Checked` that is
+/// dropped leaves no trace. Only [`Checked::accept`] writes the nonce to a
+/// [`NonceCache`]. A caller with its own replay store reads
+/// [`nonce`](Self::nonce), [`issued_at`](Self::issued_at) and
+/// [`session_key`](Self::session_key) and decides for itself.
 #[derive(Debug)]
 pub struct Checked {
     caller: VerifiedCaller,
@@ -226,6 +276,26 @@ pub struct Checked {
 }
 
 impl Checked {
+    /// Who signed the request.
+    pub fn caller(&self) -> &VerifiedCaller {
+        &self.caller
+    }
+
+    /// The request's nonce, as signed.
+    pub fn nonce(&self) -> &[u8] {
+        &self.nonce
+    }
+
+    /// When the request was issued (Unix seconds, by the caller's clock).
+    pub fn issued_at(&self) -> i64 {
+        self.issued_at
+    }
+
+    /// The session key that signed the request: the replay cache's key.
+    pub fn session_key(&self) -> &PublicKey {
+        &self.session_key
+    }
+
     /// Remembers the request's nonce. Only a request that verified is
     /// remembered, so an unauthenticated sender cannot fill the cache.
     pub fn accept(self, nonces: &mut NonceCache, now: i64) -> Result<VerifiedCaller, AuthError> {
@@ -247,11 +317,18 @@ pub fn check_request<V: SignerVerifier + ?Sized>(
     expected_audience: &str,
     expected_body_type: &str,
     received_body: &[u8],
+    max_body: Option<usize>,
     signers: &V,
     tolerance: ClockTolerance,
     now: i64,
 ) -> Result<Checked, AuthError> {
-    precheck_request(signed, expected_audience, expected_body_type, received_body)?;
+    precheck_request(
+        signed,
+        expected_audience,
+        expected_body_type,
+        received_body,
+        max_body,
+    )?;
     let who = signers.verify(signed, expected_audience, When::Live { now })?;
     if (now - who.issued_at).abs() > tolerance.seconds() {
         return Err(AuthError::Skew);
@@ -265,6 +342,7 @@ pub fn check_request<V: SignerVerifier + ?Sized>(
             device: who.device,
             session_not_after: who.session_not_after,
             issued_at: who.issued_at,
+            chain: who.chain,
         },
         session_key: who.session_key,
         nonce: who.nonce,
@@ -281,6 +359,7 @@ pub fn open_signed_request<V: SignerVerifier + ?Sized>(
     expected_audience: &str,
     expected_body_type: &str,
     received_body: &[u8],
+    max_body: Option<usize>,
     signers: &V,
     nonces: &mut NonceCache,
     tolerance: ClockTolerance,
@@ -291,6 +370,7 @@ pub fn open_signed_request<V: SignerVerifier + ?Sized>(
         expected_audience,
         expected_body_type,
         received_body,
+        max_body,
         signers,
         tolerance,
         now,

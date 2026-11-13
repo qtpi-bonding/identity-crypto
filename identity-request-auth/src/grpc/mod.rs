@@ -21,7 +21,9 @@
 //! * A **pass-through** method (the server's `allow_unsigned`, the client's
 //!   `pass_through`) is skipped entirely: checked before anything is buffered or
 //!   hashed, so its body is neither size-limited nor read by these layers.
-//! * Any other body is buffered up to [`MAX_BODY_BYTES`], on both sides.
+//! * Any other body is buffered up to a limit, on both sides: [`MAX_BODY_BYTES`]
+//!   by default, or what `max_body` sets (`None` for no limit). The core itself
+//!   applies no limit; this layer passes its own to it.
 
 mod devices;
 mod expiry;
@@ -121,15 +123,21 @@ fn unframe(bytes: &[u8]) -> Result<&[u8], AuthError> {
     Ok(message)
 }
 
-/// Reads a whole request body, refusing one over [`MAX_BODY_BYTES`]. The body is
-/// cut at the limit, so the reported length of an over-limit body is one byte
-/// over it.
-async fn buffer(body: Body) -> Result<bytes::Bytes, AuthError> {
-    match Limited::new(body, MAX_BODY_BYTES).collect().await {
+/// Reads a whole request body, refusing one over `max_body` (`None`: no limit).
+/// The body is cut at the limit, so the reported length of an over-limit body is
+/// one byte over it.
+async fn buffer(body: Body, max_body: Option<usize>) -> Result<bytes::Bytes, AuthError> {
+    let Some(max) = max_body else {
+        return match body.collect().await {
+            Ok(collected) => Ok(collected.to_bytes()),
+            Err(_) => Err(AuthError::Malformed("request body")),
+        };
+    };
+    match Limited::new(body, max).collect().await {
         Ok(collected) => Ok(collected.to_bytes()),
         Err(e) if e.is::<LengthLimitError>() => Err(AuthError::BodyTooLarge {
-            len: MAX_BODY_BYTES + 1,
-            max: MAX_BODY_BYTES,
+            len: max.saturating_add(1),
+            max,
         }),
         Err(_) => Err(AuthError::Malformed("request body")),
     }
@@ -143,6 +151,7 @@ pub struct SignRequests {
     body_type_of: BodyTypeOf,
     kind_of: KindOf,
     pass_through: Arc<dyn Fn(&str) -> bool + Send + Sync>,
+    max_body: Option<usize>,
 }
 
 impl SignRequests {
@@ -157,7 +166,15 @@ impl SignRequests {
             body_type_of: Arc::new(body_type_of),
             kind_of: all_unary(),
             pass_through: Arc::new(|_| false),
+            max_body: Some(MAX_BODY_BYTES),
         }
+    }
+
+    /// The largest request body this layer buffers before signing it; `None`
+    /// means no limit. The default is `Some(`[`MAX_BODY_BYTES`]`)`.
+    pub fn max_body(mut self, limit: Option<usize>) -> Self {
+        self.max_body = limit;
+        self
     }
 
     /// Says which methods stream. A client-streaming or bidirectional method is
@@ -239,7 +256,7 @@ where
                 return inner.call(Request::from_parts(parts, body)).await;
             };
 
-            let framed = match buffer(body).await {
+            let framed = match buffer(body, config.max_body).await {
                 Ok(framed) => framed,
                 Err(e @ AuthError::BodyTooLarge { .. }) => {
                     return Ok(Status::resource_exhausted(e.to_string()).into_http())
@@ -281,6 +298,7 @@ struct Config<K> {
     allow_unsigned: Arc<dyn Fn(&str) -> bool + Send + Sync>,
     on_reject: Arc<dyn Fn(AuthError) -> Status + Send + Sync>,
     reject_issued_before: i64,
+    max_body: Option<usize>,
 }
 
 impl<K> Clone for Config<K> {
@@ -294,6 +312,7 @@ impl<K> Clone for Config<K> {
             allow_unsigned: self.allow_unsigned.clone(),
             on_reject: self.on_reject.clone(),
             reject_issued_before: self.reject_issued_before,
+            max_body: self.max_body,
         }
     }
 }
@@ -324,6 +343,7 @@ impl<K: TrustedDevices> RequestAuthLayer<K> {
                 allow_unsigned: Arc::new(allow_unsigned),
                 on_reject: Arc::new(on_reject),
                 reject_issued_before,
+                max_body: Some(MAX_BODY_BYTES),
             },
         }
     }
@@ -338,6 +358,14 @@ impl<K: TrustedDevices> RequestAuthLayer<K> {
     /// closes that. Pass `0` (the epoch) to opt out.
     pub fn reject_issued_before(mut self, unix_seconds: i64) -> Self {
         self.config.reject_issued_before = unix_seconds;
+        self
+    }
+
+    /// The largest request body (the message inside the gRPC frame, plus its
+    /// 5-byte prefix when buffered) this layer buffers and passes to the core;
+    /// `None` means no limit. The default is `Some(`[`MAX_BODY_BYTES`]`)`.
+    pub fn max_body(mut self, limit: Option<usize>) -> Self {
+        self.config.max_body = limit;
         self
     }
 
@@ -457,7 +485,7 @@ where
                 }
             };
 
-            let collected = match buffer(body).await {
+            let collected = match buffer(body, config.max_body).await {
                 Ok(collected) => collected,
                 Err(e) => return Ok(refused(&config, e)),
             };
@@ -474,6 +502,7 @@ where
                     &audience,
                     body_type,
                     message,
+                    config.max_body,
                     config.clock.now_unix(),
                 )
                 .await

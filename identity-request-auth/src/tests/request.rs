@@ -80,6 +80,7 @@ impl Fixture {
             audience,
             body_type,
             body,
+            Some(MAX_BODY_BYTES),
             set,
             &mut self.nonces.borrow_mut(),
             self.tolerance,

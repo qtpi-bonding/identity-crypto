@@ -770,3 +770,77 @@ impl<T> PollExt for Poll<Option<T>> {
         matches!(self, Poll::Ready(None))
     }
 }
+
+// The body limit is the caller's: 4 MiB is only this layer's default.
+
+#[test]
+fn the_server_layer_default_refuses_a_body_over_4_mib() {
+    let s = server();
+    let big = vec![0u8; MAX_BODY_BYTES + 1];
+    let audience = crate::audience_for("acme.v1.Inventory", "ListItems", SERVER);
+    let signed = seal_request(&s.signer, &audience, BODY_TYPE, &big).expect("sealing");
+    let mut req = request(PATH, framed(&big));
+    with_header(&mut req, &signed);
+    let resp = block_on(s.protected().oneshot(req)).expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("8"));
+    assert_eq!(s.handler_calls(), 0);
+    assert_eq!(
+        s.refusals(),
+        vec![format!(
+            "BodyTooLarge {{ len: {}, max: {} }}",
+            MAX_BODY_BYTES + 1,
+            MAX_BODY_BYTES
+        )]
+    );
+}
+
+#[test]
+fn a_server_limit_the_service_sets_replaces_the_default() {
+    let s = server();
+    let message = vec![1u8; 200];
+    let audience = crate::audience_for("acme.v1.Inventory", "ListItems", SERVER);
+    let signed = seal_request(&s.signer, &audience, BODY_TYPE, &message).expect("sealing");
+
+    let mut req = request(PATH, framed(&message));
+    with_header(&mut req, &signed);
+    let small = s.layer().max_body(Some(100)).layer(s.handler());
+    let resp = block_on(small.oneshot(req)).expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("8"), "over its 100");
+    assert_eq!(s.handler_calls(), 0);
+
+    let mut req = request(PATH, framed(&message));
+    with_header(&mut req, &signed);
+    let roomy = s.layer().max_body(Some(1000)).layer(s.handler());
+    let resp = block_on(roomy.oneshot(req)).expect("infallible");
+    assert_eq!(grpc_status(&resp), None, "under its 1000");
+}
+
+#[test]
+fn a_service_can_lift_the_server_limit_with_none() {
+    let s = server();
+    let big = vec![4u8; MAX_BODY_BYTES + 1];
+    let client = SignRequests::new(s.signer.clone(), SERVER, body_type_of)
+        .max_body(None)
+        .layer(s.layer().max_body(None).layer(s.handler()));
+    let resp = block_on(client.oneshot(request(PATH, framed(&big)))).expect("infallible");
+    assert_eq!(grpc_status(&resp), None, "{:?}", s.refusals());
+    assert_eq!(s.handler_calls(), 1);
+}
+
+#[test]
+fn the_client_limit_is_configurable_and_refuses_before_sending() {
+    let s = server();
+    let message = vec![1u8; 200];
+    let client = SignRequests::new(s.signer.clone(), SERVER, body_type_of)
+        .max_body(Some(100))
+        .layer(s.protected());
+    let resp = block_on(client.oneshot(request(PATH, framed(&message)))).expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("8"));
+    assert_eq!(s.handler_calls(), 0);
+    assert!(s.refusals().is_empty(), "it never reached the server layer");
+
+    // The default client limit is still 4 MiB.
+    let big = vec![0u8; MAX_BODY_BYTES + 1];
+    let resp = block_on(s.client().oneshot(request(PATH, framed(&big)))).expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("8"));
+}

@@ -38,9 +38,16 @@ impl<K: TrustedDevices> Verifier<K> {
         expected_audience: &str,
         expected_body_type: &str,
         received_body: &[u8],
+        max_body: Option<usize>,
         now: i64,
     ) -> Result<VerifiedCaller, AuthError> {
-        precheck_request(signed, expected_audience, expected_body_type, received_body)?;
+        precheck_request(
+            signed,
+            expected_audience,
+            expected_body_type,
+            received_body,
+            max_body,
+        )?;
         if signed.body != received_body {
             return Err(AuthError::BodyMismatch);
         }
@@ -66,6 +73,7 @@ impl<K: TrustedDevices> Verifier<K> {
             expected_audience,
             expected_body_type,
             received_body,
+            max_body,
             &set,
             self.tolerance,
             now,

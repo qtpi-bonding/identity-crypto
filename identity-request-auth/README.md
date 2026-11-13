@@ -44,6 +44,20 @@ core with its own tests unchanged. These hold, and each has a test in
   `NonceLength`; then the signer check (`NotSetUp` for `None`, `Verify(inner)` with
   the identity-crypto error kept, `UnknownAuthor`); then the tolerance (`Skew`),
   then `BodyMismatch` (the request that arrived is not the one that was signed).
+* **C5. The chain, when there is one.** `VerifiedSigner` has `chain:
+  Option<VerifiedChain>`, and `VerifiedCaller::chain()` returns it. It is `Some`
+  when a `Resolver` verified the request (the chain from `verify_signed_message`:
+  `kind()`, `principal()`, `host()`) and `None` for a `TrustedDeviceSet`, which
+  checks one author's device keys and never builds a chain.
+* **C6. No size limit of its own.** `precheck_request`, `check_request` and
+  `open_signed_request` take `max_body: Option<usize>`: `Some(n)` refuses a body
+  over `n` bytes with `BodyTooLarge`, `None` makes no size check. `MAX_BODY_BYTES`
+  (4 MiB) is a public constant and the default only in the tonic layer.
+* **C7. `check_request` has no side effect.** It never touches a replay cache, so
+  it can run twice on one message; `Checked` exposes `caller()`, `nonce()`,
+  `issued_at()` and `session_key()` for a caller with its own replay store.
+  `Checked::accept(&mut NonceCache, now)` is the only call that consumes the
+  nonce.
 
 `Skew` is only this crate's own tighter `ClockTolerance` (1 to 30 s; it can only
 tighten). A message outside identity-crypto's own 30 s is `Verify(Error::Skew)`.
@@ -64,7 +78,7 @@ tighten). A message outside identity-crypto's own 30 s is `Verify(Error::Skew)`.
 * A **pass-through** method (`allow_unsigned` on the server, `pass_through` on the
   client) is skipped entirely: checked before any buffering or hashing, so its
   body is not size-limited either.
-* Every other body is buffered up to `MAX_BODY_BYTES` (4 MiB), on both sides.
+* Every other body is buffered up to a limit, on both sides: `MAX_BODY_BYTES` (4 MiB) by default, or what `max_body(Option<usize>)` sets on `RequestAuthLayer` and `SignRequests` (`None` for no limit).
 * `RequestSigner` re-mints its session at 60% of its life, after expiry, or when
   the clock has gone back to before the held session's start.
 
