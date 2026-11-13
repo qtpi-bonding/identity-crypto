@@ -1,19 +1,38 @@
 //! The tonic/tower layer, built only from the transport-free core.
 //!
-//! The client ([`SignRequests`]) buffers one unary request, signs its message
-//! bytes and attaches the `SignedMessage` as the binary metadata header
-//! [`REQUEST_HEADER`]. The server ([`RequestAuthLayer`]) reads that header,
-//! buffers the request, checks it through [`crate::Verifier`] and puts the
+//! The client ([`SignRequests`]) buffers one unary or server-streaming request,
+//! signs its message bytes and attaches the `SignedMessage` as the binary
+//! metadata header [`REQUEST_HEADER`]. The server ([`RequestAuthLayer`]) reads
+//! that header, buffers the request, checks it through [`Verifier`] and puts the
 //! [`crate::VerifiedCaller`] in the request extensions.
 //!
 //! Both sides sign and check the message inside the gRPC length prefix: the
 //! prefix is stripped, and the bytes after it are what the signature covers.
+//!
+//! # What is signed, and what is not
+//!
+//! * A request is one message. **Client-streaming and bidirectional methods
+//!   cannot be signed** (a signature covers one message): both layers refuse
+//!   them with [`AuthError::StreamingRequestUnsupported`] before reading any of
+//!   the body. Say which methods stream with `method_kinds`.
+//! * A **server-streaming** response ends with `UNAUTHENTICATED` in its
+//!   trailers at [`crate::VerifiedCaller::session_not_after`]: a stream does not
+//!   outlive the session that opened it.
+//! * A **pass-through** method (the server's `allow_unsigned`, the client's
+//!   `pass_through`) is skipped entirely: checked before anything is buffered or
+//!   hashed, so its body is neither size-limited nor read by these layers.
+//! * Any other body is buffered up to [`MAX_BODY_BYTES`], on both sides.
+
+mod devices;
+mod expiry;
+mod verifier;
+
+pub use devices::{LookupError, TrustedDevices};
+pub use verifier::Verifier;
 
 use crate::MAX_BODY_BYTES;
-use crate::{
-    audience_for, seal_request, split_path, AuthError, Clock, RequestSigner, TrustedDevices,
-    Verifier,
-};
+use crate::{audience_for, seal_request, split_path, AuthError, Clock, RequestSigner};
+use expiry::ExpiringBody;
 use http::{Request, Response};
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
 use identity_crypto::pb;
@@ -33,15 +52,50 @@ pub const REQUEST_HEADER: &str = "x-request-bin";
 /// Maps a gRPC path to the proto type URL of its request message.
 pub type BodyTypeOf = Arc<dyn Fn(&str) -> Option<&'static str> + Send + Sync>;
 
+/// How a method moves its messages.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MethodKind {
+    /// One request, one response. The default for every method.
+    #[default]
+    Unary,
+    /// One request, a stream of responses: the stream ends at the session's end.
+    ServerStreaming,
+    /// A stream of requests. Cannot be signed: refused.
+    ClientStreaming,
+    /// Streams both ways. Cannot be signed: refused.
+    Bidi,
+}
+
+impl MethodKind {
+    fn streams_request(self) -> bool {
+        matches!(self, Self::ClientStreaming | Self::Bidi)
+    }
+}
+
+type KindOf = Arc<dyn Fn(&str) -> MethodKind + Send + Sync>;
+
+fn all_unary() -> KindOf {
+    Arc::new(|_| MethodKind::Unary)
+}
+
 type BoxFuture<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
 /// The default mapping from a refusal to a gRPC status. A service that wants
 /// its own coded errors passes its own `on_reject` instead.
+///
+/// | refusal | status |
+/// |---|---|
+/// | `LookupUnavailable` | `UNAVAILABLE` |
+/// | `BodyTooLarge`, `Busy` | `RESOURCE_EXHAUSTED` |
+/// | `StreamingRequestUnsupported` | `UNIMPLEMENTED` |
+/// | `Entropy`, `Credential` | `INTERNAL` |
+/// | everything else | `UNAUTHENTICATED` |
 pub fn default_reject(err: AuthError) -> Status {
     let message = err.to_string();
     match err {
         AuthError::LookupUnavailable => Status::unavailable(message),
         AuthError::BodyTooLarge { .. } | AuthError::Busy => Status::resource_exhausted(message),
+        AuthError::StreamingRequestUnsupported(_) => Status::unimplemented(message),
         AuthError::Entropy(_) | AuthError::Credential(_) => Status::internal(message),
         _ => Status::unauthenticated(message),
     }
@@ -63,12 +117,28 @@ fn unframe(bytes: &[u8]) -> Result<&[u8], AuthError> {
     Ok(message)
 }
 
-/// Client layer: signs each unary request for `server_id`.
+/// Reads a whole request body, refusing one over [`MAX_BODY_BYTES`]. The body is
+/// cut at the limit, so the reported length of an over-limit body is one byte
+/// over it.
+async fn buffer(body: Body) -> Result<bytes::Bytes, AuthError> {
+    match Limited::new(body, MAX_BODY_BYTES).collect().await {
+        Ok(collected) => Ok(collected.to_bytes()),
+        Err(e) if e.is::<LengthLimitError>() => Err(AuthError::BodyTooLarge {
+            len: MAX_BODY_BYTES + 1,
+            max: MAX_BODY_BYTES,
+        }),
+        Err(_) => Err(AuthError::Malformed("request body")),
+    }
+}
+
+/// Client layer: signs each unary or server-streaming request for `server_id`.
 #[derive(Clone)]
 pub struct SignRequests {
     signer: Arc<RequestSigner>,
     server_id: Arc<str>,
     body_type_of: BodyTypeOf,
+    kind_of: KindOf,
+    pass_through: Arc<dyn Fn(&str) -> bool + Send + Sync>,
 }
 
 impl SignRequests {
@@ -81,7 +151,27 @@ impl SignRequests {
             signer,
             server_id: Arc::from(server_id.into()),
             body_type_of: Arc::new(body_type_of),
+            kind_of: all_unary(),
+            pass_through: Arc::new(|_| false),
         }
+    }
+
+    /// Says which methods stream. A client-streaming or bidirectional method is
+    /// refused with [`AuthError::StreamingRequestUnsupported`] before its body is
+    /// read. Every method not named is [`MethodKind::Unary`].
+    pub fn method_kinds(
+        mut self,
+        kind_of: impl Fn(&str) -> MethodKind + Send + Sync + 'static,
+    ) -> Self {
+        self.kind_of = Arc::new(kind_of);
+        self
+    }
+
+    /// Methods to send as they are, never signed: the body is neither buffered nor
+    /// hashed. Use it for the same methods the server allows unsigned.
+    pub fn pass_through(mut self, skip: impl Fn(&str) -> bool + Send + Sync + 'static) -> Self {
+        self.pass_through = Arc::new(skip);
+        self
     }
 }
 
@@ -127,6 +217,11 @@ where
         Box::pin(async move {
             let (mut parts, body) = req.into_parts();
             let path = parts.uri.path().to_owned();
+            // A pass-through method is skipped before anything else: its body is
+            // not touched.
+            if (config.pass_through)(&path) {
+                return inner.call(Request::from_parts(parts, body)).await;
+            }
             // A method with no known body type is not a signed method: it goes
             // out unsigned, and the server decides whether that is allowed.
             let (Some((service, method)), Some(body_type)) =
@@ -134,9 +229,15 @@ where
             else {
                 return inner.call(Request::from_parts(parts, body)).await;
             };
+            if (config.kind_of)(&path).streams_request() {
+                return Ok(default_reject(AuthError::StreamingRequestUnsupported(path)).into_http());
+            }
 
-            let framed = match body.collect().await {
-                Ok(collected) => collected.to_bytes(),
+            let framed = match buffer(body).await {
+                Ok(framed) => framed,
+                Err(e @ AuthError::BodyTooLarge { .. }) => {
+                    return Ok(Status::resource_exhausted(e.to_string()).into_http())
+                }
                 Err(e) => {
                     return Ok(Status::internal(format!("cannot read the request: {e}")).into_http())
                 }
@@ -170,14 +271,29 @@ struct Config<K> {
     clock: Arc<dyn Clock>,
     server_id: Arc<str>,
     body_type_of: BodyTypeOf,
+    kind_of: KindOf,
     allow_unsigned: Arc<dyn Fn(&str) -> bool + Send + Sync>,
     on_reject: Arc<dyn Fn(AuthError) -> Status + Send + Sync>,
+}
+
+impl<K> Clone for Config<K> {
+    fn clone(&self) -> Self {
+        Self {
+            verifier: self.verifier.clone(),
+            clock: self.clock.clone(),
+            server_id: self.server_id.clone(),
+            body_type_of: self.body_type_of.clone(),
+            kind_of: self.kind_of.clone(),
+            allow_unsigned: self.allow_unsigned.clone(),
+            on_reject: self.on_reject.clone(),
+        }
+    }
 }
 
 /// Server layer: refuses any request to a non-allow-listed method unless its
 /// signed message verifies.
 pub struct RequestAuthLayer<K> {
-    config: Arc<Config<K>>,
+    config: Config<K>,
 }
 
 impl<K: TrustedDevices> RequestAuthLayer<K> {
@@ -190,15 +306,28 @@ impl<K: TrustedDevices> RequestAuthLayer<K> {
         on_reject: impl Fn(AuthError) -> Status + Send + Sync + 'static,
     ) -> Self {
         Self {
-            config: Arc::new(Config {
+            config: Config {
                 verifier,
                 clock,
                 server_id: Arc::from(server_id.into()),
                 body_type_of: Arc::new(body_type_of),
+                kind_of: all_unary(),
                 allow_unsigned: Arc::new(allow_unsigned),
                 on_reject: Arc::new(on_reject),
-            }),
+            },
         }
+    }
+
+    /// Says which methods stream. A client-streaming or bidirectional method is
+    /// refused with [`AuthError::StreamingRequestUnsupported`] before its body is
+    /// read; the response of a server-streaming method ends when the caller's
+    /// session does. Every method not named is [`MethodKind::Unary`].
+    pub fn method_kinds(
+        mut self,
+        kind_of: impl Fn(&str) -> MethodKind + Send + Sync + 'static,
+    ) -> Self {
+        self.config.kind_of = Arc::new(kind_of);
+        self
     }
 }
 
@@ -208,7 +337,7 @@ impl<S, K> Layer<S> for RequestAuthLayer<K> {
     fn layer(&self, inner: S) -> Self::Service {
         RequireSigned {
             inner,
-            config: self.config.clone(),
+            config: Arc::new(self.config.clone()),
         }
     }
 }
@@ -258,6 +387,8 @@ where
         Box::pin(async move {
             let (mut parts, body) = req.into_parts();
             let path = parts.uri.path().to_owned();
+            // A pass-through method is skipped before anything else: no
+            // buffering, no hashing, no size limit.
             if (config.allow_unsigned)(&path) {
                 return inner.call(Request::from_parts(parts, body)).await;
             }
@@ -268,6 +399,13 @@ where
             let Some(body_type) = (config.body_type_of)(&path) else {
                 return Ok(refused(&config, AuthError::UnknownMethod(path.clone())));
             };
+            let kind = (config.kind_of)(&path);
+            if kind.streams_request() {
+                return Ok(refused(
+                    &config,
+                    AuthError::StreamingRequestUnsupported(path),
+                ));
+            }
 
             let metadata = MetadataMap::from_headers(parts.headers.clone());
             let signed = match metadata.get_bin(REQUEST_HEADER).map(|v| v.to_bytes()) {
@@ -294,20 +432,9 @@ where
                 }
             };
 
-            let collected = match Limited::new(body, MAX_BODY_BYTES).collect().await {
-                Ok(collected) => collected.to_bytes(),
-                // The body was cut at the limit, so its full length is unknown; it is
-                // reported as one byte over the limit.
-                Err(e) if e.is::<LengthLimitError>() => {
-                    return Ok(refused(
-                        &config,
-                        AuthError::BodyTooLarge {
-                            len: MAX_BODY_BYTES + 1,
-                            max: MAX_BODY_BYTES,
-                        },
-                    ))
-                }
-                Err(_) => return Ok(refused(&config, AuthError::Malformed("request body"))),
+            let collected = match buffer(body).await {
+                Ok(collected) => collected,
+                Err(e) => return Ok(refused(&config, e)),
             };
             let message = match unframe(&collected) {
                 Ok(message) => message,
@@ -330,10 +457,17 @@ where
                 Err(e) => return Ok(refused(&config, e)),
             };
 
+            let not_after = caller.session_not_after();
             parts.extensions.insert(caller);
-            inner
+            let response = inner
                 .call(Request::from_parts(parts, Body::new(Full::new(collected))))
-                .await
+                .await?;
+            Ok(match kind {
+                MethodKind::ServerStreaming => response.map(|body| {
+                    Body::new(ExpiringBody::new(body, config.clock.clone(), not_after))
+                }),
+                _ => response,
+            })
         })
     }
 }

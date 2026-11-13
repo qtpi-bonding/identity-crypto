@@ -1,10 +1,9 @@
 use crate::nonce::Insert;
-use crate::{AuthError, ClockTolerance, LookupError, NonceCache, NonceCaps, TrustedDevices};
+use crate::{AuthError, ClockTolerance, NonceCache};
 use identity_crypto::{
-    pb, verify_signed_message_trusted_devices, AuthorDevices, PrincipalId, PublicKey, Timestamp,
-    When,
+    pb, verify_signed_message, verify_signed_message_trusted_devices, AuthorDevices, PrincipalId,
+    PublicKey, Resolver, When,
 };
-use std::sync::Mutex;
 
 /// The largest request body accepted, in bytes (4 MiB). Checked before any
 /// signature work.
@@ -34,116 +33,133 @@ impl VerifiedCaller {
     }
 }
 
-/// Checks every signed request a service receives. Owns the trusted-device
-/// lookup, the clock tolerance and the replay cache, so the cache is shared
-/// by all requests handled through one verifier.
-pub struct Verifier<K> {
-    keys: K,
-    tolerance: ClockTolerance,
-    nonces: Mutex<NonceCache>,
+/// Who signed an accepted message, as a [`SignerVerifier`] reports it.
+#[derive(Clone, Debug)]
+pub struct VerifiedSigner {
+    pub principal: PrincipalId,
+    pub device: PublicKey,
+    pub session_key: PublicKey,
+    pub session_not_after: i64,
+    pub nonce: Vec<u8>,
+    pub issued_at: i64,
 }
 
-impl<K: TrustedDevices> Verifier<K> {
-    pub fn new(keys: K, tolerance: ClockTolerance, caps: NonceCaps) -> Self {
-        Self {
-            keys,
-            tolerance,
-            nonces: Mutex::new(NonceCache::new(caps)),
-        }
-    }
-
-    /// Accepts a request when, in order: the body is within [`MAX_BODY_BYTES`];
-    /// the audience and body type match; the nonce is 16 bytes; `received_body`
-    /// equals the signed body; the signer is a trusted device of its principal
-    /// (`Unknown` is refused, `Unavailable` is not); the signature verifies
-    /// under identity-crypto's 30 s skew; `issued_at` is within this verifier's
-    /// tolerance; and the nonce is fresh. `now` is the verifier's clock.
-    pub async fn open_signed_request(
+/// Judges who signed a message: the signature, the signer's chain, the audience
+/// and identity-crypto's 30 s window (`when`). Synchronous, with no `Send`,
+/// `Sync` or lock requirement, so a transport that has its own way of waiting
+/// (or none) can use it as it is.
+///
+/// Implemented for identity-crypto's [`Resolver`] (the full chain),
+/// for [`TrustedDeviceSet`] (one author's device keys), for `&V` and for
+/// `Option<V>` (`None` is [`AuthError::NotSetUp`]).
+pub trait SignerVerifier {
+    fn verify(
         &self,
-        signed: &pb::SignedMessage,
+        msg: &pb::SignedMessage,
         expected_audience: &str,
-        expected_body_type: &str,
-        received_body: &[u8],
-        now: i64,
-    ) -> Result<VerifiedCaller, AuthError> {
-        if received_body.len() > MAX_BODY_BYTES {
-            return Err(AuthError::BodyTooLarge {
-                len: received_body.len(),
-                max: MAX_BODY_BYTES,
-            });
-        }
-        if signed.audience != expected_audience {
-            return Err(AuthError::Audience);
-        }
-        if signed.body_type != expected_body_type {
-            return Err(AuthError::BodyType);
-        }
-        if signed.nonce.len() != 16 {
-            return Err(AuthError::NonceLength(signed.nonce.len()));
-        }
-        if signed.body != received_body {
-            return Err(AuthError::BodyMismatch);
-        }
+        when: When,
+    ) -> Result<VerifiedSigner, AuthError>;
+}
 
-        let genesis = claimed_genesis(signed)?;
-        let devices = self
-            .keys
-            .devices_for(
-                &genesis,
-                Timestamp {
-                    seconds: now,
-                    nanos: 0,
-                },
-            )
-            .await
-            .map_err(|e| match e {
-                LookupError::Unknown => AuthError::UnknownAuthor,
-                LookupError::Unavailable => AuthError::LookupUnavailable,
-            })?;
-
-        let verified = verify_signed_message_trusted_devices(
-            signed,
-            expected_audience,
-            AuthorDevices {
-                author_genesis: &genesis,
-                devices: &devices,
-            },
-            When::Live { now },
-        )
-        .map_err(map_verify)?;
-
-        if (now - verified.issued_at()).abs() > self.tolerance.seconds() {
-            return Err(AuthError::Skew);
-        }
-
-        // Only the cache is touched after the last await, so no guard is held across one.
-        let outcome = self
-            .nonces
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
-            .insert(
-                verified.session_key(),
-                verified.nonce(),
-                verified.issued_at(),
-                now,
-            );
-        match outcome {
-            Insert::Fresh => {}
-            Insert::Replayed => return Err(AuthError::Replayed),
-            Insert::Busy => return Err(AuthError::Busy),
-        }
-
-        Ok(VerifiedCaller {
-            principal: PrincipalId::from_genesis(genesis),
-            device: verified.device().clone(),
-            session_not_after: verified.session_not_after(),
+impl SignerVerifier for Resolver {
+    fn verify(
+        &self,
+        msg: &pb::SignedMessage,
+        expected_audience: &str,
+        when: When,
+    ) -> Result<VerifiedSigner, AuthError> {
+        let checked =
+            verify_signed_message(msg, expected_audience, self, when).map_err(AuthError::Verify)?;
+        let chain = checked.chain();
+        Ok(VerifiedSigner {
+            principal: chain.principal().clone(),
+            device: chain.device().clone(),
+            session_key: chain.session_key().clone(),
+            session_not_after: chain.session_not_after(),
+            nonce: checked.nonce().to_vec(),
+            issued_at: checked.issued_at(),
         })
     }
 }
 
-/// The principal a message claims, read before any check. The verifier then
-/// requires it to match the session certificate it signs under.
-fn claimed_genesis(signed: &pb::SignedMessage) -> Result<PublicKey, AuthError> {
+impl<V: SignerVerifier + ?Sized> SignerVerifier for &V {
+    fn verify(
+        &self,
+        msg: &pb::SignedMessage,
+        expected_audience: &str,
+        when: When,
+    ) -> Result<VerifiedSigner, AuthError> {
+        (**self).verify(msg, expected_audience, when)
+    }
+}
+
+impl<V: SignerVerifier> SignerVerifier for Option<V> {
+    fn verify(
+        &self,
+        msg: &pb::SignedMessage,
+        expected_audience: &str,
+        when: When,
+    ) -> Result<VerifiedSigner, AuthError> {
+        match self {
+            Some(inner) => inner.verify(msg, expected_audience, when),
+            None => Err(AuthError::NotSetUp),
+        }
+    }
+}
+
+/// One author's trusted device keys. A request signed under a session of any
+/// other device is [`AuthError::UnknownAuthor`]: removing a device from the set
+/// revokes it at the next call.
+pub struct TrustedDeviceSet {
+    author_genesis: PublicKey,
+    devices: Vec<PublicKey>,
+}
+
+impl TrustedDeviceSet {
+    pub fn new(author_genesis: PublicKey, devices: Vec<PublicKey>) -> Self {
+        Self {
+            author_genesis,
+            devices,
+        }
+    }
+}
+
+impl SignerVerifier for TrustedDeviceSet {
+    fn verify(
+        &self,
+        msg: &pb::SignedMessage,
+        expected_audience: &str,
+        when: When,
+    ) -> Result<VerifiedSigner, AuthError> {
+        let checked = verify_signed_message_trusted_devices(
+            msg,
+            expected_audience,
+            AuthorDevices {
+                author_genesis: &self.author_genesis,
+                devices: &self.devices,
+            },
+            when,
+        )
+        .map_err(|e| match e {
+            // A device that is not bound to the principal is an unknown author.
+            identity_crypto::Error::NotBound => AuthError::UnknownAuthor,
+            other => AuthError::Verify(other),
+        })?;
+        Ok(VerifiedSigner {
+            principal: PrincipalId::from_genesis(self.author_genesis.clone()),
+            device: checked.device().clone(),
+            session_key: checked.session_key().clone(),
+            session_not_after: checked.session_not_after(),
+            nonce: checked.nonce().to_vec(),
+            issued_at: checked.issued_at(),
+        })
+    }
+}
+
+/// The principal a message claims to be signed for, read before any check, so a
+/// service can fetch that principal's device keys. [`TrustedDeviceSet`] then
+/// requires the message's session certificate to name the same principal.
+pub fn claimed_genesis(signed: &pb::SignedMessage) -> Result<PublicKey, AuthError> {
     let chain = signed
         .signer
         .as_ref()
@@ -163,12 +179,114 @@ fn claimed_genesis(signed: &pb::SignedMessage) -> Result<PublicKey, AuthError> {
     PublicKey::try_from(genesis).map_err(|_| AuthError::Malformed("principal genesis"))
 }
 
-/// identity-crypto's skew failure is this crate's `Skew`; a device that is not
-/// bound to the principal is an unknown author.
-fn map_verify(err: identity_crypto::Error) -> AuthError {
-    match err {
-        identity_crypto::Error::Skew => AuthError::Skew,
-        identity_crypto::Error::NotBound => AuthError::UnknownAuthor,
-        other => AuthError::Verify(other),
+/// The checks that need no key and no state, in this order: the body is within
+/// [`MAX_BODY_BYTES`]; the audience and the body type equal the expected
+/// strings (compared for equality, never parsed); the signature is not empty;
+/// the nonce is 16 bytes. Each has its own [`AuthError`].
+pub fn precheck_request(
+    signed: &pb::SignedMessage,
+    expected_audience: &str,
+    expected_body_type: &str,
+    received_body: &[u8],
+) -> Result<(), AuthError> {
+    if received_body.len() > MAX_BODY_BYTES {
+        return Err(AuthError::BodyTooLarge {
+            len: received_body.len(),
+            max: MAX_BODY_BYTES,
+        });
     }
+    if signed.audience != expected_audience {
+        return Err(AuthError::Audience);
+    }
+    if signed.body_type != expected_body_type {
+        return Err(AuthError::BodyType);
+    }
+    if signed.signature.is_empty() {
+        return Err(AuthError::EmptySignature);
+    }
+    if signed.nonce.len() != 16 {
+        return Err(AuthError::NonceLength(signed.nonce.len()));
+    }
+    Ok(())
+}
+
+/// A request that passed every check but the replay cache.
+#[derive(Debug)]
+pub struct Checked {
+    caller: VerifiedCaller,
+    session_key: PublicKey,
+    nonce: Vec<u8>,
+    issued_at: i64,
+}
+
+impl Checked {
+    /// Remembers the request's nonce. Only a request that verified is
+    /// remembered, so an unauthenticated sender cannot fill the cache.
+    pub fn accept(self, nonces: &mut NonceCache, now: i64) -> Result<VerifiedCaller, AuthError> {
+        match nonces.insert(&self.session_key, &self.nonce, self.issued_at, now) {
+            Insert::Fresh => Ok(self.caller),
+            Insert::Replayed => Err(AuthError::Replayed),
+            Insert::Busy => Err(AuthError::Busy),
+        }
+    }
+}
+
+/// [`precheck_request`], then the signer check under `When::Live { now }`
+/// (identity-crypto's 30 s window), then this verifier's `tolerance` on
+/// `issued_at`, then that the request that arrived is the request that was
+/// signed. Everything but the replay cache: [`Checked::accept`] does that.
+#[allow(clippy::too_many_arguments)] // the wire fields and the verifier's settings, one per argument
+pub fn check_request<V: SignerVerifier + ?Sized>(
+    signed: &pb::SignedMessage,
+    expected_audience: &str,
+    expected_body_type: &str,
+    received_body: &[u8],
+    signers: &V,
+    tolerance: ClockTolerance,
+    now: i64,
+) -> Result<Checked, AuthError> {
+    precheck_request(signed, expected_audience, expected_body_type, received_body)?;
+    let who = signers.verify(signed, expected_audience, When::Live { now })?;
+    if (now - who.issued_at).abs() > tolerance.seconds() {
+        return Err(AuthError::Skew);
+    }
+    if signed.body != received_body {
+        return Err(AuthError::BodyMismatch);
+    }
+    Ok(Checked {
+        caller: VerifiedCaller {
+            principal: who.principal,
+            device: who.device,
+            session_not_after: who.session_not_after,
+        },
+        session_key: who.session_key,
+        nonce: who.nonce,
+        issued_at: who.issued_at,
+    })
+}
+
+/// Accepts a request or says why not: [`check_request`], then the replay
+/// cache. `now` is the verifier's clock, in Unix seconds. The cache is the
+/// caller's, so it is one `&mut` with no lock inside this crate.
+#[allow(clippy::too_many_arguments)] // the wire fields and the verifier's settings, one per argument
+pub fn open_signed_request<V: SignerVerifier + ?Sized>(
+    signed: &pb::SignedMessage,
+    expected_audience: &str,
+    expected_body_type: &str,
+    received_body: &[u8],
+    signers: &V,
+    nonces: &mut NonceCache,
+    tolerance: ClockTolerance,
+    now: i64,
+) -> Result<VerifiedCaller, AuthError> {
+    check_request(
+        signed,
+        expected_audience,
+        expected_body_type,
+        received_body,
+        signers,
+        tolerance,
+        now,
+    )?
+    .accept(nonces, now)
 }

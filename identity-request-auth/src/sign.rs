@@ -44,6 +44,9 @@ pub struct RequestSigner {
 
 struct Held {
     credential: SessionCredential,
+    /// When the session becomes valid. A clock that goes back before it makes
+    /// the session not yet valid, so it is replaced rather than signed with.
+    not_before: i64,
     renew_at: i64,
 }
 
@@ -59,7 +62,8 @@ impl RequestSigner {
 
 /// Seals one request: a `SignedMessage` over `body`, bound to `audience` and
 /// `body_type`, under the current session. A fresh 16-byte nonce is drawn
-/// per call; the session renews at 60% of its life or after expiry.
+/// per call; the session renews at 60% of its life, after expiry, or when the
+/// clock has gone back to before the session's start.
 pub fn seal_request(
     signer: &RequestSigner,
     audience: &str,
@@ -68,13 +72,15 @@ pub fn seal_request(
 ) -> Result<pb::SignedMessage, AuthError> {
     let now = signer.clock.now_unix();
     let mut guard = signer.held.lock().unwrap_or_else(|p| p.into_inner());
-    // Renew at 60% of the life, or once the held session is past its renew point.
+    // Renew at 60% of the life, once the held session is past its renew point,
+    // or when the clock has gone back to before the session's start.
     let held = match guard.take() {
-        Some(held) if now < held.renew_at => held,
+        Some(held) if held.not_before <= now && now < held.renew_at => held,
         _ => {
             let credential = signer.source.mint(now, now + SESSION_SECONDS)?;
             Held {
                 credential,
+                not_before: now,
                 renew_at: now + RENEW_AFTER_SECONDS,
             }
         }

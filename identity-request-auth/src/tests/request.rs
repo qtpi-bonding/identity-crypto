@@ -1,12 +1,14 @@
 //! The transport-free core, from the spec's Tests section. These run without
 //! the `tonic` feature.
 
-use crate::testkit::{block_on, FakeClock, StaticDevices, TestPrincipal};
+use crate::testkit::{FakeClock, TestPrincipal};
 use crate::{
-    audience_for, seal_request, split_path, AuthError, Clock, ClockTolerance, NonceCaps,
-    RequestSigner, VerifiedCaller, Verifier, MAX_BODY_BYTES, SESSION_SECONDS,
+    audience_for, open_signed_request, seal_request, split_path, AuthError, Clock, ClockTolerance,
+    NonceCache, NonceCaps, RequestSigner, TrustedDeviceSet, VerifiedCaller, MAX_BODY_BYTES,
+    SESSION_SECONDS,
 };
 use identity_crypto::{pb, PrincipalId, PublicKey};
+use std::cell::RefCell;
 use std::sync::Arc;
 
 const T0: i64 = 1_800_000_000;
@@ -16,14 +18,16 @@ const AUD: &str = "acme.v1.Inventory:ListItems@server-1";
 const BODY_TYPE: &str = "type.googleapis.com/acme.v1.ListItemsRequest";
 const BODY: &[u8] = b"\x0a\x03abc";
 
-/// One trusted principal, one device, a clock and a verifier over the shared table.
+/// One trusted principal, one device, a clock, and the verifier's own state:
+/// the core takes the signer source and the replay cache as plain arguments.
 struct Fixture {
     clock: Arc<FakeClock>,
     genesis: PublicKey,
     device: PublicKey,
-    devices: Arc<StaticDevices>,
+    set: RefCell<TrustedDeviceSet>,
+    nonces: RefCell<NonceCache>,
+    tolerance: ClockTolerance,
     signer: RequestSigner,
-    verifier: Verifier<Arc<StaticDevices>>,
 }
 
 fn fixture() -> Fixture {
@@ -35,17 +39,16 @@ fn fixture_with(tolerance: ClockTolerance, caps: NonceCaps) -> Fixture {
     let principal = TestPrincipal::new();
     let genesis = principal.genesis.clone();
     let device = principal.device_key();
-    let devices = Arc::new(StaticDevices::new());
-    devices.trust(&genesis, &device);
+    let set = RefCell::new(TrustedDeviceSet::new(genesis.clone(), vec![device.clone()]));
     let signer = principal.signer(clock.clone());
-    let verifier = Verifier::new(devices.clone(), tolerance, caps);
     Fixture {
         clock,
         genesis,
         device,
-        devices,
+        set,
+        nonces: RefCell::new(NonceCache::new(caps)),
+        tolerance,
         signer,
-        verifier,
     }
 }
 
@@ -61,13 +64,27 @@ impl Fixture {
         body_type: &str,
         body: &[u8],
     ) -> Result<VerifiedCaller, AuthError> {
-        block_on(self.verifier.open_signed_request(
+        self.open_with(&self.set.borrow(), signed, audience, body_type, body)
+    }
+
+    fn open_with(
+        &self,
+        set: &TrustedDeviceSet,
+        signed: &pb::SignedMessage,
+        audience: &str,
+        body_type: &str,
+        body: &[u8],
+    ) -> Result<VerifiedCaller, AuthError> {
+        open_signed_request(
             signed,
             audience,
             body_type,
             body,
+            set,
+            &mut self.nonces.borrow_mut(),
+            self.tolerance,
             self.clock.now_unix(),
-        ))
+        )
     }
 
     fn open_ok(&self, signed: &pb::SignedMessage) -> VerifiedCaller {
@@ -196,10 +213,12 @@ fn a_stale_or_future_issued_at_is_refused() {
     let f = fixture();
     let signed = f.seal(AUD, BODY_TYPE, BODY);
     f.clock.advance(31);
-    assert_eq!(
-        f.open(&signed, AUD, BODY_TYPE, BODY),
-        Err(AuthError::Skew),
-        "31 s late"
+    assert!(
+        matches!(
+            f.open(&signed, AUD, BODY_TYPE, BODY),
+            Err(AuthError::Verify(identity_crypto::Error::Skew))
+        ),
+        "31 s late is identity-crypto's own skew failure, kept as it is"
     );
 
     // Early by more than 30 s: the session cert's own window refuses it first,
@@ -207,11 +226,12 @@ fn a_stale_or_future_issued_at_is_refused() {
     f.clock.set(T0);
     let early = FakeClock::new(T0 + 31);
     let principal = TestPrincipal::new();
-    f.devices.trust(&principal.genesis, &principal.device_key());
+    let theirs = TrustedDeviceSet::new(principal.genesis.clone(), vec![principal.device_key()]);
     let early_signed =
         seal_request(&principal.signer(early), AUD, BODY_TYPE, BODY).expect("sealing");
     assert!(
-        f.open(&early_signed, AUD, BODY_TYPE, BODY).is_err(),
+        f.open_with(&theirs, &early_signed, AUD, BODY_TYPE, BODY)
+            .is_err(),
         "31 s early is refused"
     );
 }
@@ -222,11 +242,11 @@ fn an_expired_certificate_is_refused() {
     // A signer whose clock is long past: its session expired before `now`.
     let past = FakeClock::new(T0 - 1_000);
     let principal = TestPrincipal::new();
-    f.devices.trust(&principal.genesis, &principal.device_key());
+    let theirs = TrustedDeviceSet::new(principal.genesis.clone(), vec![principal.device_key()]);
     let stale = principal.signer(past);
     let signed = seal_request(&stale, AUD, BODY_TYPE, BODY).expect("sealing");
     assert!(matches!(
-        f.open(&signed, AUD, BODY_TYPE, BODY),
+        f.open_with(&theirs, &signed, AUD, BODY_TYPE, BODY),
         Err(AuthError::Verify(identity_crypto::Error::Expired(_)))
     ));
 }
@@ -266,7 +286,8 @@ fn a_revoked_device_is_refused_on_the_next_lookup() {
     let before = f.seal(AUD, BODY_TYPE, BODY);
     f.open_ok(&before);
 
-    f.devices.revoke(&f.genesis, &f.device);
+    // Revoking is the caller handing the core a set without the device.
+    *f.set.borrow_mut() = TrustedDeviceSet::new(f.genesis.clone(), vec![]);
     let after = f.seal(AUD, BODY_TYPE, BODY);
     assert_eq!(
         f.open(&after, AUD, BODY_TYPE, BODY),
@@ -276,27 +297,17 @@ fn a_revoked_device_is_refused_on_the_next_lookup() {
 }
 
 #[test]
-fn a_lookup_outage_is_not_an_authentication_failure() {
-    let f = fixture();
-    let signed = f.seal(AUD, BODY_TYPE, BODY);
-    f.devices.set_unavailable(true);
-    assert_eq!(
-        f.open(&signed, AUD, BODY_TYPE, BODY),
-        Err(AuthError::LookupUnavailable)
-    );
-    f.devices.set_unavailable(false);
-    f.open_ok(&signed);
-}
-
-#[test]
-fn a_principal_the_service_does_not_trust_is_unknown() {
+fn a_message_for_another_principal_than_the_set_is_refused() {
     let f = fixture();
     let stranger = TestPrincipal::new().signer(f.clock.clone());
     let signed = seal_request(&stranger, AUD, BODY_TYPE, BODY).expect("sealing");
-    assert_eq!(
+    // The caller picks the set by `claimed_genesis`; a set for another author
+    // refuses a certificate that names a different principal. (An async layer
+    // maps "no set for this genesis" to `UnknownAuthor` before it gets here.)
+    assert!(matches!(
         f.open(&signed, AUD, BODY_TYPE, BODY),
-        Err(AuthError::UnknownAuthor)
-    );
+        Err(AuthError::Verify(identity_crypto::Error::ChainMismatch(_)))
+    ));
 }
 
 #[test]
@@ -349,7 +360,11 @@ fn a_tighter_tolerance_refuses_what_the_default_accepts() {
     let f = fixture_with(ClockTolerance::new(10).unwrap(), NonceCaps::default());
     let signed = f.seal(AUD, BODY_TYPE, BODY);
     f.clock.advance(11);
-    assert_eq!(f.open(&signed, AUD, BODY_TYPE, BODY), Err(AuthError::Skew));
+    assert_eq!(
+        f.open(&signed, AUD, BODY_TYPE, BODY),
+        Err(AuthError::Skew),
+        "the tighter tolerance's own error"
+    );
 }
 
 #[test]
@@ -375,5 +390,32 @@ fn a_body_type_other_than_the_method_expects_is_refused() {
             BODY
         ),
         Err(AuthError::BodyType)
+    );
+}
+
+#[test]
+fn a_clock_that_goes_backwards_mints_a_session_valid_now() {
+    let f = fixture();
+    let first = f.seal(AUD, BODY_TYPE, BODY);
+    let key = session_of(&first);
+    f.open_ok(&first);
+
+    // The held session starts at T0. A clock stepped back past it must not keep
+    // signing under a session that is not yet valid.
+    f.clock.set(T0 - 100);
+    let after = f.seal(AUD, BODY_TYPE, BODY);
+    assert_ne!(
+        session_of(&after),
+        key,
+        "a session not yet valid is replaced"
+    );
+    f.open_ok(&after);
+
+    // And a clock that is merely a little behind (still inside the window of the
+    // new session) keeps it.
+    f.clock.set(T0 - 99);
+    assert_eq!(
+        session_of(&f.seal(AUD, BODY_TYPE, BODY)),
+        session_of(&after)
     );
 }

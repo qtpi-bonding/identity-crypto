@@ -9,6 +9,14 @@ pub enum AuthError {
     BodyType,
     #[error("no body type is known for method {0}")]
     UnknownMethod(String),
+    #[error(
+        "method {0} streams its request; only unary and server-streaming methods can be signed"
+    )]
+    StreamingRequestUnsupported(String),
+    #[error("the signed message has no signature")]
+    EmptySignature,
+    #[error("no signer authority is configured")]
+    NotSetUp,
     #[error("the nonce must be 16 bytes, got {0}")]
     NonceLength(usize),
     #[error("the request bytes differ from the signed body")]

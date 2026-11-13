@@ -8,17 +8,19 @@
 //!
 //! The crate has two layers:
 //!
-//! * a transport-free core (this module and its submodules): [`NonceCache`],
-//!   [`RequestSigner`] / [`seal_request`], and [`Verifier`]. No tonic, tower
-//!   or tokio.
-//! * the `tonic` feature ([`grpc`]), built only from the core.
+//! * a transport-free, synchronous core (this module and its submodules):
+//!   [`NonceCache`], [`RequestSigner`] / [`seal_request`], and
+//!   [`open_signed_request`] over any [`SignerVerifier`] (identity-crypto's
+//!   `Resolver`, or a [`TrustedDeviceSet`]). No async, no `Send`/`Sync`
+//!   requirement, no lock, no tonic, tower or tokio.
+//! * the `tonic` feature ([`grpc`]), built only from the core: the async,
+//!   TTL-cached `TrustedDevices` source and the tower layers.
 //!
 //! Nothing here names a service. Callers pass their audience strings and
 //! their body types.
 
 mod audience;
 mod clock;
-mod devices;
 mod error;
 mod nonce;
 mod sign;
@@ -35,8 +37,10 @@ mod tests;
 
 pub use audience::{audience_for, split_path};
 pub use clock::{Clock, ClockTolerance, SystemClock};
-pub use devices::{LookupError, TrustedDevices};
 pub use error::AuthError;
-pub use nonce::{Insert, NonceCache, NonceCaps, PURGE_GRACE};
+pub use nonce::{Insert, NonceCache, NonceCaps, PURGE_GRACE, SKEW_SECONDS};
 pub use sign::{seal_request, CredentialSource, DeviceCredentials, RequestSigner, SESSION_SECONDS};
-pub use verify::{VerifiedCaller, Verifier, MAX_BODY_BYTES};
+pub use verify::{
+    check_request, claimed_genesis, open_signed_request, precheck_request, Checked, SignerVerifier,
+    TrustedDeviceSet, VerifiedCaller, VerifiedSigner, MAX_BODY_BYTES,
+};

@@ -3,7 +3,8 @@
 //! existing in-house replay cache; the clock is now a parameter of every call,
 //! so the cache holds no time source of its own.
 
-use identity_crypto::{PublicKey, SKEW_SECONDS};
+use identity_crypto::PublicKey;
+pub use identity_crypto::SKEW_SECONDS;
 use std::collections::HashMap;
 
 /// Extra retention after an entry's skew window closes, so that a message

@@ -1,13 +1,14 @@
 //! Test fixtures: real P-256 keys, a fake clock and a static device table.
 //! Compiled for this crate's tests, or for consumers that enable `testkit`.
 
-use crate::{Clock, DeviceCredentials, LookupError, RequestSigner, TrustedDevices};
-use identity_crypto::{jwk_duo::SigningKeyPair, PublicKey, Timestamp};
+use crate::{Clock, DeviceCredentials, RequestSigner};
+use identity_crypto::{jwk_duo::SigningKeyPair, PublicKey};
+#[cfg(feature = "tonic")]
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::pin;
-use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
 /// Drives a future that never waits on I/O (every test future here resolves
@@ -46,13 +47,16 @@ impl Clock for FakeClock {
     }
 }
 
-/// A device table the test edits between requests.
+/// A device table the test edits between requests (needs the `tonic` feature,
+/// where the async `TrustedDevices` lives).
+#[cfg(feature = "tonic")]
 #[derive(Default)]
 pub struct StaticDevices {
-    table: Mutex<HashMap<PublicKey, Vec<PublicKey>>>,
-    unavailable: AtomicBool,
+    table: std::sync::Mutex<HashMap<PublicKey, Vec<PublicKey>>>,
+    unavailable: std::sync::atomic::AtomicBool,
 }
 
+#[cfg(feature = "tonic")]
 impl StaticDevices {
     pub fn new() -> Self {
         Self::default()
@@ -78,20 +82,21 @@ impl StaticDevices {
     }
 }
 
+#[cfg(feature = "tonic")]
 #[async_trait::async_trait]
-impl TrustedDevices for StaticDevices {
+impl crate::grpc::TrustedDevices for StaticDevices {
     async fn devices_for(
         &self,
         genesis: &PublicKey,
-        _at: Timestamp,
-    ) -> Result<Vec<PublicKey>, LookupError> {
+        _at: identity_crypto::Timestamp,
+    ) -> Result<Vec<PublicKey>, crate::grpc::LookupError> {
         if self.unavailable.load(Ordering::SeqCst) {
-            return Err(LookupError::Unavailable);
+            return Err(crate::grpc::LookupError::Unavailable);
         }
         let table = self.table.lock().unwrap_or_else(|p| p.into_inner());
         match table.get(genesis) {
             Some(devices) if !devices.is_empty() => Ok(devices.clone()),
-            _ => Err(LookupError::Unknown),
+            _ => Err(crate::grpc::LookupError::Unknown),
         }
     }
 }
