@@ -15,9 +15,15 @@ pub struct VerifiedCaller {
     principal: PrincipalId,
     device: PublicKey,
     session_not_after: i64,
+    issued_at: i64,
 }
 
 impl VerifiedCaller {
+    /// When the request was issued (Unix seconds, by the caller's clock).
+    pub fn issued_at(&self) -> i64 {
+        self.issued_at
+    }
+
     pub fn principal(&self) -> &PrincipalId {
         &self.principal
     }
@@ -258,6 +264,7 @@ pub fn check_request<V: SignerVerifier + ?Sized>(
             principal: who.principal,
             device: who.device,
             session_not_after: who.session_not_after,
+            issued_at: who.issued_at,
         },
         session_key: who.session_key,
         nonce: who.nonce,

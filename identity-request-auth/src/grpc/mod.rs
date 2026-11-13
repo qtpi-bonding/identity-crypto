@@ -89,7 +89,11 @@ type BoxFuture<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 /// | `BodyTooLarge`, `Busy` | `RESOURCE_EXHAUSTED` |
 /// | `StreamingRequestUnsupported` | `UNIMPLEMENTED` |
 /// | `Entropy`, `Credential` | `INTERNAL` |
-/// | everything else | `UNAUTHENTICATED` |
+/// | everything else, `IssuedBeforeStart` included | `UNAUTHENTICATED` |
+///
+/// Every `UNAUTHENTICATED` status carries the refusal's own message, which is how
+/// `IssuedBeforeStart` is told from `Skew` here; a service that needs a code for
+/// it maps the variant in its own `on_reject`.
 pub fn default_reject(err: AuthError) -> Status {
     let message = err.to_string();
     match err {
@@ -222,6 +226,11 @@ where
             if (config.pass_through)(&path) {
                 return inner.call(Request::from_parts(parts, body)).await;
             }
+            // A streaming request cannot be signed whether or not its body type
+            // is known: refused before anything else, and unread.
+            if (config.kind_of)(&path).streams_request() {
+                return Ok(default_reject(AuthError::StreamingRequestUnsupported(path)).into_http());
+            }
             // A method with no known body type is not a signed method: it goes
             // out unsigned, and the server decides whether that is allowed.
             let (Some((service, method)), Some(body_type)) =
@@ -229,9 +238,6 @@ where
             else {
                 return inner.call(Request::from_parts(parts, body)).await;
             };
-            if (config.kind_of)(&path).streams_request() {
-                return Ok(default_reject(AuthError::StreamingRequestUnsupported(path)).into_http());
-            }
 
             let framed = match buffer(body).await {
                 Ok(framed) => framed,
@@ -274,6 +280,7 @@ struct Config<K> {
     kind_of: KindOf,
     allow_unsigned: Arc<dyn Fn(&str) -> bool + Send + Sync>,
     on_reject: Arc<dyn Fn(AuthError) -> Status + Send + Sync>,
+    reject_issued_before: i64,
 }
 
 impl<K> Clone for Config<K> {
@@ -286,6 +293,7 @@ impl<K> Clone for Config<K> {
             kind_of: self.kind_of.clone(),
             allow_unsigned: self.allow_unsigned.clone(),
             on_reject: self.on_reject.clone(),
+            reject_issued_before: self.reject_issued_before,
         }
     }
 }
@@ -305,6 +313,7 @@ impl<K: TrustedDevices> RequestAuthLayer<K> {
         allow_unsigned: impl Fn(&str) -> bool + Send + Sync + 'static,
         on_reject: impl Fn(AuthError) -> Status + Send + Sync + 'static,
     ) -> Self {
+        let reject_issued_before = clock.now_unix();
         Self {
             config: Config {
                 verifier,
@@ -314,8 +323,22 @@ impl<K: TrustedDevices> RequestAuthLayer<K> {
                 kind_of: all_unary(),
                 allow_unsigned: Arc::new(allow_unsigned),
                 on_reject: Arc::new(on_reject),
+                reject_issued_before,
             },
         }
+    }
+
+    /// Refuses a signed request whose `issued_at` is earlier than
+    /// `unix_seconds` ([`AuthError::IssuedBeforeStart`]); the comparison is
+    /// strict, so a request issued at exactly that second is accepted.
+    ///
+    /// The default is the clock's time when this layer was built. The nonce
+    /// cache lives in memory, so a request captured before a restart would
+    /// otherwise be replayable until it ages out of the 30 s skew window; this
+    /// closes that. Pass `0` (the epoch) to opt out.
+    pub fn reject_issued_before(mut self, unix_seconds: i64) -> Self {
+        self.config.reject_issued_before = unix_seconds;
+        self
     }
 
     /// Says which methods stream. A client-streaming or bidirectional method is
@@ -393,12 +416,8 @@ where
                 return inner.call(Request::from_parts(parts, body)).await;
             }
 
-            let Some((service, method)) = split_path(&path) else {
-                return Ok(refused(&config, AuthError::UnknownMethod(path.clone())));
-            };
-            let Some(body_type) = (config.body_type_of)(&path) else {
-                return Ok(refused(&config, AuthError::UnknownMethod(path.clone())));
-            };
+            // Streaming is refused first, registered or not: the body type of a
+            // method that cannot be signed is beside the point.
             let kind = (config.kind_of)(&path);
             if kind.streams_request() {
                 return Ok(refused(
@@ -406,6 +425,12 @@ where
                     AuthError::StreamingRequestUnsupported(path),
                 ));
             }
+            let Some((service, method)) = split_path(&path) else {
+                return Ok(refused(&config, AuthError::UnknownMethod(path.clone())));
+            };
+            let Some(body_type) = (config.body_type_of)(&path) else {
+                return Ok(refused(&config, AuthError::UnknownMethod(path.clone())));
+            };
 
             let metadata = MetadataMap::from_headers(parts.headers.clone());
             let signed = match metadata.get_bin(REQUEST_HEADER).map(|v| v.to_bytes()) {
@@ -456,6 +481,10 @@ where
                 Ok(caller) => caller,
                 Err(e) => return Ok(refused(&config, e)),
             };
+
+            if caller.issued_at() < config.reject_issued_before {
+                return Ok(refused(&config, AuthError::IssuedBeforeStart));
+            }
 
             let not_after = caller.session_not_after();
             parts.extensions.insert(caller);

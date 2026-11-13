@@ -31,6 +31,8 @@ const WATCH: &str = "/acme.v1.Inventory/Watch";
 const UPLOAD: &str = "/acme.v1.Inventory/Upload";
 const CHAT: &str = "/acme.v1.Inventory/Chat";
 const MYSTERY: &str = "/acme.v1.Inventory/Mystery";
+/// Declared client-streaming, but with no body type: unregistered.
+const GHOST: &str = "/acme.v1.Inventory/Ghost";
 const BODY_TYPE: &str = "type.googleapis.com/acme.v1.ListItemsRequest";
 const MESSAGE: &[u8] = b"\x0a\x03abc";
 const T0: i64 = 1_800_000_000;
@@ -52,6 +54,7 @@ fn kind_of(path: &str) -> MethodKind {
         WATCH => MethodKind::ServerStreaming,
         UPLOAD => MethodKind::ClientStreaming,
         CHAT => MethodKind::Bidi,
+        GHOST => MethodKind::ClientStreaming,
         _ => MethodKind::Unary,
     }
 }
@@ -576,6 +579,114 @@ fn the_client_refuses_a_streaming_request_unread() {
         s.refusals().is_empty(),
         "refused by the client, before the server"
     );
+}
+
+#[test]
+fn an_unregistered_streaming_method_is_refused_as_streaming_by_the_server() {
+    let s = server();
+    let req = Request::builder()
+        .uri(GHOST)
+        .body(Body::new(Unread))
+        .expect("a request");
+    let resp = block_on(s.protected().oneshot(req)).expect("infallible");
+    assert_eq!(
+        grpc_status(&resp).as_deref(),
+        Some("12"),
+        "UNIMPLEMENTED, not UNAUTHENTICATED"
+    );
+    assert_eq!(
+        s.refusals(),
+        [format!("StreamingRequestUnsupported({GHOST:?})")]
+    );
+    assert_eq!(s.handler_calls(), 0);
+}
+
+#[test]
+fn an_unregistered_streaming_method_is_refused_unread_by_the_client() {
+    let s = server();
+    let req = Request::builder()
+        .uri(GHOST)
+        .body(Body::new(Unread))
+        .expect("a request");
+    let resp = block_on(s.client().oneshot(req)).expect("infallible");
+    assert_eq!(
+        grpc_status(&resp).as_deref(),
+        Some("12"),
+        "refused by the client, not sent out unsigned"
+    );
+    assert_eq!(s.handler_calls(), 0);
+    assert!(
+        s.refusals().is_empty(),
+        "the request never reached the server"
+    );
+}
+
+// Restart replay: the nonce cache is in memory, so the layer refuses a request
+// issued before it was built.
+
+/// Signs and sends one ListItems request at the clock's current time.
+fn send_at(
+    s: &Server,
+    svc: &(impl Service<Request<Body>, Response = Response<Body>, Error = Infallible, Future: Send>
+          + Clone),
+    at: i64,
+) -> Option<String> {
+    s.clock.set(at);
+    let signed = sealed_for(s, "acme.v1.Inventory", "ListItems", SERVER);
+    let mut req = request(PATH, framed(MESSAGE));
+    with_header(&mut req, &signed);
+    grpc_status(&block_on(svc.clone().oneshot(req)).expect("infallible"))
+}
+
+#[test]
+fn a_request_signed_before_the_layer_was_built_is_refused() {
+    let s = server();
+    // Signed at T0 and captured; the server restarts five seconds later.
+    s.clock.set(T0);
+    let captured = sealed_for(&s, "acme.v1.Inventory", "ListItems", SERVER);
+    s.clock.set(T0 + 5);
+    let svc = s.protected();
+    let mut req = request(PATH, framed(MESSAGE));
+    with_header(&mut req, &captured);
+    let resp = block_on(svc.clone().oneshot(req)).expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("16"));
+    assert_eq!(
+        s.refusals(),
+        ["IssuedBeforeStart"],
+        "its own refusal, not Skew"
+    );
+    assert_eq!(s.handler_calls(), 0);
+
+    // One signed after the restart is accepted.
+    assert_eq!(send_at(&s, &svc, T0 + 6), None);
+    assert_eq!(s.handler_calls(), 1);
+}
+
+#[test]
+fn the_issued_before_boundary_is_strict() {
+    let s = server();
+    let svc = s.protected(); // built at T0
+    assert_eq!(
+        send_at(&s, &svc, T0 - 1).as_deref(),
+        Some("16"),
+        "one second before"
+    );
+    assert_eq!(s.refusals(), ["IssuedBeforeStart"]);
+    assert_eq!(send_at(&s, &svc, T0), None, "the same second");
+    assert_eq!(send_at(&s, &svc, T0 + 1), None, "one second after");
+    assert_eq!(s.handler_calls(), 2);
+}
+
+#[test]
+fn reject_issued_before_can_be_opted_out_with_the_epoch() {
+    let s = server();
+    let svc = s.layer().reject_issued_before(0).layer(s.handler());
+    assert_eq!(
+        send_at(&s, &svc, T0 - 20),
+        None,
+        "issued before construction"
+    );
+    assert!(s.refusals().is_empty());
 }
 
 #[tokio::test(start_paused = true)]

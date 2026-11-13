@@ -27,6 +27,8 @@ pub enum AuthError {
     Tolerance { seconds: i64, max: i64 },
     #[error("the message is outside the clock tolerance")]
     Skew,
+    #[error("the request was issued before this server started, so the replay cache cannot vouch for it")]
+    IssuedBeforeStart,
     #[error("this nonce was already used")]
     Replayed,
     #[error("the nonce cache is full")]

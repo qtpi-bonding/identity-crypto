@@ -54,7 +54,11 @@ tighten). A message outside identity-crypto's own 30 s is `Verify(Error::Skew)`.
   length prefix.
 * **Client-streaming and bidirectional methods are refused**, on both sides,
   before any of the body is read (`StreamingRequestUnsupported`, `UNIMPLEMENTED`).
-  Say which methods stream with `method_kinds`.
+  Say which methods stream with `method_kinds`: **a method not named there is
+  `Unary`**, so an undeclared client-streaming method is not refused (it is read
+  as one message and hangs or fails with a malformed frame). The streaming check
+  runs before the body-type lookup on both sides, so a streaming method is refused
+  as streaming even when it has no body type.
 * A **server-streaming** response ends with `UNAUTHENTICATED` in its trailers at
   `VerifiedCaller::session_not_after`, including a stream that is idle then.
 * A **pass-through** method (`allow_unsigned` on the server, `pass_through` on the
@@ -64,6 +68,26 @@ tighten). A message outside identity-crypto's own 30 s is `Verify(Error::Skew)`.
 * `RequestSigner` re-mints its session at 60% of its life, after expiry, or when
   the clock has gone back to before the held session's start.
 
+### Restart replay (`reject_issued_before`)
+
+The nonce cache is in memory, so a request captured before a server restart could
+be replayed for up to 30 s after it. `RequestAuthLayer` therefore refuses a signed
+request whose `issued_at` is earlier than `reject_issued_before`
+(`AuthError::IssuedBeforeStart`, its own variant, separate from `Skew`; `UNAUTHENTICATED`
+by default, with its own message). The default is the clock's time when the layer
+was built, and the comparison is strict: a request issued in the same second as
+construction is accepted. To opt out, set `reject_issued_before(0)` (the epoch).
+
+Caveat: right after a restart, a client whose clock lags the server's by up to 30 s
+is refused until its clock passes the layer's construction time.
+
+### Throughput ceiling
+
+`NonceCaps::total` (4096 by default) caps the replay cache for the whole service,
+not per caller. A nonce is kept for about 60 s, so the service accepts at most
+about 68 signed requests a second (4096 / 60) across all callers; past that,
+requests are refused as `Busy` (`RESOURCE_EXHAUSTED`).
+
 ### Refusal to gRPC status (`default_reject`)
 
 | refusal | status |
@@ -72,7 +96,7 @@ tighten). A message outside identity-crypto's own 30 s is `Verify(Error::Skew)`.
 | `BodyTooLarge`, `Busy` | `RESOURCE_EXHAUSTED` |
 | `StreamingRequestUnsupported` | `UNIMPLEMENTED` |
 | `Entropy`, `Credential` | `INTERNAL` |
-| everything else | `UNAUTHENTICATED` |
+| everything else (`IssuedBeforeStart` included) | `UNAUTHENTICATED` |
 
 A service passes its own `on_reject` for coded errors.
 
