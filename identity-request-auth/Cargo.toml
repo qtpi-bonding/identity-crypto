@@ -1,0 +1,24 @@
+[package]
+name = "identity-request-auth"
+version = "0.1.0"
+edition = "2021"
+description = "Per-request signing and verification over identity-crypto: a transport-free core, and a tonic layer behind the `tonic` feature"
+
+[features]
+default = []
+# The tonic/tower layer, built only from the core. Off by default.
+tonic = ["dep:tonic", "dep:tower", "dep:http", "dep:http-body-util", "dep:prost", "dep:bytes"]
+# Test fixtures (fake clock, static device table) for consumers' dev-dependencies.
+testkit = []
+
+[dependencies]
+identity-crypto = { path = "..", version = "0.10.0" }
+async-trait = "0.1"
+getrandom = "0.3"
+thiserror = "2"
+tonic = { version = "0.13.1", optional = true }
+tower = { version = "0.5.3", optional = true, default-features = false, features = ["util"] }
+http = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
+prost = { version = "0.13", optional = true }
+bytes = { version = "1", optional = true }
