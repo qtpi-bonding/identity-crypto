@@ -21,6 +21,9 @@ pub const HISTORY_FILE: &str = "retired_devices.json";
 pub const ROTATIONS_FILE: &str = "rotations.json";
 pub const LOCK_FILE: &str = ".lock";
 
+/// Maximum accepted size of a private key-set file.
+const MAX_KEY_FILE_BYTES: u64 = 16 * 1024;
+
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
@@ -151,13 +154,17 @@ pub fn read_duo(dir: &Path, name: &str) -> Result<KeyDuo, KeyfileError> {
 
 /// Reads one private key-set file at an arbitrary path.
 pub fn read_duo_file(path: &Path) -> Result<KeyDuo, KeyfileError> {
-    let mut file = File::open(path).map_err(|error| {
-        if error.kind() == ErrorKind::NotFound {
-            KeyfileError::Missing(path.to_path_buf())
-        } else {
-            io(path, error)
-        }
-    })?;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == ErrorKind::NotFound {
+                KeyfileError::Missing(path.to_path_buf())
+            } else {
+                io(path, error)
+            }
+        })?;
     let metadata = file.metadata().map_err(|error| io(path, error))?;
     if !metadata.is_file() {
         return Err(KeyfileError::NotAKeySet(path.to_path_buf()));
@@ -167,8 +174,13 @@ pub fn read_duo_file(path: &Path) -> Result<KeyDuo, KeyfileError> {
     }
 
     let mut bytes = Vec::new();
-    file.read_to_end(&mut bytes)
+    (&mut file)
+        .take(MAX_KEY_FILE_BYTES + 1)
+        .read_to_end(&mut bytes)
         .map_err(|error| io(path, error))?;
+    if bytes.len() as u64 > MAX_KEY_FILE_BYTES {
+        return Err(KeyfileError::NotAKeySet(path.to_path_buf()));
+    }
     let text =
         String::from_utf8(bytes).map_err(|_| KeyfileError::NotAKeySet(path.to_path_buf()))?;
     KeyDuoSerializer::import_key_duo_jwk(&text)

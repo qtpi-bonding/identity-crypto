@@ -257,3 +257,79 @@ fn corrupted_key_sets_refuse_without_leaking_key_material() {
         assert_no_leak(&err, &text, &ds);
     }
 }
+
+#[test]
+fn refuses_a_fifo_promptly_as_not_a_key_set() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    let dir = tempdir();
+    let p = dir.path().join("pipe.json");
+    let c = std::ffi::CString::new(p.as_os_str().as_bytes()).unwrap();
+    assert_eq!(unsafe { libc::mkfifo(c.as_ptr(), 0o600) }, 0, "mkfifo");
+
+    let (tx, rx) = mpsc::channel();
+    let pp = p.clone();
+    std::thread::spawn(move || {
+        let _ = tx.send(read_duo_file(&pp));
+    });
+    let got = rx.recv_timeout(Duration::from_secs(5));
+    if got.is_err() {
+        // Unblock the stuck reader (open-for-read blocks until a writer appears).
+        unsafe {
+            let fd = libc::open(c.as_ptr(), libc::O_WRONLY | libc::O_NONBLOCK);
+            if fd >= 0 {
+                libc::close(fd);
+            }
+        }
+        panic!("read_duo_file blocked on a FIFO for over 5s; it must refuse without blocking");
+    }
+    let err = got.unwrap().unwrap_err();
+    assert!(
+        matches!(&err, KeyfileError::NotAKeySet(q) if q == &p),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn refuses_an_oversized_17_kib_file_as_not_a_key_set() {
+    let dir = tempdir();
+    // A valid key set padded past the cap, so only the size cap can refuse it.
+    let mut body = key_text(&generate()).into_bytes();
+    body.resize(17 * 1024, b'\n');
+    let p = put(dir.path(), "big.json", &body, 0o600);
+    let err = read_duo_file(&p).unwrap_err();
+    assert!(
+        matches!(&err, KeyfileError::NotAKeySet(q) if q == &p),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn accepts_a_valid_key_set_padded_to_just_under_16_kib() {
+    let dir = tempdir();
+    let duo = generate();
+    let mut body = key_text(&duo).into_bytes();
+    assert!(body.len() < 16 * 1024 - 16);
+    body.resize(16 * 1024 - 16, b'\n');
+    let p = put(dir.path(), "padded.json", &body, 0o600);
+    assert_accepted(&duo, &read_duo_file(&p).unwrap());
+}
+
+#[test]
+fn cap_boundary_accepts_exactly_16_kib_and_refuses_one_byte_more() {
+    let dir = tempdir();
+    let duo = generate();
+    let mut body = key_text(&duo).into_bytes();
+    body.resize(16 * 1024, b'\n');
+    let at = put(dir.path(), "at.json", &body, 0o600);
+    assert_accepted(&duo, &read_duo_file(&at).unwrap());
+    body.push(b'\n');
+    let over = put(dir.path(), "over.json", &body, 0o600);
+    let err = read_duo_file(&over).unwrap_err();
+    assert!(
+        matches!(&err, KeyfileError::NotAKeySet(q) if q == &over),
+        "got {err:?}"
+    );
+}
