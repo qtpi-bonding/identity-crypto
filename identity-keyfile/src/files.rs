@@ -149,6 +149,32 @@ pub fn read_duo(dir: &Path, name: &str) -> Result<KeyDuo, KeyfileError> {
     })
 }
 
+/// Reads one private key-set file at an arbitrary path.
+pub fn read_duo_file(path: &Path) -> Result<KeyDuo, KeyfileError> {
+    let mut file = File::open(path).map_err(|error| {
+        if error.kind() == ErrorKind::NotFound {
+            KeyfileError::Missing(path.to_path_buf())
+        } else {
+            io(path, error)
+        }
+    })?;
+    let metadata = file.metadata().map_err(|error| io(path, error))?;
+    if !metadata.is_file() {
+        return Err(KeyfileError::NotAKeySet(path.to_path_buf()));
+    }
+    if metadata.mode() & 0o077 != 0 {
+        return Err(KeyfileError::InsecureFile(path.to_path_buf()));
+    }
+
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
+        .map_err(|error| io(path, error))?;
+    let text =
+        String::from_utf8(bytes).map_err(|_| KeyfileError::NotAKeySet(path.to_path_buf()))?;
+    KeyDuoSerializer::import_key_duo_jwk(&text)
+        .map_err(|_| KeyfileError::NotAKeySet(path.to_path_buf()))
+}
+
 pub fn write_delegation(dir: &Path, delegation: &pb::KeyDelegation) -> Result<(), KeyfileError> {
     write_json(dir, DELEGATION_FILE, delegation)
 }

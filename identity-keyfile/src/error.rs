@@ -18,6 +18,11 @@ pub enum KeyfileError {
     DelegationMismatch,
     #[error("insecure identity directory {0}")]
     InsecureDir(PathBuf),
+    #[error("insecure key file {0}")]
+    InsecureFile(PathBuf),
+    /// Holds the path only: library parse text can echo key fragments.
+    #[error("not a private key set: {0}")]
+    NotAKeySet(PathBuf),
     #[error("agent directory is already initialised: {0}")]
     AlreadyInitialised(PathBuf),
     #[error("identity check failed: {0:?}")]
