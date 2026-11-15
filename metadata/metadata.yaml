@@ -11,12 +11,6 @@ public:
   links:
   - type: repo
     url: https://github.com/qtpi-bonding/identity-crypto
-private:
-  started: 2026-09
-  visibility: public
-  license: none
-  ownership: designed and directed; code written with AI assistance
-  build: agentic
 facts:
 - id: p256-only-public-keys
   assertion: PublicKey accepts only ECDSA P-256 keys as 65-byte uncompressed SEC1 points that lie on the
