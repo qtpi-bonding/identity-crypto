@@ -7,13 +7,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 echo "== step 1: fmt check"
-# The tree inherited from main was never rustfmt-clean; SKIP_FMT=1 is for gating
-# a branch until a separate formatting commit lands. Never set it in CI.
-if [ "${SKIP_FMT:-0}" = "1" ]; then
-  echo "SKIPPED (SKIP_FMT=1)"
-else
-  $SLOT cargo fmt --all -- --check
-fi
+$SLOT cargo fmt --all -- --check
 
 echo "== step 2: clippy all-features"
 $SLOT cargo clippy --workspace --all-targets --all-features -- -D warnings
