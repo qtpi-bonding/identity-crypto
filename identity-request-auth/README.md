@@ -1,12 +1,12 @@
 # identity-request-auth
 
-Per-request signing and verification over `identity-crypto`. Each request
-carries one `SignedMessage` (`signed-message.v1`), signed by a short-lived
-session key. The signature covers the audience (`"<service>:<method>@<server id>"`),
+Version 0.2.0. Per-request signing and verification over `identity-crypto`. Each
+request carries one `SignedMessage` (`signed-message.v1`), signed by a
+short-lived session key. The signature covers the audience (`"<service>:<method>@<server id>"`),
 the body type, the exact request bytes and a 16-byte nonce. A replay cache
 refuses a nonce seen twice inside the skew window.
 
-Two layers:
+Three feature sets:
 
 * **The core** (default features): synchronous, no `async`, no `Send`/`Sync`
   requirement, no lock, no tonic/tower/tokio. `open_signed_request` checks one
@@ -16,6 +16,8 @@ Two layers:
 * **The `tonic` feature** (`grpc`): built only on the core. The async
   `TrustedDevices` source (with its TTL cache), `Verifier`, and the tower layers
   `SignRequests` (client) and `RequestAuthLayer` (server).
+* **The `client` feature**: `tonic`, plus `identity-keyfile`, for a signed gRPC
+  channel built from an identity directory (see below).
 
 Nothing here names a service: audience and body-type strings come from the caller.
 
@@ -62,6 +64,30 @@ core with its own tests unchanged. These hold, and each has a test in
 `Skew` is only this crate's own tighter `ClockTolerance` (1 to 30 s; it can only
 tighten). A message outside identity-crypto's own 30 s is `Verify(Error::Skew)`.
 
+## Clock
+
+`Clock` (`identity_request_auth::Clock`) has one required method,
+`fn now(&self) -> Timestamp`, to the nanosecond. There is no default and no
+seconds-only form, so an `impl Clock` without `now` does not compile. Calls read
+`clock.now().seconds` for seconds. `SystemClock` returns
+`identity_crypto::now_timestamp()`.
+
+## Liveness
+
+A device key is live at `at` (a `Timestamp` with real nanoseconds, passed
+through from the clock) when all of these hold, compared as `(seconds, nanos)`:
+
+* scheme ECDSA P-256 and purpose Device;
+* `issued_at <= at`;
+* `at < not_after`, when `not_after` is set;
+* `at < revoked_at`, when `revoked_at` is set. A revocation at exactly `at` is
+  refused, and so is one earlier in the same second.
+
+`live_devices(&[KeyRecord], at)` returns the live keys. An empty result is
+`LookupError::Unknown`, which the layer answers as `UNAUTHENTICATED`. A retired
+agent therefore gives an empty slice and is `Unknown`. `LookupError` is
+`identity_request_auth::LookupError` (`Unknown` or `Unavailable`).
+
 ## The tonic layer
 
 * A request is one message; the signature covers the message inside the gRPC
@@ -74,13 +100,15 @@ tighten). A message outside identity-crypto's own 30 s is `Verify(Error::Skew)`.
   runs before the body-type lookup on both sides, so a streaming method is refused
   as streaming even when it has no body type.
 * A **server-streaming** response ends with `UNAUTHENTICATED` in its trailers at
-  `VerifiedCaller::session_not_after`, including a stream that is idle then.
+  `VerifiedCaller::session_not_after`, including a stream that is idle then
+  (`SessionExpired`).
 * A **pass-through** method (`allow_unsigned` on the server, `pass_through` on the
   client) is skipped entirely: checked before any buffering or hashing, so its
   body is not size-limited either.
 * Every other body is buffered up to a limit, on both sides: `MAX_BODY_BYTES` (4 MiB) by default, or what `max_body(Option<usize>)` sets on `RequestAuthLayer` and `SignRequests` (`None` for no limit).
-* `RequestSigner` re-mints its session at 60% of its life, after expiry, or when
-  the clock has gone back to before the held session's start.
+* `RequestSigner` mints a session that lasts 300 s (`SESSION_SECONDS`). It re-mints
+  at 60% of that life, after expiry, or when the clock has gone back to before the
+  held session's start.
 
 ### Restart replay (`reject_issued_before`)
 
@@ -102,27 +130,67 @@ not per caller. A nonce is kept for about 60 s, so the service accepts at most
 about 68 signed requests a second (4096 / 60) across all callers; past that,
 requests are refused as `Busy` (`RESOURCE_EXHAUSTED`).
 
-### Refusal to gRPC status (`default_reject`)
+### AuthError codes
 
-| refusal | status |
-|---|---|
-| `LookupUnavailable` | `UNAVAILABLE` |
-| `BodyTooLarge`, `Busy` | `RESOURCE_EXHAUSTED` |
-| `StreamingRequestUnsupported` | `UNIMPLEMENTED` |
-| `Entropy`, `Credential` | `INTERNAL` |
-| everything else (`IssuedBeforeStart` included) | `UNAUTHENTICATED` |
+Every refusal is an `AuthError` with a code in the `identity.request_auth`
+namespace (`identity.request_auth.<code>`) and a gRPC status. `default_reject`
+maps each one through `coded_error::grpc::to_status` (source
+`identity-request-auth`). A service passes its own `on_reject` for its own codes.
 
-A service passes its own `on_reject` for coded errors.
+| Variant | Code | Class | gRPC status |
+|---|---|---|---|
+| `Audience` | `audience` | Logical | `UNAUTHENTICATED` |
+| `BodyType` | `body_type` | Logical | `UNAUTHENTICATED` |
+| `UnknownMethod` | `unknown_method` | Logical | `UNAUTHENTICATED` |
+| `StreamingRequestUnsupported` | `streaming_request` | Logical | `UNIMPLEMENTED` |
+| `EmptySignature` | `empty_signature` | Logical | `UNAUTHENTICATED` |
+| `NotSetUp` | `not_set_up` | Infrastructure | `UNAUTHENTICATED` |
+| `NonceLength` | `nonce_length` | Logical | `UNAUTHENTICATED` |
+| `BodyMismatch` | `body_mismatch` | Logical | `UNAUTHENTICATED` |
+| `BodyTooLarge` | `body_too_large` | Logical | `RESOURCE_EXHAUSTED` |
+| `Tolerance` | `tolerance` | Infrastructure | `UNAUTHENTICATED` |
+| `Skew` | `skew` | Logical | `UNAUTHENTICATED` |
+| `IssuedBeforeStart` | `issued_before_start` | Logical | `UNAUTHENTICATED` |
+| `Replayed` | `replayed` | Logical | `UNAUTHENTICATED` |
+| `Busy` | `busy` | Transient | `RESOURCE_EXHAUSTED` |
+| `UnknownAuthor` | `unknown_author` | Logical | `UNAUTHENTICATED` |
+| `LookupUnavailable` | `lookup_unavailable` | Transient | `UNAVAILABLE` |
+| `Malformed` | `malformed` | Logical | `UNAUTHENTICATED` |
+| `Verify` | `verify` | Logical | `UNAUTHENTICATED` |
+| `Credential` | `credential` | Infrastructure | `INTERNAL` |
+| `Entropy` | `entropy` | Infrastructure | `INTERNAL` |
+| `SessionExpired` | `session_expired` | Logical | `UNAUTHENTICATED` |
+| `NoCaller` | `no_caller` | Infrastructure | `UNAUTHENTICATED` |
+| `UnsignableRequest` | `unsignable_request` | Logical | `INVALID_ARGUMENT` |
+
+The table is the contract: a refusal keeps its variant, code and status.
 
 ### Implementing `TrustedDevices`
 
 The lookup runs before the signature is checked, so an unauthenticated caller can
 ask for any principal. Cache `Unknown` (negative lookups) so that costs one read;
 **never cache `Unavailable`**, so an outage does not become cached rejections after
-recovery; and you may rate-limit.
+recovery; and you may rate-limit. Build the result with `live_devices` (see Liveness).
+
+## The `client` feature
+
+`identity_request_auth::grpc::client` (with `client` enabled) builds signed client
+channels:
+
+* `endpoint_defaults(url)` gives a tonic `Endpoint` with a 10 s connect timeout
+  (`CONNECT_TIMEOUT`), HTTP/2 keepalive every 20 s with a 10 s timeout
+  (`KEEPALIVE_INTERVAL`, `KEEPALIVE_TIMEOUT`), keepalive while idle, and TCP
+  keepalive at 20 s.
+* `SignedChannel::from_identity_dir(dir, endpoint, audience, clock, layer)` loads
+  the device keys from `dir` with `DeviceKeys::load`, so a device-only directory
+  is enough and the root is never read. It connects, resolves the server id from
+  `AudienceSource::Fixed(id)` or `AudienceSource::Discover(f)` (discovery runs on
+  the unsigned channel), and wraps the channel in `layer(Arc<RequestSigner>,
+  server_id)`.
+* `ChannelError` (`identity.request_auth.channel`): `Identity` (`INTERNAL`),
+  `Connect` (`UNAVAILABLE`), `Audience` (`UNAVAILABLE`).
 
 ## CI
 
-CI runs both `cargo test -p identity-request-auth` and
-`cargo test -p identity-request-auth --features tonic`, and clippy with
-`-D warnings` on both feature sets.
+Feature sets tested: default, `tonic`, and `client`. Clippy runs with
+`-D warnings` on each.

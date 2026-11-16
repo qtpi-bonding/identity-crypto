@@ -1,14 +1,23 @@
 # identity-crypto
 
+Versions: identity-crypto **0.11.0**, identity-keyfile **0.11.0**,
+identity-request-auth **0.2.0**. See `CHANGELOG.md` for every break.
+
 P-256 key types, principal ids, canonical transcripts, the principal
 registry and verification for the concordium/structmux identity design
 (structmux `docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md`;
 verification: `2026-10-12-fleet-phase1b-identity-verification-design.md`).
-Pure: no I/O, no key storage; the only clock read is `now_unix`/`now_timestamp` in `clock.rs`. Every primitive comes from
-`rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
-validation and verification.
 
-The `identity-keyfile/` workspace member (0.9.0) stores a self-rooted principal's keys (an agent's or a daemon's) in a Unix directory, with the history and rotation chain; see its README.
+Purity: this crate does no I/O (no filesystem, no tokio, no key storage).
+The only wall-clock read in the crate is `src/clock.rs` (`now_timestamp` and
+`now_unix`), as `lib.rs` documents. Every primitive comes from `rust_jwk_duo`
+(re-exported as [`jwk_duo`]); this crate owns byte layouts, validation and
+verification.
+
+The `identity-keyfile/` workspace member (0.11.0) stores a self-rooted
+principal's keys (an agent's or a daemon's) in a Unix directory, with the
+history and rotation chain; see its README. The `identity-request-auth/`
+member (0.2.0) signs and verifies one request at a time over this crate.
 
 ## Helpers (0.5.0)
 
@@ -26,17 +35,58 @@ The `identity-keyfile/` workspace member (0.9.0) stores a self-rooted principal'
   the device.
 - **`message_nonce(message_id)`** gives 16 bytes: the first half of SHA-256
   over the message id.
-- **`verify_signed_message_trusted_devices`** (interim, step 1) checks a
-  message against a caller-supplied `AuthorDevices { author_genesis, devices }`
-  set of device keys, with no registry. It checks the mode-0 cert, its
+- **`verify_signed_message_trusted_devices(msg, audience, AuthorDevices {
+  author_genesis, devices }, when)`** checks a message against a
+  caller-supplied set of device keys, with no registry. It is the check
+  behind `identity-request-auth`'s `TrustedDeviceSet`, the request-auth core,
+  and it stays in the crate. It checks the mode-0 cert, its
   `principal_genesis`, device membership, the cert and its window, the
   audience, the message signature and, for `When::Live`, the 30 s skew. It
   does not read `SelfRooted.device` and does no revocation or freeze checks:
-  removing a device from the set is the caller's revocation. `issued_at` is
-  not tied to the cert window. This function is deleted, not kept, when the
-  step-2 `Resolver` verifier lands.
+  removing a device from the set is the caller's revocation, and it takes
+  effect at the next call. `issued_at` is not tied to the cert window.
 
-## Messages and ids (0.9.0)
+## Signer
+
+The signing seam (`src/signer.rs`). Every builder and `sign_document` signs
+through a `Signer`, so a backend can prompt, delegate to hardware, or refuse.
+
+- **`Signer`** (`Send + Sync`) has `public_key()`, `sign(message)` and
+  `sign_for(message, reason)`. `reason` is text a prompting backend may show;
+  the default ignores it. `sign` returns `Result<Signature, SignerError>`.
+- **`SignerError`** is `Cancelled`, `Unavailable` (no private half, or the key
+  is not available) or `Backend(String)`. A builder that fails to sign returns
+  `Error::Signer(SignerError)`, not `InvalidKey`.
+- `Signer` is implemented for `jwk_duo::KeyDuo` and `SigningKeyPair`, and for
+  `&S`, `Box<S>` and `Arc<S>` when `S: Signer`.
+- **`Signature`** is the raw 64-byte `r || s`. **`verify_signature(&key,
+  message, &signature)`** checks it by the key's own scheme (only ECDSA P-256
+  is supported; any other scheme is `UnsupportedScheme`).
+- **Unlock note:** `sign_document` builds the transcript from the draft and
+  then calls `sign_for`. It does not unlock anything. Unlock a prompting signer
+  before the caller chooses `issued_at`.
+
+## Lifetimes
+
+The constants are in `src/verify.rs` and re-exported at the root. Consumers
+use these; they keep no TTL, margin or clock helpers of their own.
+
+| Constant | Value | Meaning |
+| --- | --- | --- |
+| `DEFAULT_DELEGATION_SECONDS` | 30 d (2 592 000 s) | Lifetime of a new device delegation unless the caller says otherwise. |
+| `MAX_DELEGATION_SECONDS` | 31 d (2 678 400 s) | Longest device delegation any signer or verifier accepts. |
+| `DEFAULT_RENEW_MARGIN_SECONDS` | 7 d (604 800 s) | A delegation is renewed when less than this remains. |
+| `MAX_SESSION_SECONDS` | 24 h | Longest span `mint_session` accepts. |
+| `SKEW_SECONDS` | 30 s | Tolerance on `issued_at` for `When::Live`. |
+
+`identity-request-auth` has its own `SESSION_SECONDS` (300 s, the session it
+mints), which is separate from these.
+
+Absence always means less access: fields added later may only grant, and
+`0` is never "no expiry" (write `i64::MAX`). Nonce replay, document
+versions, persistence and policy are the caller's.
+
+## Messages and ids
 
 - **`pb::Message`** is the body of an author's `SignedMessage` (`message_id`,
   `to: [Target]`, `reply_to`, `references`, `mentions`, `authored_at`, `body`).
@@ -69,8 +119,9 @@ The `identity-keyfile/` workspace member (0.9.0) stores a self-rooted principal'
 
 A hosted agent with no registry entry cannot be revoked one device at a time:
 each device delegation lasts at most 31 days, but whoever holds the agent's
-root can keep issuing new ones. Registering it with `frozen` status blocks it. Revoking the hosting daemon, or
-removing its `hosts_held_agents` grant, cuts off all unregistered ones at once.
+root can keep issuing new ones. Registering it with `frozen` status blocks it.
+Revoking the hosting daemon, or removing its `hosts_held_agents` grant, cuts
+off all unregistered ones at once.
 
 ## Request digests (0.4.0)
 
@@ -83,8 +134,8 @@ Two forms of `Approval.request_digest`, each under its own tag:
   optional resource. An absent host covers both `Host::Hostless` and
   `Host::Unhosted`; the requester principal already fixes its kind.
 
-0.4.0 is additive: `ALL_TAGS` is now `[&str; 13]` (its type changes, which is
-why this is a minor bump). Nothing existing changes meaning.
+0.4.0 is additive: `ALL_TAGS` grew (its length is part of its type, which is
+why this was a minor bump). Nothing existing changes meaning.
 
 ## Verification (0.3.0)
 
@@ -102,10 +153,6 @@ History is checked once; messages are checked against it.
    given as `When::Live { now }` (adds the ±30 s skew) or
    `When::Accepted(AcceptedAt::from_receiver_record(t))`.
 
-Absence always means less access: fields added later may only grant, and
-`0` is never "no expiry" (write `i64::MAX`). Nonce replay, document
-versions, persistence and policy are the caller's.
-
 ## What it owns
 
 - **Types:** `PublicKey` (SEC1 uncompressed P-256, validated),
@@ -118,7 +165,7 @@ versions, persistence and policy are the caller's.
 - **Transcripts** (`identity_crypto::transcripts`): the exact bytes every
   signature covers, fourteen functions under `identitycrypto.*.v1` tags. Each
   validates while it encodes; signer and verifier call the same function.
-- **`verify_p256`:** 64-byte `r‖s`, both S forms, returning a
+- **`verify_p256`:** 64-byte `r||s`, both S forms, returning a
   `VerifiedSignature` witness bound to the key and the message.
 - **Key builders** (`keys`, see below): the delegation, proof, rotation and
   revocation signatures over those transcripts, with the device window cap.
@@ -129,15 +176,16 @@ not with `jwk_duo` directly, so the window caps and transcript rules apply.
 
 ## Keys
 
-Pure builders for a self-rooted principal's signatures (re-exported at the
-root from `src/keys.rs`). No I/O, no clock (the caller passes `now`), no key
-generation or storage.
+Builders for a self-rooted principal's signatures, generic over `Signer` and
+re-exported at the root from `src/keys.rs`. No I/O, no clock (the caller
+passes `now`), no key generation or storage.
 
 - `signing_public`, `encryption_public`, `principal_id`: the public halves of a
   duo, and the principal id a genesis duo starts.
-- `delegate_device(root, genesis, device, issued, not_after)`: a root-signed
-  DEVICE delegation for an Agent, Daemon, or Service device. Capped at 31 days by the
-  same rule the verifier applies (`check_unlisted_span`).
+- `delegate_device(root, genesis, &PublicKeyDuo, issued, not_after)`: a
+  root-signed DEVICE delegation for an Agent, Daemon, or Service device. The span
+  must be positive and at most `MAX_DELEGATION_SECONDS` (31 days), the cap the
+  verifier applies to unlisted devices.
 - `device_delegation` (unsigned) and `sign_key_delegation`: no cap. For a
   Human's device or an approval key, whose window may be longer.
 - `renewal_due(d, now, margin)`: whether a delegation is inside its renewal
@@ -145,14 +193,15 @@ generation or storage.
 - `challenge_proof`, `rename_proof`, `rotation`, `revocation`: the signed
   proofs over their transcripts.
 
-Every builder returns `Error::InvalidKey` for a key pair with no private half,
-never a panic.
+A builder whose signer fails returns `Error::Signer(...)`; a key pair with no
+private half is `Error::Signer(SignerError::Unavailable)`. Builders never panic.
 
 ## Testkit
 
 The `testkit` feature (off by default) compiles `identity_crypto::testkit`:
-real keys, real signatures and fixtures (`Signer`, `Principal`, `Fleet`,
-signed messages, delegations). Enable it in `[dev-dependencies]` only:
+real keys, real signatures and fixtures (`TestKey`, `Principal`, `Fleet`,
+`sign_test_document`, signed messages, delegations). `TestKey` was called
+`testkit::Signer` before 0.11.0. Enable it in `[dev-dependencies]` only:
 
 ```toml
 [dev-dependencies]

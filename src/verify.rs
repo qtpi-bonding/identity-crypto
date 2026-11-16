@@ -575,9 +575,8 @@ impl VerifiedTrustedMessage {
     pub fn body(&self) -> &[u8] { &self.body }
 }
 
-/// Step-1 interim verifier: trusts a caller-supplied set of DEVICE keys
-/// instead of a signed registry. It exists until the step-2 `Resolver`
-/// verifier lands. Then this function and these docs are deleted, not kept.
+/// Verifier for callers that hold their own set of trusted DEVICE keys instead
+/// of a signed registry. It is the core that `identity-request-auth` builds on.
 ///
 /// Checks, in order: signature non-empty; the signer chain is `SelfRooted`
 /// and the cert is mode 0 (a host-vouched chain is `ChainMismatch`); the
