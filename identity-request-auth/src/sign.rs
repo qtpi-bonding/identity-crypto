@@ -70,7 +70,7 @@ pub fn seal_request(
     body_type: &str,
     body: &[u8],
 ) -> Result<pb::SignedMessage, AuthError> {
-    let now = signer.clock.now_unix();
+    let now = signer.clock.now().seconds;
     let mut guard = signer.held.lock().unwrap_or_else(|p| p.into_inner());
     // Renew at 60% of the life, once the held session is past its renew point,
     // or when the clock has gone back to before the session's start.

@@ -1,14 +1,17 @@
 //! Test fixtures: real P-256 keys, a fake clock and a static device table.
 //! Compiled for this crate's tests, or for consumers that enable `testkit`.
 
+#[cfg(feature = "tonic")]
+use crate::{live_devices, KeyRecord, LookupError};
 use crate::{Clock, DeviceCredentials, RequestSigner};
-use identity_crypto::{jwk_duo::SigningKeyPair, PublicKey};
+use identity_crypto::{jwk_duo::SigningKeyPair, PublicKey, Timestamp};
 #[cfg(feature = "tonic")]
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::pin;
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
+#[cfg(feature = "tonic")]
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll, Waker};
 
 /// Drives a future that never waits on I/O (every test future here resolves
@@ -25,25 +28,39 @@ pub fn block_on<F: Future>(future: F) -> F::Output {
 
 /// A clock the test moves by hand.
 #[derive(Debug)]
-pub struct FakeClock(AtomicI64);
+pub struct FakeClock(Mutex<Timestamp>);
 
 impl FakeClock {
     pub fn new(now: i64) -> Arc<Self> {
-        Arc::new(Self(AtomicI64::new(now)))
+        Arc::new(Self(Mutex::new(Timestamp {
+            seconds: now,
+            nanos: 0,
+        })))
     }
 
     pub fn set(&self, now: i64) {
-        self.0.store(now, Ordering::SeqCst);
+        self.set_at(Timestamp {
+            seconds: now,
+            nanos: 0,
+        });
+    }
+
+    pub fn set_at(&self, at: Timestamp) {
+        *self.0.lock().unwrap_or_else(|p| p.into_inner()) = at;
     }
 
     pub fn advance(&self, seconds: i64) {
-        self.0.fetch_add(seconds, Ordering::SeqCst);
+        let mut now = self.0.lock().unwrap_or_else(|p| p.into_inner());
+        *now = Timestamp {
+            seconds: now.seconds + seconds,
+            nanos: 0,
+        };
     }
 }
 
 impl Clock for FakeClock {
-    fn now_unix(&self) -> i64 {
-        self.0.load(Ordering::SeqCst)
+    fn now(&self) -> Timestamp {
+        *self.0.lock().unwrap_or_else(|p| p.into_inner())
     }
 }
 
@@ -89,14 +106,50 @@ impl crate::grpc::TrustedDevices for StaticDevices {
         &self,
         genesis: &PublicKey,
         _at: identity_crypto::Timestamp,
-    ) -> Result<Vec<PublicKey>, crate::grpc::LookupError> {
+    ) -> Result<Vec<PublicKey>, LookupError> {
         if self.unavailable.load(Ordering::SeqCst) {
-            return Err(crate::grpc::LookupError::Unavailable);
+            return Err(LookupError::Unavailable);
         }
         let table = self.table.lock().unwrap_or_else(|p| p.into_inner());
         match table.get(genesis) {
             Some(devices) if !devices.is_empty() => Ok(devices.clone()),
-            _ => Err(crate::grpc::LookupError::Unknown),
+            _ => Err(LookupError::Unknown),
+        }
+    }
+}
+
+/// A registry of key records the test edits between requests, read through
+/// [`live_devices`] so liveness is decided exactly as in production.
+#[cfg(feature = "tonic")]
+#[derive(Default)]
+pub struct RecordDevices {
+    table: Mutex<HashMap<PublicKey, Vec<KeyRecord>>>,
+}
+
+#[cfg(feature = "tonic")]
+impl RecordDevices {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn put(&self, genesis: &PublicKey, records: Vec<KeyRecord>) {
+        let mut table = self.table.lock().unwrap_or_else(|p| p.into_inner());
+        table.insert(genesis.clone(), records);
+    }
+}
+
+#[cfg(feature = "tonic")]
+#[async_trait::async_trait]
+impl crate::grpc::TrustedDevices for RecordDevices {
+    async fn devices_for(
+        &self,
+        genesis: &PublicKey,
+        at: Timestamp,
+    ) -> Result<Vec<PublicKey>, LookupError> {
+        let table = self.table.lock().unwrap_or_else(|p| p.into_inner());
+        match table.get(genesis) {
+            Some(records) => live_devices(records, at),
+            None => Err(LookupError::Unknown),
         }
     }
 }

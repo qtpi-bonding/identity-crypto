@@ -2,17 +2,18 @@
 //! unsigned; a signed request reaches the handler with its caller; a body that
 //! differs from the signed body is refused. Built with `--features tonic`.
 
+use crate::grpc::TrustedDevices;
 use crate::grpc::{MethodKind, RequestAuthLayer, SignRequests, Verifier, REQUEST_HEADER};
-use crate::testkit::{block_on, FakeClock, StaticDevices, TestPrincipal};
+use crate::testkit::{block_on, FakeClock, RecordDevices, StaticDevices, TestPrincipal};
 use crate::{
-    audience_for, seal_request, Clock, ClockTolerance, NonceCaps, RequestSigner, VerifiedCaller,
-    MAX_BODY_BYTES, SESSION_SECONDS,
+    audience_for, seal_request, Clock, ClockTolerance, KeyRecord, LookupError, NonceCaps,
+    RequestSigner, VerifiedCaller, MAX_BODY_BYTES, SESSION_SECONDS,
 };
 use bytes::Bytes;
 use http::{Request, Response};
 use http_body::{Body as HttpBody, Frame};
 use http_body_util::{BodyExt, Full};
-use identity_crypto::{pb, PrincipalId, PublicKey};
+use identity_crypto::{pb, PrincipalId, PublicKey, Timestamp};
 use prost::Message;
 use std::collections::VecDeque;
 use std::convert::Infallible;
@@ -843,4 +844,118 @@ fn the_client_limit_is_configurable_and_refuses_before_sending() {
     let big = vec![0u8; MAX_BODY_BYTES + 1];
     let resp = block_on(s.client().oneshot(request(PATH, framed(&big)))).expect("infallible");
     assert_eq!(grpc_status(&resp).as_deref(), Some("8"));
+}
+
+fn ts(seconds: i64, nanos: i32) -> Timestamp {
+    Timestamp { seconds, nanos }
+}
+
+/// Records the instant each lookup was made at.
+struct SpyDevices {
+    device: PublicKey,
+    seen: Mutex<Vec<Timestamp>>,
+}
+
+#[async_trait::async_trait]
+impl TrustedDevices for SpyDevices {
+    async fn devices_for(
+        &self,
+        _genesis: &PublicKey,
+        at: Timestamp,
+    ) -> Result<Vec<PublicKey>, LookupError> {
+        self.seen.lock().expect("lock").push(at);
+        Ok(vec![self.device.clone()])
+    }
+}
+
+#[tokio::test]
+async fn verifier_passes_real_nanoseconds_to_lookup() {
+    let clock = FakeClock::new(T0);
+    clock.set_at(ts(T0, 123_456_789));
+    let principal = TestPrincipal::new();
+    let spy = Arc::new(SpyDevices {
+        device: principal.device_key(),
+        seen: Mutex::new(Vec::new()),
+    });
+    let signer = principal.signer(clock.clone());
+    let audience = audience_for("acme.v1.Inventory", "ListItems", SERVER);
+    let signed = seal_request(&signer, &audience, BODY_TYPE, MESSAGE).expect("sealing");
+    let verifier = Verifier::new(spy.clone(), ClockTolerance::default(), NonceCaps::default());
+    verifier
+        .open_signed_request(&signed, &audience, BODY_TYPE, MESSAGE, None, clock.now(), 0)
+        .await
+        .expect("accepted");
+    assert_eq!(*spy.seen.lock().expect("lock"), vec![ts(T0, 123_456_789)]);
+}
+
+#[tokio::test]
+async fn layer_refuses_request_after_mid_second_revocation() {
+    let clock = FakeClock::new(T0);
+    let principal = TestPrincipal::new();
+    let devices = Arc::new(RecordDevices::new());
+    devices.put(
+        &principal.genesis,
+        vec![KeyRecord {
+            scheme: 3,
+            purpose: 2,
+            public_key: principal.device_key(),
+            issued_at: Some(ts(T0 - 10, 0)),
+            not_after: None,
+            revoked_at: Some(ts(T0, 500_000_000)),
+        }],
+    );
+    let signer = Arc::new(principal.signer(clock.clone()));
+    let reached = Arc::new(Mutex::new(0u32));
+    let handler = {
+        let reached = reached.clone();
+        service_fn(move |_req: Request<Body>| {
+            let reached = reached.clone();
+            async move {
+                *reached.lock().expect("lock") += 1;
+                Ok::<_, Infallible>(Response::new(Body::empty()))
+            }
+        })
+    };
+    let verifier = Arc::new(Verifier::new(
+        devices,
+        ClockTolerance::default(),
+        NonceCaps::default(),
+    ));
+    let dyn_clock: Arc<dyn Clock> = clock.clone();
+    let layer = RequestAuthLayer::new(
+        verifier,
+        dyn_clock,
+        SERVER,
+        body_type_of,
+        |path: &str| path == HEALTH,
+        crate::grpc::default_reject,
+    );
+    let client = SignRequests::new(signer, SERVER, body_type_of).layer(layer.layer(handler));
+
+    clock.set_at(ts(T0, 700_000_000));
+    let resp = client
+        .clone()
+        .oneshot(request(PATH, framed(MESSAGE)))
+        .await
+        .expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("16"), "UNAUTHENTICATED");
+    // The x-error-code header (identity.request_auth.unknown_author) is asserted in Task 12.
+    assert_eq!(*reached.lock().expect("lock"), 0);
+
+    clock.set_at(ts(T0, 300_000_000));
+    let resp = client
+        .oneshot(request(PATH, framed(MESSAGE)))
+        .await
+        .expect("infallible");
+    assert_eq!(grpc_status(&resp), None, "accepted before the revocation");
+    assert_eq!(*reached.lock().expect("lock"), 1);
+}
+
+#[test]
+fn lookup_unavailable_is_unavailable() {
+    let s = server();
+    s.devices.set_unavailable(true);
+    let client = SignRequests::new(s.signer.clone(), SERVER, body_type_of).layer(s.protected());
+    let resp = block_on(client.oneshot(request(PATH, framed(MESSAGE)))).expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("14"), "UNAVAILABLE");
 }

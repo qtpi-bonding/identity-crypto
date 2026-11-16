@@ -1,3 +1,14 @@
+/// Why a trusted-device lookup failed. The two cases map to different answers:
+/// `Unknown` is an authentication failure, `Unavailable` is a service outage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum LookupError {
+    #[error("no trusted devices for this principal")]
+    Unknown,
+    #[error("the trusted-device lookup is unavailable")]
+    Unavailable,
+}
+
 /// Why a request was refused. Each variant is a distinct cause; a service maps
 /// them to its own coded errors through `on_reject`.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]

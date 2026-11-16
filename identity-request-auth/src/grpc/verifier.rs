@@ -1,8 +1,8 @@
-use super::devices::{LookupError, TrustedDevices};
 use crate::{
-    check_request, claimed_genesis, precheck_request, AuthError, ClockTolerance, NonceCache,
-    NonceCaps, TrustedDeviceSet, VerifiedCaller,
+    check_request, claimed_genesis, precheck_request, AuthError, ClockTolerance, LookupError,
+    NonceCache, NonceCaps, TrustedDeviceSet, VerifiedCaller,
 };
+use super::devices::TrustedDevices;
 use identity_crypto::{pb, Timestamp};
 use std::sync::Mutex;
 
@@ -32,6 +32,7 @@ impl<K: TrustedDevices> Verifier<K> {
     /// claimed principal. The cheap checks (size, audience, body type,
     /// signature present, nonce length, body equality) run before the lookup,
     /// so a malformed request never costs one.
+    #[allow(clippy::too_many_arguments)]
     pub async fn open_signed_request(
         &self,
         signed: &pb::SignedMessage,
@@ -39,7 +40,8 @@ impl<K: TrustedDevices> Verifier<K> {
         expected_body_type: &str,
         received_body: &[u8],
         max_body: Option<usize>,
-        now: i64,
+        now: Timestamp,
+        reject_issued_before: i64,
     ) -> Result<VerifiedCaller, AuthError> {
         precheck_request(
             signed,
@@ -55,19 +57,14 @@ impl<K: TrustedDevices> Verifier<K> {
         let genesis = claimed_genesis(signed)?;
         let devices = self
             .keys
-            .devices_for(
-                &genesis,
-                Timestamp {
-                    seconds: now,
-                    nanos: 0,
-                },
-            )
+            .devices_for(&genesis, now)
             .await
             .map_err(|e| match e {
                 LookupError::Unknown => AuthError::UnknownAuthor,
                 LookupError::Unavailable => AuthError::LookupUnavailable,
             })?;
         let set = TrustedDeviceSet::new(genesis, devices);
+        let now_s = now.seconds;
         let checked = check_request(
             signed,
             expected_audience,
@@ -76,11 +73,15 @@ impl<K: TrustedDevices> Verifier<K> {
             max_body,
             &set,
             self.tolerance,
-            now,
+            now_s,
         )?;
+
+        if checked.issued_at() < reject_issued_before {
+            return Err(AuthError::IssuedBeforeStart);
+        }
 
         // Only the cache is touched after the last await, so no guard is held across one.
         let mut nonces = self.nonces.lock().unwrap_or_else(|p| p.into_inner());
-        checked.accept(&mut nonces, now)
+        checked.accept(&mut nonces, now_s)
     }
 }

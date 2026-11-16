@@ -50,7 +50,7 @@ impl ExpiringBody {
 /// The wait until `not_after`, at least a second, so a timer that fires a
 /// little early re-arms instead of spinning.
 fn until(clock: &dyn Clock, not_after: i64) -> Duration {
-    Duration::from_secs((not_after - clock.now_unix()).max(1) as u64)
+    Duration::from_secs((not_after - clock.now().seconds).max(1) as u64)
 }
 
 impl HttpBody for ExpiringBody {
@@ -65,7 +65,7 @@ impl HttpBody for ExpiringBody {
         if this.done {
             return Poll::Ready(None);
         }
-        if this.clock.now_unix() >= this.not_after {
+        if this.clock.now().seconds >= this.not_after {
             return this.end();
         }
         match Pin::new(&mut this.inner).poll_frame(cx) {
@@ -78,7 +78,7 @@ impl HttpBody for ExpiringBody {
         }
         // The stream is idle: wait for the deadline.
         while this.timer.as_mut().poll(cx).is_ready() {
-            if this.clock.now_unix() >= this.not_after {
+            if this.clock.now().seconds >= this.not_after {
                 return this.end();
             }
             let next = until(&*this.clock, this.not_after);

@@ -1,8 +1,15 @@
 use crate::AuthError;
+use identity_crypto::Timestamp;
 
-/// Seconds since the Unix epoch. Injected everywhere the crate needs the time.
+/// The time, to the nanosecond. Injected everywhere the crate needs the time.
+/// There is no default and no seconds-only form: `now` is required.
+///
+/// ```compile_fail,E0046
+/// struct S;
+/// impl identity_request_auth::Clock for S {}
+/// ```
 pub trait Clock: Send + Sync {
-    fn now_unix(&self) -> i64;
+    fn now(&self) -> Timestamp;
 }
 
 /// The operating system's wall clock.
@@ -10,11 +17,8 @@ pub trait Clock: Send + Sync {
 pub struct SystemClock;
 
 impl Clock for SystemClock {
-    fn now_unix(&self) -> i64 {
-        use std::time::{SystemTime, UNIX_EPOCH};
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+    fn now(&self) -> Timestamp {
+        identity_crypto::now_timestamp()
     }
 }
 

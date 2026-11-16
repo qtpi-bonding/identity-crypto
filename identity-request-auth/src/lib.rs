@@ -22,6 +22,7 @@
 mod audience;
 mod clock;
 mod error;
+mod liveness;
 mod nonce;
 mod sign;
 mod verify;
@@ -37,7 +38,8 @@ mod tests;
 
 pub use audience::{audience_for, split_path};
 pub use clock::{Clock, ClockTolerance, SystemClock};
-pub use error::AuthError;
+pub use error::{AuthError, LookupError};
+pub use liveness::{live_devices, KeyRecord};
 pub use nonce::{Insert, NonceCache, NonceCaps, PURGE_GRACE, SKEW_SECONDS};
 pub use sign::{seal_request, CredentialSource, DeviceCredentials, RequestSigner, SESSION_SECONDS};
 pub use verify::{

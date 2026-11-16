@@ -29,7 +29,7 @@ mod devices;
 mod expiry;
 mod verifier;
 
-pub use devices::{LookupError, TrustedDevices};
+pub use devices::TrustedDevices;
 pub use verifier::Verifier;
 
 use crate::MAX_BODY_BYTES;
@@ -332,7 +332,7 @@ impl<K: TrustedDevices> RequestAuthLayer<K> {
         allow_unsigned: impl Fn(&str) -> bool + Send + Sync + 'static,
         on_reject: impl Fn(AuthError) -> Status + Send + Sync + 'static,
     ) -> Self {
-        let reject_issued_before = clock.now_unix();
+        let reject_issued_before = clock.now().seconds;
         Self {
             config: Config {
                 verifier,
@@ -503,17 +503,14 @@ where
                     body_type,
                     message,
                     config.max_body,
-                    config.clock.now_unix(),
+                    config.clock.now(),
+                    config.reject_issued_before,
                 )
                 .await
             {
                 Ok(caller) => caller,
                 Err(e) => return Ok(refused(&config, e)),
             };
-
-            if caller.issued_at() < config.reject_issued_before {
-                return Ok(refused(&config, AuthError::IssuedBeforeStart));
-            }
 
             let not_after = caller.session_not_after();
             parts.extensions.insert(caller);

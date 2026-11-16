@@ -84,7 +84,7 @@ impl Fixture {
             set,
             &mut self.nonces.borrow_mut(),
             self.tolerance,
-            self.clock.now_unix(),
+            self.clock.now().seconds,
         )
     }
 
