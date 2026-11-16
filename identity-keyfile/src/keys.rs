@@ -15,9 +15,11 @@ use identity_crypto::{
 };
 use std::fs;
 use std::io::ErrorKind;
-use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+use std::os::unix::fs::DirBuilderExt;
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::private_fs;
 
 /// The keys of one self-rooted agent, as stored in an agent directory.
 ///
@@ -376,7 +378,6 @@ impl IdentityKeys {
     /// `load_at` must not be called while holding the exclusive lock, because the
     /// file lock would deadlock.
     fn load_locked(layout: &IdentityLayout) -> Result<Self, KeyfileError> {
-        files::check_layout(layout)?;
         let keys = Self::load_files(layout)?;
         check_delegation(&keys.device, &keys.delegation)?;
         Ok(keys)
@@ -548,7 +549,7 @@ impl IdentityKeys {
         let dir = layout.device_dir();
         // A symlink or a loose directory is refused, never renamed over.
         match fs::symlink_metadata(dir) {
-            Ok(_) => files::check_dir(dir)?,
+            Ok(_) => private_fs::check_private_dir(dir)?,
             Err(error) if error.kind() == ErrorKind::NotFound => {}
             Err(error) => return Err(crate::error::io(dir, error)),
         }
@@ -668,7 +669,7 @@ impl IdentityKeys {
         match fs::symlink_metadata(dir) {
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(error) => return Err(crate::error::io(dir, error)),
-            Ok(_) => files::check_dir(dir)?,
+            Ok(_) => private_fs::check_private_dir(dir)?,
         }
         if !exists(&dir.join(AGENT_ID_FILE)) {
             return Ok(None);
@@ -679,25 +680,18 @@ impl IdentityKeys {
     /// True when `dir` exists and holds the `agent_id` marker. Unchanged from
     /// 0.8.0: it does not look for `root.jwk.json`.
     pub fn exists(dir: &Path) -> bool {
-        let private = fs::symlink_metadata(dir)
-            .map(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0)
-            .unwrap_or(false);
-        private && exists(&dir.join(AGENT_ID_FILE))
+        private_fs::check_private_dir(dir).is_ok() && exists(&dir.join(AGENT_ID_FILE))
     }
 
     /// For a split layout: true when `agent_id` is in `device_dir` and
     /// `root.jwk.json` is in `root_dir`, both being private directories. For a
     /// single layout it is [`IdentityKeys::exists`].
     pub fn exists_at(layout: &IdentityLayout) -> bool {
-        let private_dir = |dir: &Path| {
-            fs::symlink_metadata(dir)
-                .map(|meta| meta.is_dir() && meta.permissions().mode() & 0o077 == 0)
-                .unwrap_or(false)
-        };
-        private_dir(layout.device_dir())
+        private_fs::check_private_dir(layout.device_dir()).is_ok()
             && exists(&layout.device_dir().join(AGENT_ID_FILE))
             && (!layout.is_split()
-                || (private_dir(layout.root_dir()) && exists(&layout.root_dir().join(ROOT_FILE))))
+                || (private_fs::check_private_dir(layout.root_dir()).is_ok()
+                    && exists(&layout.root_dir().join(ROOT_FILE))))
     }
 
     /// Re-signs the delegation with the in-memory root and device when it is due
@@ -834,7 +828,7 @@ pub fn read_principal(_dir: &Path) -> Result<Option<PrincipalId>, KeyfileError> 
     match fs::symlink_metadata(dir) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(crate::error::io(dir, error)),
-        Ok(_) => files::check_dir(dir)?,
+        Ok(_) => private_fs::check_private_dir(dir)?,
     }
     if !exists(&dir.join(AGENT_ID_FILE)) {
         return Ok(None);
@@ -879,7 +873,7 @@ impl DeviceKeys {
     /// Reads only the device, delegation, principal id, and device history files.
     /// The root and rotation files are never opened or inspected.
     pub fn load(dir: &Path) -> Result<Self, KeyfileError> {
-        files::check_dir(dir)?;
+        private_fs::check_private_dir(dir)?;
         let _lock = files::lock_shared(dir)?;
         let device = read_duo(dir, DEVICE_FILE)?;
         let delegation = read_delegation(dir)?;

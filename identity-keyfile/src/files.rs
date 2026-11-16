@@ -3,11 +3,11 @@ use crate::layout::IdentityLayout;
 use identity_crypto::jwk_duo::{KeyDuo, KeyDuoSerializer};
 use identity_crypto::{pb, PrincipalId};
 use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Read};
+use std::io::ErrorKind;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
-use crate::private_fs::{self, MAX_KEY_FILE_BYTES};
+use crate::private_fs::{self, MAX_KEY_FILE_BYTES, MAX_PUBLIC_FILE_BYTES};
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -56,21 +56,13 @@ fn parent_dir(p: &Path) -> &Path {
     }
 }
 
-fn read_bytes(p: &Path) -> Result<Vec<u8>, KeyfileError> {
-    let mut f = File::open(p).map_err(|e| {
-        if e.kind() == ErrorKind::NotFound {
-            KeyfileError::Missing(p.to_path_buf())
-        } else {
-            io(p, e)
-        }
-    })?;
-    let mut b = Vec::new();
-    f.read_to_end(&mut b).map_err(|e| io(p, e))?;
-    Ok(b)
+/// Reads a public file through `private_fs::read_regular_file`. A missing file is `Missing`.
+fn read_public(p: &Path) -> Result<Vec<u8>, KeyfileError> {
+    private_fs::read_regular_file(p, MAX_PUBLIC_FILE_BYTES)
 }
 
 fn parse<T: serde::de::DeserializeOwned>(p: &Path) -> Result<T, KeyfileError> {
-    serde_json::from_slice(&read_bytes(p)?).map_err(|e| KeyfileError::Parse {
+    serde_json::from_slice(&read_public(p)?).map_err(|e| KeyfileError::Parse {
         path: p.to_path_buf(),
         msg: e.to_string(),
     })
@@ -104,11 +96,12 @@ pub fn write_duo(dir: &Path, name: &str, duo: &KeyDuo) -> Result<(), KeyfileErro
 
 pub fn read_duo(dir: &Path, name: &str) -> Result<KeyDuo, KeyfileError> {
     let p = path(dir, name);
-    let text = String::from_utf8(read_bytes(&p)?).map_err(|e| KeyfileError::Parse {
+    let bytes = private_fs::read_private_file(&p, MAX_KEY_FILE_BYTES)?;
+    let text = std::str::from_utf8(&bytes).map_err(|e| KeyfileError::Parse {
         path: p.clone(),
         msg: e.to_string(),
     })?;
-    KeyDuoSerializer::import_key_duo_jwk(&text).map_err(|e| KeyfileError::Parse {
+    KeyDuoSerializer::import_key_duo_jwk(text).map_err(|e| KeyfileError::Parse {
         path: p,
         msg: e.to_string(),
     })
@@ -163,7 +156,7 @@ pub fn write_principal_id(dir: &Path, id: &PrincipalId) -> Result<(), KeyfileErr
 
 pub fn read_principal_id(dir: &Path) -> Result<PrincipalId, KeyfileError> {
     let p = path(dir, AGENT_ID_FILE);
-    let text = String::from_utf8(read_bytes(&p)?).map_err(|e| KeyfileError::Parse {
+    let text = String::from_utf8(read_public(&p)?).map_err(|e| KeyfileError::Parse {
         path: p.clone(),
         msg: e.to_string(),
     })?;
@@ -201,12 +194,6 @@ fn read_optional<T: serde::de::DeserializeOwned + Default>(
 /// Used by `init` and `save`, the operations that may create the directory.
 pub(crate) fn ensure_dir(dir: &Path) -> Result<(), KeyfileError> {
     private_fs::create_private_dir(dir)
-}
-
-/// Requires an existing agent directory: private (`mode & 0o077 == 0`), owned
-/// by the effective user, not a symlink. Writes nothing.
-pub(crate) fn check_dir(dir: &Path) -> Result<(), KeyfileError> {
-    private_fs::check_private_dir(dir)
 }
 
 fn open_lock_file(dir: &Path) -> std::io::Result<File> {
@@ -261,9 +248,9 @@ pub(crate) fn ensure_layout(layout: &IdentityLayout) -> Result<(), KeyfileError>
 /// Checks the layout's directories (0700, not a symlink); creates nothing.
 pub(crate) fn check_layout(layout: &IdentityLayout) -> Result<(), KeyfileError> {
     if layout.is_split() {
-        check_dir(layout.root_dir())?;
+        private_fs::check_private_dir(layout.root_dir())?;
     }
-    check_dir(layout.device_dir())
+    private_fs::check_private_dir(layout.device_dir())
 }
 
 /// Exclusive locks for an operation that touches the root: `root_dir/.lock`,
