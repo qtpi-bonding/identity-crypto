@@ -1,0 +1,15 @@
+{
+  "services": {
+    "grorg": {
+      "device_key_id": "{{DEVICE_GROK}}",
+      "dir": "{{DIR_GROK}}",
+      "principal_id": "{{PRINCIPAL_GROK}}"
+    },
+    "structmux/3b6a27bcceb6a42d": {
+      "device_key_id": "{{DEVICE_STRUCTMUX}}",
+      "dir": "{{DIR_STRUCTMUX}}",
+      "principal_id": "{{PRINCIPAL_STRUCTMUX}}"
+    }
+  },
+  "version": 1
+}
