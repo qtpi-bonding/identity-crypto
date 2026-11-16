@@ -249,8 +249,8 @@ fn check_root_current(
     let genesis = genesis
         .and_then(|genesis| PublicKey::try_from(genesis).ok())
         .ok_or(KeyfileError::RootMismatch)?;
-    let chain =
-        AuthorityChain::from_rotations(genesis, rotations).map_err(|_| KeyfileError::RootMismatch)?;
+    let chain = AuthorityChain::from_rotations(genesis, rotations)
+        .map_err(|_| KeyfileError::RootMismatch)?;
     if &chain.principal() != principal_id {
         return Err(KeyfileError::RootMismatch);
     }
@@ -299,7 +299,7 @@ impl IdentityKeys {
         let delegation = delegate_device(
             &root,
             &principal_id,
-            &device,
+            &identity_crypto::PublicKeyDuo::from(&device),
             now,
             now.saturating_add(ttl_seconds),
         )?;
@@ -484,7 +484,7 @@ impl IdentityKeys {
         let delegation = delegate_device(
             &keys.root,
             &keys.principal_id,
-            device,
+            &identity_crypto::PublicKeyDuo::from(device),
             now,
             now.saturating_add(ttl_seconds),
         )?;
@@ -734,7 +734,7 @@ impl IdentityKeys {
         let delegation = delegate_device(
             &self.root,
             &self.principal_id,
-            &self.device,
+            &identity_crypto::PublicKeyDuo::from(&self.device),
             now,
             now.saturating_add(ttl_seconds),
         )?;
@@ -809,7 +809,12 @@ impl IdentityKeys {
             rotations.pop();
         }
         let new_root = generate();
-        let signed = rotation(&keys.root, &keys.principal_id, &new_root, now)?;
+        let signed = rotation(
+            &keys.root,
+            &keys.principal_id,
+            &signing_public(&new_root),
+            now,
+        )?;
         rotations.push(signed.clone());
         write_rotations(layout.device_dir(), &pb::RootRotations { rotations })?;
         write_duo(layout.root_dir(), ROOT_FILE, &new_root)?;

@@ -66,7 +66,14 @@ fn delegation_round_trips_through_json_and_verifies() {
     let root = generate();
     let device = generate();
     let id = principal_id(&root);
-    let delegation = identity_crypto::delegate_device(&root, &id, &device, 10, 20).unwrap();
+    let delegation = identity_crypto::delegate_device(
+        &root,
+        &id,
+        &identity_crypto::PublicKeyDuo::from(&device),
+        10,
+        20,
+    )
+    .unwrap();
     let dir = tempdir();
     write_delegation(dir.path(), &delegation).unwrap();
     let loaded = read_delegation(dir.path()).unwrap();

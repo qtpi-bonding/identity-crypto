@@ -2,8 +2,10 @@
 //! self-rooted session certificate (mode 0) and signs a `signed-message.v1`
 //! with the session key. Holds no clock; the caller chooses every window.
 
-use crate::transcripts::{hosted_session_transcript, session_delegation_transcript, signed_message_transcript};
-use crate::signer::sign_transcript;
+use crate::signer::{sign_transcript, Signer};
+use crate::transcripts::{
+    hosted_session_transcript, session_delegation_transcript, signed_message_transcript,
+};
 use crate::verify::check_session_span;
 use crate::{jwk_duo, pb, Error, PrincipalId, PublicKey, Result};
 
@@ -31,8 +33,8 @@ impl std::fmt::Debug for SessionCredential {
 
 /// Mints a session under `device` for `principal_genesis`, valid over
 /// `[not_before_unix, not_after_unix]`. The span must be in `(0, 24 h]`.
-pub fn mint_session(
-    device: &jwk_duo::SigningKeyPair,
+pub fn mint_session<S: Signer + ?Sized>(
+    device: &S,
     principal_genesis: &PublicKey,
     not_before_unix: i64,
     not_after_unix: i64,
@@ -45,7 +47,7 @@ pub fn mint_session(
         signature: vec![],
         principal_genesis: Some(pb::PublicKey::from(principal_genesis)),
         mode: 0,
-        device: Some(pb::PublicKey::from(&PublicKey::from(device))),
+        device: Some(pb::PublicKey::from(&device.public_key())),
         session: Some(pb::PublicKey::from(&PublicKey::from(&key))),
         host_genesis: None,
         subject: None,
@@ -129,13 +131,13 @@ impl SessionCredential {
 
 /// The daemon side of a hosted session: its device key and that device's delegation from the daemon root.
 pub struct HostingDaemon<'a> {
-    pub device: &'a jwk_duo::SigningKeyPair,
+    pub device: &'a dyn Signer,
     pub device_delegation: &'a pb::KeyDelegation,
 }
 
 /// The agent side: its device key, that device's delegation from the agent root, and the agent's root rotations (empty if never rotated).
 pub struct HostedAgent<'a> {
-    pub device: &'a jwk_duo::SigningKeyPair,
+    pub device: &'a dyn Signer,
     pub device_delegation: &'a pb::KeyDelegation,
     pub rotations: &'a [pb::RootRotation],
 }
@@ -163,9 +165,17 @@ impl std::fmt::Debug for HostedSessionCredential {
     }
 }
 
-fn delegated_device(delegation: &pb::KeyDelegation, device: &jwk_duo::SigningKeyPair, field: &'static str) -> Result<PublicKey> {
-    let public = PublicKey::from(device);
-    let got = delegation.delegated.as_ref().map(PublicKey::try_from).transpose()?;
+fn delegated_device(
+    delegation: &pb::KeyDelegation,
+    device: &dyn Signer,
+    field: &'static str,
+) -> Result<PublicKey> {
+    let public = device.public_key();
+    let got = delegation
+        .delegated
+        .as_ref()
+        .map(PublicKey::try_from)
+        .transpose()?;
     if got.as_ref() != Some(&public) {
         return Err(Error::ChainMismatch(field));
     }
@@ -192,20 +202,55 @@ pub fn mint_hosted_session(
     not_after_unix: i64,
 ) -> Result<HostedSessionCredential> {
     check_session_span(not_before_unix, not_after_unix)?;
-    let daemon_device = delegated_device(daemon.device_delegation, daemon.device, "host_device.delegated")?;
-    delegated_device(agent.device_delegation, agent.device, "agent_device.delegated")?;
+    let daemon_device = delegated_device(
+        daemon.device_delegation,
+        daemon.device,
+        "host_device.delegated",
+    )?;
+    delegated_device(
+        agent.device_delegation,
+        agent.device,
+        "agent_device.delegated",
+    )?;
     check_device_purpose(daemon.device_delegation, "host_device.purpose")?;
     check_device_purpose(agent.device_delegation, "agent_device.purpose")?;
-    let agent_root = agent.device_delegation.signing_root.as_ref().ok_or(Error::MissingField("agent_device.signing_root"))?;
-    let agent_genesis_key = PublicKey::try_from(agent.device_delegation.principal_genesis.as_ref().ok_or(Error::MissingField("agent_device.principal_genesis"))?)?;
-    if &pb::PublicKey::from(crate::AuthorityChain::from_rotations(agent_genesis_key, agent.rotations)?.head()) != agent_root {
+    let agent_root = agent
+        .device_delegation
+        .signing_root
+        .as_ref()
+        .ok_or(Error::MissingField("agent_device.signing_root"))?;
+    let agent_genesis_key = PublicKey::try_from(
+        agent
+            .device_delegation
+            .principal_genesis
+            .as_ref()
+            .ok_or(Error::MissingField("agent_device.principal_genesis"))?,
+    )?;
+    if &pb::PublicKey::from(
+        crate::AuthorityChain::from_rotations(agent_genesis_key, agent.rotations)?.head(),
+    ) != agent_root
+    {
         return Err(Error::ChainMismatch("agent_device.signing_root"));
     }
-    let host_genesis = daemon.device_delegation.principal_genesis.clone().ok_or(Error::MissingField("host_device.principal_genesis"))?;
-    let agent_genesis = agent.device_delegation.principal_genesis.clone().ok_or(Error::MissingField("agent_device.principal_genesis"))?;
+    let host_genesis = daemon
+        .device_delegation
+        .principal_genesis
+        .clone()
+        .ok_or(Error::MissingField("host_device.principal_genesis"))?;
+    let agent_genesis = agent
+        .device_delegation
+        .principal_genesis
+        .clone()
+        .ok_or(Error::MissingField("agent_device.principal_genesis"))?;
     let host_id = PrincipalId::from_genesis(PublicKey::try_from(&host_genesis)?);
-    if !subject.strip_prefix(&host_id.short_id().to_string()).is_some_and(|rest| rest.starts_with('/')) {
-        return Err(Error::InvalidField { field: "subject", reason: "must start with the host daemon's short id and /" });
+    if !subject
+        .strip_prefix(&host_id.short_id().to_string())
+        .is_some_and(|rest| rest.starts_with('/'))
+    {
+        return Err(Error::InvalidField {
+            field: "subject",
+            reason: "must start with the host daemon's short id and /",
+        });
     }
     let key = jwk_duo::SigningKeyPair::generate();
     let mut cert = pb::DelegationCert {
@@ -236,7 +281,10 @@ pub fn mint_hosted_session(
 impl HostedSessionCredential {
     /// The mode-1 certificate the daemon device signed for the session key.
     pub fn cert(&self) -> &pb::DelegationCert {
-        self.chain.session.as_ref().expect("minted with a session cert")
+        self.chain
+            .session
+            .as_ref()
+            .expect("minted with a session cert")
     }
 
     /// The public half of the session key.
@@ -289,21 +337,27 @@ mod tests {
     };
 
     fn mint(device: &TestKey, not_before: i64, not_after: i64) -> Result<SessionCredential> {
-        mint_session(device.key_pair(), &TestKey::new().public(), not_before, not_after)
+        mint_session(&device, &TestKey::new().public(), not_before, not_after)
     }
 
     #[test]
     fn minted_cert_verifies_under_the_device_key() {
         let device = TestKey::new();
         let principal = TestKey::new().public();
-        let cred = mint_session(device.key_pair(), &principal, T0, T0 + 3600).unwrap();
+        let cred = mint_session(&device, &principal, T0, T0 + 3600).unwrap();
         let cert = cred.cert();
         assert_eq!(cert.mode, 0);
         assert_eq!(cert.host_genesis, None);
         assert_eq!(cert.subject, None);
-        assert_eq!(cert.principal_genesis, Some(pb::PublicKey::from(&principal)));
+        assert_eq!(
+            cert.principal_genesis,
+            Some(pb::PublicKey::from(&principal))
+        );
         assert_eq!(cert.device, Some(pb::PublicKey::from(&device.public())));
-        assert_eq!(cert.session, Some(pb::PublicKey::from(&cred.session_public_key())));
+        assert_eq!(
+            cert.session,
+            Some(pb::PublicKey::from(&cred.session_public_key()))
+        );
         assert_eq!(cert.not_before_unix_seconds, T0);
         assert_eq!(cred.not_after_unix(), T0 + 3600);
         let transcript = session_delegation_transcript(cert).unwrap();
@@ -328,7 +382,10 @@ mod tests {
     #[test]
     fn span_over_24h_is_rejected() {
         let device = TestKey::new();
-        assert_eq!(mint(&device, T0, T0 + MAX_SESSION_SECONDS + 1).unwrap_err(), SPAN_ERROR);
+        assert_eq!(
+            mint(&device, T0, T0 + MAX_SESSION_SECONDS + 1).unwrap_err(),
+            SPAN_ERROR
+        );
         assert!(mint(&device, T0, T0 + MAX_SESSION_SECONDS).is_ok());
     }
 
@@ -357,27 +414,45 @@ mod tests {
     fn empty_audience_or_body_type_is_an_error() {
         let cred = mint(&TestKey::new(), T0, T0 + 3600).unwrap();
         assert_eq!(
-            cred.sign_message(None, "", [1; 16], T0, None, BODY_TYPE, b"x").unwrap_err(),
-            Error::InvalidField { field: "audience", reason: "empty" }
+            cred.sign_message(None, "", [1; 16], T0, None, BODY_TYPE, b"x")
+                .unwrap_err(),
+            Error::InvalidField {
+                field: "audience",
+                reason: "empty"
+            }
         );
         assert_eq!(
-            cred.sign_message(None, AUD, [1; 16], T0, None, "", b"x").unwrap_err(),
-            Error::InvalidField { field: "body_type", reason: "empty" }
+            cred.sign_message(None, AUD, [1; 16], T0, None, "", b"x")
+                .unwrap_err(),
+            Error::InvalidField {
+                field: "body_type",
+                reason: "empty"
+            }
         );
     }
 
     #[test]
     fn step_2_verifier_requires_the_device_delegation() {
         let f = Fleet::new();
-        let cred = mint_session(f.laptop.key_pair(), &f.owner.genesis(), T0, T0 + 3600).unwrap();
+        let cred = mint_session(&f.laptop, &f.owner.genesis(), T0, T0 + 3600).unwrap();
         let r = f.resolver();
-        let without = cred.sign_message(None, AUD, [7; 16], T0 + 60, None, BODY_TYPE, b"hi").unwrap();
+        let without = cred
+            .sign_message(None, AUD, [7; 16], T0 + 60, None, BODY_TYPE, b"hi")
+            .unwrap();
         assert_eq!(
             verify_signed_message(&without, AUD, &r, LIVE).unwrap_err(),
             Error::MissingField("self_rooted.device")
         );
         let with = cred
-            .sign_message(Some(f.laptop_deleg.clone()), AUD, [7; 16], T0 + 60, None, BODY_TYPE, b"hi")
+            .sign_message(
+                Some(f.laptop_deleg.clone()),
+                AUD,
+                [7; 16],
+                T0 + 60,
+                None,
+                BODY_TYPE,
+                b"hi",
+            )
             .unwrap();
         let verified = verify_signed_message(&with, AUD, &r, LIVE).unwrap();
         assert_eq!(verified.chain().principal(), &f.owner.id());
@@ -389,7 +464,9 @@ mod tests {
     fn signed_message_signature_verifies_under_the_session_key() {
         let device = TestKey::new();
         let cred = mint(&device, T0, T0 + 3600).unwrap();
-        let msg = cred.sign_message(None, AUD, [9; 16], T0, None, BODY_TYPE, b"hi").unwrap();
+        let msg = cred
+            .sign_message(None, AUD, [9; 16], T0, None, BODY_TYPE, b"hi")
+            .unwrap();
         assert_eq!(msg.signature.len(), 64);
         let transcript = signed_message_transcript(&msg).unwrap();
         verify_p256(&cred.session_public_key(), &transcript, &msg.signature).unwrap();
@@ -399,13 +476,22 @@ mod tests {
     #[test]
     fn signed_message_carries_the_chain_and_fields() {
         let f = Fleet::new();
-        let cred = mint_session(f.laptop.key_pair(), &f.owner.genesis(), T0, T0 + 3600).unwrap();
+        let cred = mint_session(&f.laptop, &f.owner.genesis(), T0, T0 + 3600).unwrap();
         let reply = message_nonce("m1");
         let nonce = message_nonce("m2");
         let msg = cred
-            .sign_message(Some(f.laptop_deleg.clone()), AUD, nonce, T0 + 5, Some(reply), BODY_TYPE, &[1, 2, 3])
+            .sign_message(
+                Some(f.laptop_deleg.clone()),
+                AUD,
+                nonce,
+                T0 + 5,
+                Some(reply),
+                BODY_TYPE,
+                &[1, 2, 3],
+            )
             .unwrap();
-        let Some(pb::signer_chain::Chain::SelfRooted(s)) = msg.signer.as_ref().and_then(|c| c.chain.clone())
+        let Some(pb::signer_chain::Chain::SelfRooted(s)) =
+            msg.signer.as_ref().and_then(|c| c.chain.clone())
         else {
             panic!("expected a self-rooted chain");
         };
@@ -423,11 +509,24 @@ mod tests {
     fn debug_shows_only_the_public_key() {
         let cred = mint(&TestKey::new(), T0, T0 + 60).unwrap();
         let shown = format!("{cred:?}");
-        assert!(shown.contains(&format!("{:?}", cred.session_public_key())), "{shown}");
-        assert!(!shown.contains("SigningKeyPair") && !shown.contains("has_private_key"), "{shown}");
+        assert!(
+            shown.contains(&format!("{:?}", cred.session_public_key())),
+            "{shown}"
+        );
+        assert!(
+            !shown.contains("SigningKeyPair") && !shown.contains("has_private_key"),
+            "{shown}"
+        );
     }
 
-    fn hosted_fixture() -> (Principal, Principal, TestKey, pb::KeyDelegation, TestKey, pb::KeyDelegation) {
+    fn hosted_fixture() -> (
+        Principal,
+        Principal,
+        TestKey,
+        pb::KeyDelegation,
+        TestKey,
+        pb::KeyDelegation,
+    ) {
         let mut daemon = Principal::new();
         let mut agent = Principal::new();
         daemon.rotate(T0);
@@ -438,12 +537,26 @@ mod tests {
     }
 
     fn mint_hosted(
-        f: &(Principal, Principal, TestKey, pb::KeyDelegation, TestKey, pb::KeyDelegation),
+        f: &(
+            Principal,
+            Principal,
+            TestKey,
+            pb::KeyDelegation,
+            TestKey,
+            pb::KeyDelegation,
+        ),
         subject: &str,
     ) -> Result<HostedSessionCredential> {
         mint_hosted_session(
-            HostingDaemon { device: f.2.key_pair(), device_delegation: &f.3 },
-            HostedAgent { device: f.4.key_pair(), device_delegation: &f.5, rotations: &f.1.rotations },
+            HostingDaemon {
+                device: &f.2,
+                device_delegation: &f.3,
+            },
+            HostedAgent {
+                device: &f.4,
+                device_delegation: &f.5,
+                rotations: &f.1.rotations,
+            },
             subject,
             T0,
             T0 + 3600,
@@ -455,15 +568,31 @@ mod tests {
         let f = hosted_fixture();
         let cred = mint_hosted(&f, &subject_on(&f.0, "a1")).unwrap();
         let cert = cred.cert();
-        verify_p256(&f.2.public(), &session_delegation_transcript(cert).unwrap(), &cert.signature).unwrap();
-        let msg = cred.sign_message(AUD, [1; 16], T0, None, BODY_TYPE, b"x").unwrap();
-        let Some(pb::signer_chain::Chain::DaemonHosted(h)) = msg.signer.and_then(|c| c.chain) else {
+        verify_p256(
+            &f.2.public(),
+            &session_delegation_transcript(cert).unwrap(),
+            &cert.signature,
+        )
+        .unwrap();
+        let msg = cred
+            .sign_message(AUD, [1; 16], T0, None, BODY_TYPE, b"x")
+            .unwrap();
+        let Some(pb::signer_chain::Chain::DaemonHosted(h)) = msg.signer.and_then(|c| c.chain)
+        else {
             panic!("expected a daemon-hosted chain");
         };
-        verify_p256(&f.4.public(), &hosted_session_transcript(cert).unwrap(), &h.agent_signature).unwrap();
+        verify_p256(
+            &f.4.public(),
+            &hosted_session_transcript(cert).unwrap(),
+            &h.agent_signature,
+        )
+        .unwrap();
         assert_eq!(cert.mode, 1);
         assert_eq!(cert.host_genesis, Some(pb::PublicKey::from(&f.0.genesis())));
-        assert_eq!(cert.principal_genesis, Some(pb::PublicKey::from(&f.1.genesis())));
+        assert_eq!(
+            cert.principal_genesis,
+            Some(pb::PublicKey::from(&f.1.genesis()))
+        );
         assert_eq!(h.agent_rotations, f.1.rotations);
     }
 
@@ -471,41 +600,255 @@ mod tests {
     fn hosted_message_verifies_under_the_session_key() {
         let f = hosted_fixture();
         let cred = mint_hosted(&f, &subject_on(&f.0, "a1")).unwrap();
-        let m = cred.sign_message(AUD, [3; 16], T0 + 1, Some([4; 16]), BODY_TYPE, b"hi").unwrap();
-        let Some(pb::signer_chain::Chain::DaemonHosted(h)) = m.signer.clone().and_then(|c| c.chain) else {
+        let m = cred
+            .sign_message(AUD, [3; 16], T0 + 1, Some([4; 16]), BODY_TYPE, b"hi")
+            .unwrap();
+        let Some(pb::signer_chain::Chain::DaemonHosted(h)) = m.signer.clone().and_then(|c| c.chain)
+        else {
             panic!("expected a daemon-hosted chain");
         };
         assert_eq!(h.host_device.as_ref(), Some(&f.3));
         assert_eq!(h.agent_device.as_ref(), Some(&f.5));
         assert_eq!(h.session.as_ref(), Some(cred.cert()));
-        verify_p256(&cred.session_public_key(), &signed_message_transcript(&m).unwrap(), &m.signature).unwrap();
+        verify_p256(
+            &cred.session_public_key(),
+            &signed_message_transcript(&m).unwrap(),
+            &m.signature,
+        )
+        .unwrap();
     }
 
     #[test]
     fn mint_hosted_session_refusals() {
         let f = hosted_fixture();
         let good = subject_on(&f.0, "a1");
-        let daemon = |deleg| HostingDaemon { device: f.2.key_pair(), device_delegation: deleg };
-        let agent = |deleg| HostedAgent { device: f.4.key_pair(), device_delegation: deleg, rotations: &f.1.rotations };
+        let daemon = |deleg| HostingDaemon {
+            device: &f.2,
+            device_delegation: deleg,
+        };
+        let agent = |deleg| HostedAgent {
+            device: &f.4,
+            device_delegation: deleg,
+            rotations: &f.1.rotations,
+        };
         let mint = |d: HostingDaemon<'_>, a: HostedAgent<'_>, subject: &str, na: i64| {
             mint_hosted_session(d, a, subject, T0, na).err()
         };
-        assert_eq!(mint(daemon(&f.3), agent(&f.5), &good, T0 + MAX_SESSION_SECONDS + 1), Some(SPAN_ERROR));
+        assert_eq!(
+            mint(
+                daemon(&f.3),
+                agent(&f.5),
+                &good,
+                T0 + MAX_SESSION_SECONDS + 1
+            ),
+            Some(SPAN_ERROR)
+        );
         let other = Principal::new().delegate_device(T0, T0 + DAY).1;
-        assert_eq!(mint(daemon(&other), agent(&f.5), &good, T0 + 60), Some(Error::ChainMismatch("host_device.delegated")));
-        assert_eq!(mint(daemon(&f.3), agent(&other), &good, T0 + 60), Some(Error::ChainMismatch("agent_device.delegated")));
+        assert_eq!(
+            mint(daemon(&other), agent(&f.5), &good, T0 + 60),
+            Some(Error::ChainMismatch("host_device.delegated"))
+        );
+        assert_eq!(
+            mint(daemon(&f.3), agent(&other), &good, T0 + 60),
+            Some(Error::ChainMismatch("agent_device.delegated"))
+        );
         let mut approval = f.3.clone();
         approval.purpose = pb::KeyPurpose::Approval as i32;
-        assert_eq!(mint(daemon(&approval), agent(&f.5), &good, T0 + 60), Some(Error::ChainMismatch("host_device.purpose")));
+        assert_eq!(
+            mint(daemon(&approval), agent(&f.5), &good, T0 + 60),
+            Some(Error::ChainMismatch("host_device.purpose"))
+        );
         let mut approval = f.5.clone();
         approval.purpose = pb::KeyPurpose::Approval as i32;
-        assert_eq!(mint(daemon(&f.3), agent(&approval), &good, T0 + 60), Some(Error::ChainMismatch("agent_device.purpose")));
-        let stale = HostedAgent { device: f.4.key_pair(), device_delegation: &f.5, rotations: &[] };
-        assert_eq!(mint(daemon(&f.3), stale, &good, T0 + 60), Some(Error::ChainMismatch("agent_device.signing_root")));
-        let bad = || Error::InvalidField { field: "subject", reason: "must start with the host daemon's short id and /" };
+        assert_eq!(
+            mint(daemon(&f.3), agent(&approval), &good, T0 + 60),
+            Some(Error::ChainMismatch("agent_device.purpose"))
+        );
+        let stale = HostedAgent {
+            device: &f.4,
+            device_delegation: &f.5,
+            rotations: &[],
+        };
+        assert_eq!(
+            mint(daemon(&f.3), stale, &good, T0 + 60),
+            Some(Error::ChainMismatch("agent_device.signing_root"))
+        );
+        let bad = || Error::InvalidField {
+            field: "subject",
+            reason: "must start with the host daemon's short id and /",
+        };
         let short = f.0.id().short_id().to_string();
-        for subject in ["a1", "", &short, &format!("{short}x/a"), &format!("{}/a", f.1.id().short_id())] {
-            assert_eq!(mint(daemon(&f.3), agent(&f.5), subject, T0 + 60), Some(bad()), "{subject}");
+        for subject in [
+            "a1",
+            "",
+            &short,
+            &format!("{short}x/a"),
+            &format!("{}/a", f.1.id().short_id()),
+        ] {
+            assert_eq!(
+                mint(daemon(&f.3), agent(&f.5), subject, T0 + 60),
+                Some(bad()),
+                "{subject}"
+            );
         }
+    }
+
+    #[test]
+    fn mint_session_accepts_dyn_signer() {
+        let device = TestKey::new();
+        let dyn_device: &dyn crate::Signer = &device;
+        let principal = TestKey::new().public();
+        let cred = mint_session(dyn_device, &principal, T0, T0 + 3600).unwrap();
+        let cert = cred.cert();
+        assert_eq!(
+            cert.device,
+            Some(pb::PublicKey::from(&dyn_device.public_key()))
+        );
+        assert_eq!(cert.device, Some(pb::PublicKey::from(&device.public())));
+        verify_p256(
+            &dyn_device.public_key(),
+            &session_delegation_transcript(cert).unwrap(),
+            &cert.signature,
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn hosted_session_with_dyn_signers_verifies() {
+        let mut f = Fleet::new();
+        f.daemon_grant = true;
+        let agent = Principal::new();
+        let mut agent_entry = crate::testkit::entry(&agent, pb::PrincipalKind::Agent);
+        agent_entry.allowed_hosts = vec![f.daemon.id().to_string()];
+        f.extra.push(agent_entry);
+
+        // Daemon device is a TestKey seen as &dyn Signer; agent device is a KeyDuo.
+        let (daemon_dev, daemon_deleg) = f.daemon.delegate_device(T0, T0 + DAY);
+        let agent_dev = jwk_duo::GenerationService::generate_key_duo();
+        let agent_deleg = crate::keys::delegate_device(
+            agent.root(),
+            &agent.id(),
+            &crate::PublicKeyDuo::from(&agent_dev),
+            T0,
+            T0 + DAY,
+        )
+        .unwrap();
+        let cred = mint_hosted_session(
+            HostingDaemon {
+                device: &daemon_dev,
+                device_delegation: &daemon_deleg,
+            },
+            HostedAgent {
+                device: &agent_dev,
+                device_delegation: &agent_deleg,
+                rotations: &agent.rotations,
+            },
+            &subject_on(&f.daemon, "i5"),
+            T0,
+            T0 + 3600,
+        )
+        .unwrap();
+        verify_p256(
+            &daemon_dev.public(),
+            &session_delegation_transcript(cred.cert()).unwrap(),
+            &cred.cert().signature,
+        )
+        .unwrap();
+        let m = cred
+            .sign_message(AUD, [5; 16], T0 + 60, None, BODY_TYPE, b"hi")
+            .unwrap();
+        let v = verify_signed_message(&m, AUD, &f.resolver(), LIVE).unwrap();
+        assert_eq!(v.chain().principal(), &agent.id());
+    }
+
+    struct Cancelling(PublicKey);
+
+    impl crate::Signer for Cancelling {
+        fn public_key(&self) -> PublicKey {
+            self.0.clone()
+        }
+        fn sign(
+            &self,
+            _message: &[u8],
+        ) -> std::result::Result<crate::Signature, crate::SignerError> {
+            Err(crate::SignerError::Cancelled)
+        }
+    }
+
+    #[test]
+    fn a_failing_signer_surfaces_as_error_signer() {
+        use crate::keys::{
+            challenge_proof, delegate_device, device_delegation, rename_proof, revocation,
+            rotation, sign_key_delegation,
+        };
+        let cancelled = || Error::Signer(crate::SignerError::Cancelled);
+        let g = jwk_duo::GenerationService::generate_key_duo();
+        let id = crate::keys::principal_id(&g);
+        let c = Cancelling(crate::keys::signing_public(&g));
+        let dev = jwk_duo::GenerationService::generate_key_duo();
+        let dev_pub = crate::PublicKeyDuo::from(&dev);
+        let other = TestKey::new().public();
+
+        assert_eq!(
+            delegate_device(&c, &id, &dev_pub, T0, T0 + DAY).unwrap_err(),
+            cancelled()
+        );
+        assert_eq!(
+            mint_session(&c, &other, T0, T0 + 3600).unwrap_err(),
+            cancelled()
+        );
+        assert_eq!(rotation(&c, &id, &other, T0).unwrap_err(), cancelled());
+        assert_eq!(revocation(&c, &id, &other, T0).unwrap_err(), cancelled());
+        assert_eq!(challenge_proof(&c, "grorg", b"n").unwrap_err(), cancelled());
+        assert_eq!(rename_proof(&c, b"n", &id, "x").unwrap_err(), cancelled());
+
+        let mut d = device_delegation(
+            &id,
+            &c.0,
+            &crate::keys::signing_public(&dev),
+            &crate::keys::encryption_public(&dev),
+            T0,
+            T0 + DAY,
+        );
+        assert_eq!(sign_key_delegation(&c, &mut d).unwrap_err(), cancelled());
+        assert!(d.signature.is_empty());
+
+        // Hosted: a failing daemon device, then a failing agent device.
+        let f = hosted_fixture();
+        let bad_daemon = Cancelling(f.2.public());
+        let bad_agent = Cancelling(f.4.public());
+        let subject = subject_on(&f.0, "a1");
+        let err = mint_hosted_session(
+            HostingDaemon {
+                device: &bad_daemon,
+                device_delegation: &f.3,
+            },
+            HostedAgent {
+                device: &f.4,
+                device_delegation: &f.5,
+                rotations: &f.1.rotations,
+            },
+            &subject,
+            T0,
+            T0 + 3600,
+        )
+        .err();
+        assert_eq!(err, Some(cancelled()));
+        let err = mint_hosted_session(
+            HostingDaemon {
+                device: &f.2,
+                device_delegation: &f.3,
+            },
+            HostedAgent {
+                device: &bad_agent,
+                device_delegation: &f.5,
+                rotations: &f.1.rotations,
+            },
+            &subject,
+            T0,
+            T0 + 3600,
+        )
+        .err();
+        assert_eq!(err, Some(cancelled()));
     }
 }

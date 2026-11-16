@@ -1548,7 +1548,7 @@ mod tests {
         issued: i64,
         device: Option<pb::KeyDelegation>,
     ) -> (SessionCredential, pb::SignedMessage) {
-        let cred = mint_session(f.laptop.key_pair(), &f.owner.genesis(), nb, na).unwrap();
+        let cred = mint_session(&f.laptop, &f.owner.genesis(), nb, na).unwrap();
         let msg = cred
             .sign_message(device, AUD, message_nonce("m1"), issued, None, BODY_TYPE, b"hi")
             .unwrap();
@@ -1581,7 +1581,7 @@ mod tests {
     fn valid_message_is_accepted() {
         let f = Fleet::new();
         let owner = f.owner.genesis();
-        let cred = mint_session(f.laptop.key_pair(), &owner, T0, T0 + 3600).unwrap();
+        let cred = mint_session(&f.laptop, &owner, T0, T0 + 3600).unwrap();
         let msg = cred
             .sign_message(None, AUD, message_nonce("m1"), T0 + 60, Some(message_nonce("m0")), BODY_TYPE, b"hi")
             .unwrap();
@@ -1616,7 +1616,7 @@ mod tests {
         let f = Fleet::new();
         let b = Principal::new();
         let (b_device, _) = b.delegate_device(T0, i64::MAX);
-        let cred = mint_session(f.laptop.key_pair(), &b.genesis(), T0, T0 + 3600).unwrap();
+        let cred = mint_session(&f.laptop, &b.genesis(), T0, T0 + 3600).unwrap();
         let msg = cred.sign_message(None, AUD, message_nonce("m1"), T0 + 60, None, BODY_TYPE, b"hi").unwrap();
         assert_eq!(
             trusted(&msg, &b.genesis(), &[b_device.public()], LIVE).unwrap_err(),

@@ -101,16 +101,12 @@ impl Principal {
     /// Signs `delegation` with the current root. Uncapped, like the real
     /// `keys::sign_key_delegation` it calls.
     pub fn sign_delegation(&self, delegation: &mut pb::KeyDelegation) {
-        keys::sign_key_delegation(self.root().key_pair(), delegation).unwrap();
+        keys::sign_key_delegation(self.root(), delegation).unwrap();
     }
 
     /// A DEVICE delegation of a fresh duo, signed by the current root. Uncapped
     /// (the `i64::MAX` fixtures need that); the capped path is `keys::delegate_device`.
-    pub fn delegate_device(
-        &self,
-        issued_at: i64,
-        not_after: i64,
-    ) -> (TestKey, pb::KeyDelegation) {
+    pub fn delegate_device(&self, issued_at: i64, not_after: i64) -> (TestKey, pb::KeyDelegation) {
         let device = TestKey::new();
         let mut delegation = keys::device_delegation(
             &self.id(),
@@ -181,11 +177,7 @@ pub fn carrier_body(reg: &pb::PrincipalRegistry) -> Vec<u8> {
 }
 
 /// A document signed by `authority`'s current root, carrying its rotations.
-pub fn sign_document(
-    authority: &Principal,
-    version: u64,
-    body: Vec<u8>,
-) -> pb::SignedDocument {
+pub fn sign_document(authority: &Principal, version: u64, body: Vec<u8>) -> pb::SignedDocument {
     let mut document = pb::SignedDocument {
         signer_genesis: pk(&authority.genesis()),
         signing: pk(&authority.root().public()),
@@ -233,8 +225,7 @@ pub fn session_cert(
 }
 
 pub fn sign_cert(device: &TestKey, cert: &mut pb::DelegationCert) {
-    cert.signature = device
-        .sign(&session_delegation_transcript(cert).unwrap());
+    cert.signature = device.sign(&session_delegation_transcript(cert).unwrap());
 }
 
 use crate::{verify_signed_document, AuthorityChain, Resolver, Result};
@@ -405,12 +396,7 @@ pub fn daemon_chain(
 }
 
 /// An agent session vouched by the fleet's daemon (30-day device delegation).
-pub fn agent_chain(
-    f: &Fleet,
-    subject: &str,
-    nb: i64,
-    na: i64,
-) -> (TestKey, pb::SignerChain) {
+pub fn agent_chain(f: &Fleet, subject: &str, nb: i64, na: i64) -> (TestKey, pb::SignerChain) {
     let (dev, deleg) = f.daemon.delegate_device(T0, T0 + 30 * DAY);
     let (session, cert) = session_cert(
         &dev,
