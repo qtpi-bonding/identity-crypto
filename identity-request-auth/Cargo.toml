@@ -1,7 +1,8 @@
 [package]
 name = "identity-request-auth"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition.workspace = true
+rust-version.workspace = true
 description = "Per-request signing and verification over identity-crypto: a transport-free core, and a tonic layer behind the `tonic` feature"
 readme = "README.md"
 
@@ -13,7 +14,7 @@ tonic = ["dep:async-trait", "dep:tonic", "dep:tower", "dep:http", "dep:http-body
 testkit = []
 
 [dependencies]
-identity-crypto = { path = "..", version = "0.10.0" }
+identity-crypto.workspace = true
 async-trait = { version = "0.1", optional = true }
 getrandom = "0.3"
 thiserror = "2"
@@ -29,5 +30,5 @@ bytes = { version = "1", optional = true }
 
 [dev-dependencies]
 # identity-crypto's own fixtures (a signed registry and its Resolver), to test the core against the real full-chain verifier.
-identity-crypto = { path = "..", version = "0.10.0", features = ["testkit"] }
+identity-crypto = { workspace = true, features = ["testkit"] }
 tokio = { version = "1", features = ["macros", "rt", "test-util", "time"] }

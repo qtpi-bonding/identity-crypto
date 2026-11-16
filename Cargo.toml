@@ -1,11 +1,21 @@
 [package]
 name = "identity-crypto"
-version = "0.10.0"
-edition = "2021"
+version = "0.11.0"
+edition.workspace = true
+rust-version.workspace = true
 description = "P-256 key types, principal ids, canonical transcripts and the signature check for the concordium/structmux identity design"
 
 [workspace]
 members = [".", "identity-keyfile", "identity-request-auth"]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.89"
+
+[workspace.dependencies]
+identity-crypto = { path = ".", version = "0.11.0" }
+identity-keyfile = { path = "identity-keyfile", version = "0.11.0" }
+coded-error = { git = "https://github.com/qtpi-bonding/coded-error.git", rev = "ffeaf3949230a8883b56c75e7031346a4f28ed4d", default-features = false }
 
 [features]
 # Test fixtures for consumers' dev-dependencies. Off by default.
