@@ -198,7 +198,7 @@ mod tests {
         invalid(mutate(&f, |r| r.entries[1].current_root = None), "entries.current_root");
         invalid(mutate(&f, |r| { let s = r.entries[1].current_root.as_ref().unwrap().signing.clone(); r.entries[1].current_root.as_mut().unwrap().encryption = s; }), "entries.current_root");
         // current root is not the end of the (empty) rotation chain
-        invalid(mutate(&f, |r| r.entries[1].current_root.as_mut().unwrap().signing = pk(&Signer::new().public())), "entries.current_root");
+        invalid(mutate(&f, |r| r.entries[1].current_root.as_mut().unwrap().signing = pk(&TestKey::new().public())), "entries.current_root");
         // a rotated daemon verifies; a broken rotation does not
         let mut g = Fleet::new();
         g.daemon.rotate(T0);
@@ -332,7 +332,7 @@ mod tests {
         a.allowed_hosts = vec!["*".into()];
         assert!(mutate(&f, |r| r.entries.push(a.clone())).is_ok());
         // a host-vouched agent with revocations
-        invalid(mutate(&f, |r| r.entries[2].revocations = vec![f.daemon.revoke(&Signer::new().public(), T0)]), "entries.rotations");
+        invalid(mutate(&f, |r| r.entries[2].revocations = vec![f.daemon.revoke(&TestKey::new().public(), T0)]), "entries.rotations");
     }
 
     #[test]
@@ -352,7 +352,7 @@ mod tests {
     fn revocation_checks() {
         let mut f = Fleet::new();
         // HUMAN: may revoke only its own keys
-        f.owner_revocations = vec![f.owner.revoke(&Signer::new().public(), T0)];
+        f.owner_revocations = vec![f.owner.revoke(&TestKey::new().public(), T0)];
         invalid(f.try_resolver(), "revocations.revoked");
         f.owner_revocations = vec![f.owner.revoke(&f.laptop.public(), T0 + 10)];
         let r = f.resolver();
@@ -362,7 +362,7 @@ mod tests {
         assert!(!r.is_revoked(&f.daemon.id(), &f.laptop.public(), T0 + 10));
         // DAEMON: any key, signed by its own root
         f.owner_revocations.clear();
-        let unlisted = Signer::new().public();
+        let unlisted = TestKey::new().public();
         f.daemon_revocations = vec![f.daemon.revoke(&unlisted, T0)];
         assert!(f.resolver().is_revoked(&f.daemon.id(), &unlisted, T0));
         // signed by another principal's root
@@ -388,7 +388,7 @@ mod tests {
         f.daemon_revocations.clear();
         // survives a rotation: signed by the old root, still valid after
         let mut g = Fleet::new();
-        let k = Signer::new().public();
+        let k = TestKey::new().public();
         let rev = g.daemon.revoke(&k, T0);
         g.daemon.rotate(T0 + 1);
         g.daemon_revocations = vec![rev];

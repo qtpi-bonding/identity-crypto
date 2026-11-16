@@ -207,7 +207,7 @@ mod tests {
         let mut fork = pb::RootRotation {
             principal_genesis: pk(&fleet.daemon.genesis()),
             old_root: pk(&fleet.daemon.genesis()),
-            new_root: pk(&Signer::new().public()),
+            new_root: pk(&TestKey::new().public()),
             issued_at_unix_seconds: T0,
             signature: vec![],
         };

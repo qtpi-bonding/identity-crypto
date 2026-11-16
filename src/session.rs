@@ -3,6 +3,7 @@
 //! with the session key. Holds no clock; the caller chooses every window.
 
 use crate::transcripts::{hosted_session_transcript, session_delegation_transcript, signed_message_transcript};
+use crate::signer::sign_transcript;
 use crate::verify::check_session_span;
 use crate::{jwk_duo, pb, Error, PrincipalId, PublicKey, Result};
 
@@ -49,14 +50,8 @@ pub fn mint_session(
         host_genesis: None,
         subject: None,
     };
-    cert.signature = sign(device, &session_delegation_transcript(&cert)?)?.to_vec();
+    cert.signature = sign_transcript(device, &session_delegation_transcript(&cert)?)?;
     Ok(SessionCredential { cert, key })
-}
-
-/// The one signing-failure mapping: a public-only key pair becomes `InvalidKey`.
-pub(crate) fn sign(key: &jwk_duo::SigningKeyPair, message: &[u8]) -> Result<[u8; 64]> {
-    key.sign_bytes(message)
-        .map_err(|e| Error::InvalidKey(format!("cannot sign with this key pair: {e}")))
 }
 
 /// Builds a `SignedMessage` carrying `chain` and signs `signed-message.v1`
@@ -82,7 +77,7 @@ fn sign_with_chain(
         body: body.to_vec(),
         signature: vec![],
     };
-    message.signature = sign(key, &signed_message_transcript(&message)?)?.to_vec();
+    message.signature = sign_transcript(key, &signed_message_transcript(&message)?)?;
     Ok(message)
 }
 
@@ -224,8 +219,8 @@ pub fn mint_hosted_session(
         host_genesis: Some(host_genesis),
         subject: Some(subject.to_string()),
     };
-    cert.signature = sign(daemon.device, &session_delegation_transcript(&cert)?)?.to_vec();
-    let agent_signature = sign(agent.device, &hosted_session_transcript(&cert)?)?.to_vec();
+    cert.signature = sign_transcript(daemon.device, &session_delegation_transcript(&cert)?)?;
+    let agent_signature = sign_transcript(agent.device, &hosted_session_transcript(&cert)?)?;
     Ok(HostedSessionCredential {
         chain: pb::DaemonHosted {
             host_device: Some(daemon.device_delegation.clone()),
@@ -282,7 +277,7 @@ impl HostedSessionCredential {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::testkit::{subject_on, Fleet, Principal, Signer, DAY, LIVE, T0};
+    use crate::testkit::{subject_on, Fleet, Principal, TestKey, DAY, LIVE, T0};
     use crate::transcripts::{hosted_session_transcript, message_nonce, signed_message_transcript};
     use crate::{verify_p256, verify_signed_message, MAX_SESSION_SECONDS};
 
@@ -293,14 +288,14 @@ mod tests {
         reason: "must be within 24 hours after not_before",
     };
 
-    fn mint(device: &Signer, not_before: i64, not_after: i64) -> Result<SessionCredential> {
-        mint_session(device.key_pair(), &Signer::new().public(), not_before, not_after)
+    fn mint(device: &TestKey, not_before: i64, not_after: i64) -> Result<SessionCredential> {
+        mint_session(device.key_pair(), &TestKey::new().public(), not_before, not_after)
     }
 
     #[test]
     fn minted_cert_verifies_under_the_device_key() {
-        let device = Signer::new();
-        let principal = Signer::new().public();
+        let device = TestKey::new();
+        let principal = TestKey::new().public();
         let cred = mint_session(device.key_pair(), &principal, T0, T0 + 3600).unwrap();
         let cert = cred.cert();
         assert_eq!(cert.mode, 0);
@@ -317,7 +312,7 @@ mod tests {
 
     #[test]
     fn session_equal_to_device_is_impossible() {
-        let device = Signer::new();
+        let device = TestKey::new();
         for _ in 0..8 {
             let cred = mint(&device, T0, T0 + 60).unwrap();
             assert_ne!(cred.session_public_key(), device.public());
@@ -332,14 +327,14 @@ mod tests {
 
     #[test]
     fn span_over_24h_is_rejected() {
-        let device = Signer::new();
+        let device = TestKey::new();
         assert_eq!(mint(&device, T0, T0 + MAX_SESSION_SECONDS + 1).unwrap_err(), SPAN_ERROR);
         assert!(mint(&device, T0, T0 + MAX_SESSION_SECONDS).is_ok());
     }
 
     #[test]
     fn span_zero_or_negative_is_rejected() {
-        let device = Signer::new();
+        let device = TestKey::new();
         assert_eq!(mint(&device, T0, T0).unwrap_err(), SPAN_ERROR);
         assert_eq!(mint(&device, T0, T0 - 1).unwrap_err(), SPAN_ERROR);
         assert_eq!(mint(&device, T0, T0 - 86_400).unwrap_err(), SPAN_ERROR);
@@ -347,7 +342,7 @@ mod tests {
 
     #[test]
     fn extreme_bounds_do_not_overflow() {
-        let device = Signer::new();
+        let device = TestKey::new();
         for (nb, na) in [
             (i64::MIN, i64::MAX),
             (i64::MAX, i64::MIN),
@@ -360,7 +355,7 @@ mod tests {
 
     #[test]
     fn empty_audience_or_body_type_is_an_error() {
-        let cred = mint(&Signer::new(), T0, T0 + 3600).unwrap();
+        let cred = mint(&TestKey::new(), T0, T0 + 3600).unwrap();
         assert_eq!(
             cred.sign_message(None, "", [1; 16], T0, None, BODY_TYPE, b"x").unwrap_err(),
             Error::InvalidField { field: "audience", reason: "empty" }
@@ -392,7 +387,7 @@ mod tests {
 
     #[test]
     fn signed_message_signature_verifies_under_the_session_key() {
-        let device = Signer::new();
+        let device = TestKey::new();
         let cred = mint(&device, T0, T0 + 3600).unwrap();
         let msg = cred.sign_message(None, AUD, [9; 16], T0, None, BODY_TYPE, b"hi").unwrap();
         assert_eq!(msg.signature.len(), 64);
@@ -426,13 +421,13 @@ mod tests {
 
     #[test]
     fn debug_shows_only_the_public_key() {
-        let cred = mint(&Signer::new(), T0, T0 + 60).unwrap();
+        let cred = mint(&TestKey::new(), T0, T0 + 60).unwrap();
         let shown = format!("{cred:?}");
         assert!(shown.contains(&format!("{:?}", cred.session_public_key())), "{shown}");
         assert!(!shown.contains("SigningKeyPair") && !shown.contains("has_private_key"), "{shown}");
     }
 
-    fn hosted_fixture() -> (Principal, Principal, Signer, pb::KeyDelegation, Signer, pb::KeyDelegation) {
+    fn hosted_fixture() -> (Principal, Principal, TestKey, pb::KeyDelegation, TestKey, pb::KeyDelegation) {
         let mut daemon = Principal::new();
         let mut agent = Principal::new();
         daemon.rotate(T0);
@@ -443,7 +438,7 @@ mod tests {
     }
 
     fn mint_hosted(
-        f: &(Principal, Principal, Signer, pb::KeyDelegation, Signer, pb::KeyDelegation),
+        f: &(Principal, Principal, TestKey, pb::KeyDelegation, TestKey, pb::KeyDelegation),
         subject: &str,
     ) -> Result<HostedSessionCredential> {
         mint_hosted_session(

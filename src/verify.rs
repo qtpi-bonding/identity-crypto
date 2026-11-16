@@ -1367,7 +1367,7 @@ mod tests {
         let late = approval(&f.presence, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 100);
         assert_eq!(verify_approval(&late, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::Skew);
         assert!(verify_approval(&late, AUD, "r1", &session, &DIGEST, &r, accepted(T0 + 100)).is_ok());
-        let stranger = Signer::new();
+        let stranger = TestKey::new();
         let forged = approval(&stranger, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 60);
         assert_eq!(verify_approval(&forged, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::NotBound);
         let mut empty = a.clone();
@@ -1462,9 +1462,9 @@ mod tests {
 
         f.allow_peer_revocation = true;
         let r = f.resolver();
-        let p = peer_revocation(&f, &r, &Signer::new().public(), None, T0 + 60);
+        let p = peer_revocation(&f, &r, &TestKey::new().public(), None, T0 + 60);
         assert_eq!(verify_peer_revocation(&p, &r, LIVE).unwrap_err(), Error::UnknownPrincipal);
-        let p = peer_revocation(&f, &r, &f.agent.public(), Some(&Signer::new().public()), T0 + 60);
+        let p = peer_revocation(&f, &r, &f.agent.public(), Some(&TestKey::new().public()), T0 + 60);
         assert_eq!(verify_peer_revocation(&p, &r, LIVE).unwrap_err(), Error::WrongKind);
 
         let p = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 200);
@@ -1472,7 +1472,7 @@ mod tests {
         assert_eq!(verify_peer_revocation(&p, &r, accepted(T0 + 500)).unwrap().accepted_at(), T0 + 500);
 
         let mut q = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
-        let other = Signer::new();
+        let other = TestKey::new();
         q.approval_key = pk(&other.public());
         q.signature = other.sign(&crate::transcripts::peer_revocation_transcript(&q).unwrap());
         assert_eq!(verify_peer_revocation(&q, &r, LIVE).unwrap_err(), Error::NotBound);
@@ -1642,7 +1642,7 @@ mod tests {
         // The cert signature is valid (the laptop made it), so only the set check can refuse.
         let f = Fleet::new();
         let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
-        let other = Signer::new().public();
+        let other = TestKey::new().public();
         assert_eq!(
             trusted(&msg, &f.owner.genesis(), &[other], LIVE).unwrap_err(),
             Error::NotBound
@@ -1768,7 +1768,7 @@ mod tests {
     fn duplicate_devices_in_the_slice_are_harmless() {
         let f = Fleet::new();
         let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
-        let devices = [f.laptop.public(), Signer::new().public(), f.laptop.public()];
+        let devices = [f.laptop.public(), TestKey::new().public(), f.laptop.public()];
         assert!(trusted(&msg, &f.owner.genesis(), &devices, LIVE).is_ok());
     }
 
@@ -1809,7 +1809,7 @@ mod tests {
 
         let mut wrong_session = valid.clone();
         wrong_session.signature =
-            Signer::new().sign(&crate::transcripts::signed_message_transcript(&wrong_session).unwrap());
+            TestKey::new().sign(&crate::transcripts::signed_message_transcript(&wrong_session).unwrap());
         let (_, skewed) = minted(&f, T0, T0 + 3600, T0 + 91, Some(f.laptop_deleg.clone()));
         let (_, not_yet) = minted(&f, T0 + 100, T0 + 3600, T0 + 60, Some(f.laptop_deleg.clone()));
         let (_, expired) = minted(&f, T0, T0 + 30, T0 + 60, Some(f.laptop_deleg.clone()));
@@ -1832,7 +1832,7 @@ mod tests {
         let f = Fleet::new();
         let owner = f.owner.genesis();
         let (session, mut cert) = session_cert(&f.laptop, &owner, None, None, T0, T0 + 3600);
-        cert.signature = Signer::new().sign(&session_delegation_transcript(&cert).unwrap());
+        cert.signature = TestKey::new().sign(&session_delegation_transcript(&cert).unwrap());
         let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
         assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), Error::BadSignature);
     }
@@ -1894,7 +1894,7 @@ mod tests {
     fn message_signed_by_a_different_session_key_is_rejected() {
         let f = Fleet::new();
         let (_, mut msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
-        msg.signature = Signer::new().sign(&crate::transcripts::signed_message_transcript(&msg).unwrap());
+        msg.signature = TestKey::new().sign(&crate::transcripts::signed_message_transcript(&msg).unwrap());
         assert_eq!(
             trusted(&msg, &f.owner.genesis(), &[f.laptop.public()], LIVE).unwrap_err(),
             Error::BadSignature
@@ -2051,7 +2051,7 @@ mod tests {
         assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::ChainMismatch("device.principal_genesis"));
         // every signature valid, but the cert is signed by a device the delegation does not name
         let (_, deleg) = agent.delegate_device(T0, T0 + DAY);
-        let stray = Signer::new();
+        let stray = TestKey::new();
         let (s2, cert) = session_cert(&stray, &agent.genesis(), None, None, T0, T0 + 3600);
         let c = pb::SignerChain {
             chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: Some(deleg), session: Some(cert) })),
@@ -2062,7 +2062,7 @@ mod tests {
         let (s3, c3) = hosted_chain(&f.daemon, &agent, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
         let mut m = signed_message(&s3, c3, AUD, T0 + 60);
         assert!(verify_carried_message(&m, AUD).is_ok());
-        carried_hosted_mut(&mut m).agent_signature = Signer::new().sign(b"x");
+        carried_hosted_mut(&mut m).agent_signature = TestKey::new().sign(b"x");
         assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::BadSignature);
     }
 }

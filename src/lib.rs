@@ -36,6 +36,7 @@ mod principal;
 mod registry;
 mod resolver;
 mod session;
+mod signer;
 mod verify;
 mod public_key;
 mod signature;
@@ -70,6 +71,7 @@ pub use session::{
     mint_hosted_session, mint_session, HostedAgent, HostedSessionCredential, HostingDaemon, SessionCredential,
 };
 pub use signature::{verify_p256, VerifiedSignature};
+pub use signer::{verify_signature, Signature, Signer, SignerError};
 pub use rust_jwk_duo as jwk_duo;
 pub use transcripts::message_nonce;
 pub use wkt::Timestamp;

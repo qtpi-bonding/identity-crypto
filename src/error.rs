@@ -2,13 +2,15 @@
 //! `field` strings are the proto field path, or the Rust parameter name for
 //! non-proto inputs.
 
-use crate::PrincipalId;
+use crate::{PrincipalId, SignerError};
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum Error {
     #[error("unsupported key scheme {0}")]
     UnsupportedScheme(i32),
+    #[error("cannot sign: {0}")]
+    Signer(SignerError),
     #[error("invalid public key: {0}")]
     InvalidKey(String),
     #[error("principal id is not canonical")]

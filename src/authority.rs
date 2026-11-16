@@ -209,7 +209,7 @@ mod tests {
         assert_eq!(verify_signed_document(&stale, DOC_TYPE, &accepted_now).unwrap_err(), Error::StaleRoot);
         let mut fork = pb::RootRotation {
             principal_genesis: pk(&p.genesis()), old_root: pk(&p.genesis()),
-            new_root: pk(&Signer::new().public()), issued_at_unix_seconds: T0, signature: vec![],
+            new_root: pk(&TestKey::new().public()), issued_at_unix_seconds: T0, signature: vec![],
         };
         fork.signature = p.root_at(0).sign(&crate::transcripts::root_rotation_transcript(&fork).unwrap());
         let mut forked = sign_document(&p, 5, vec![]);
@@ -229,7 +229,7 @@ mod tests {
         assert_eq!(verify_signed_document(&base, "other", &a).unwrap_err(), Error::WrongDocumentType);
         let stranger = Principal::new();
         assert_eq!(verify_signed_document(&sign_document(&stranger, 1, vec![]), DOC_TYPE, &a).unwrap_err(), Error::NotAuthority);
-        let mut wrong_signing = base.clone(); wrong_signing.signing = pk(&Signer::new().public());
+        let mut wrong_signing = base.clone(); wrong_signing.signing = pk(&TestKey::new().public());
         assert_eq!(verify_signed_document(&wrong_signing, DOC_TYPE, &a).unwrap_err(), Error::NotCurrentRoot);
         let mut tampered = base.clone(); tampered.version = 2;
         assert_eq!(verify_signed_document(&tampered, DOC_TYPE, &a).unwrap_err(), Error::BadSignature);

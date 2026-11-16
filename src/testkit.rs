@@ -21,9 +21,9 @@ pub fn enc_key() -> PublicKey {
     PublicKey::from(GenerationService::generate_key_duo().encryption_key_pair())
 }
 
-pub struct Signer(SigningKeyPair);
+pub struct TestKey(SigningKeyPair);
 
-impl Signer {
+impl TestKey {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self(SigningKeyPair::generate())
@@ -44,7 +44,7 @@ impl Signer {
 
 /// A self-rooted principal: `roots[0]` is the genesis key, the last is current.
 pub struct Principal {
-    roots: Vec<Signer>,
+    roots: Vec<TestKey>,
     root_enc: PublicKey,
     pub rotations: Vec<pb::RootRotation>,
 }
@@ -53,7 +53,7 @@ impl Principal {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         Self {
-            roots: vec![Signer::new()],
+            roots: vec![TestKey::new()],
             root_enc: enc_key(),
             rotations: vec![],
         }
@@ -67,16 +67,16 @@ impl Principal {
         PrincipalId::from_genesis(self.genesis())
     }
 
-    pub fn root(&self) -> &Signer {
+    pub fn root(&self) -> &TestKey {
         self.roots.last().unwrap()
     }
 
-    pub fn root_at(&self, i: usize) -> &Signer {
+    pub fn root_at(&self, i: usize) -> &TestKey {
         &self.roots[i]
     }
 
     pub fn rotate(&mut self, at: i64) {
-        let new = Signer::new();
+        let new = TestKey::new();
         let mut rotation = pb::RootRotation {
             principal_genesis: pk(&self.genesis()),
             old_root: pk(&self.root().public()),
@@ -110,8 +110,8 @@ impl Principal {
         &self,
         issued_at: i64,
         not_after: i64,
-    ) -> (Signer, pb::KeyDelegation) {
-        let device = Signer::new();
+    ) -> (TestKey, pb::KeyDelegation) {
+        let device = TestKey::new();
         let mut delegation = keys::device_delegation(
             &self.id(),
             &self.root().public(),
@@ -130,8 +130,8 @@ impl Principal {
         &self,
         issued_at: i64,
         not_after: i64,
-    ) -> (Signer, pb::KeyDelegation) {
-        let key = Signer::new();
+    ) -> (TestKey, pb::KeyDelegation) {
+        let key = TestKey::new();
         let mut delegation = keys::device_delegation(
             &self.id(),
             &self.root().public(),
@@ -209,14 +209,14 @@ pub fn resign_document(authority: &Principal, document: &mut pb::SignedDocument)
 
 /// A session cert under `device` for `principal`, signed by `device`.
 pub fn session_cert(
-    device: &Signer,
+    device: &TestKey,
     principal: &PublicKey,
     host: Option<&PublicKey>,
     subject: Option<&str>,
     not_before: i64,
     not_after: i64,
-) -> (Signer, pb::DelegationCert) {
-    let session = Signer::new();
+) -> (TestKey, pb::DelegationCert) {
+    let session = TestKey::new();
     let mut cert = pb::DelegationCert {
         not_before_unix_seconds: not_before,
         not_after_unix_seconds: not_after,
@@ -232,7 +232,7 @@ pub fn session_cert(
     (session, cert)
 }
 
-pub fn sign_cert(device: &Signer, cert: &mut pb::DelegationCert) {
+pub fn sign_cert(device: &TestKey, cert: &mut pb::DelegationCert) {
     cert.signature = device
         .sign(&session_delegation_transcript(cert).unwrap());
 }
@@ -244,12 +244,12 @@ use crate::{verify_signed_document, AuthorityChain, Resolver, Result};
 /// host-vouched agent allowed on the daemon.
 pub struct Fleet {
     pub owner: Principal,
-    pub laptop: Signer,
+    pub laptop: TestKey,
     pub laptop_deleg: pb::KeyDelegation,
-    pub presence: Signer,
+    pub presence: TestKey,
     pub presence_deleg: pb::KeyDelegation,
     pub daemon: Principal,
-    pub agent: Signer,
+    pub agent: TestKey,
     pub allow_peer_revocation: bool,
     pub owner_revocations: Vec<pb::KeyRevocation>,
     pub daemon_revocations: Vec<pb::KeyRevocation>,
@@ -270,7 +270,7 @@ impl Fleet {
             presence,
             presence_deleg,
             daemon: Principal::new(),
-            agent: Signer::new(),
+            agent: TestKey::new(),
             allow_peer_revocation: true,
             owner_revocations: vec![],
             daemon_revocations: vec![],
@@ -378,7 +378,7 @@ pub fn accepted(at: i64) -> When {
 }
 
 /// The owner's laptop session: self-rooted, mode 0.
-pub fn owner_chain(f: &Fleet, nb: i64, na: i64) -> (Signer, pb::SignerChain) {
+pub fn owner_chain(f: &Fleet, nb: i64, na: i64) -> (TestKey, pb::SignerChain) {
     let (session, cert) = session_cert(&f.laptop, &f.owner.genesis(), None, None, nb, na);
     let chain = pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
         device: Some(f.laptop_deleg.clone()),
@@ -394,7 +394,7 @@ pub fn daemon_chain(
     not_after: i64,
     nb: i64,
     na: i64,
-) -> (Signer, pb::SignerChain) {
+) -> (TestKey, pb::SignerChain) {
     let (dev, deleg) = d.delegate_device(issued_at, not_after);
     let (session, cert) = session_cert(&dev, &d.genesis(), None, None, nb, na);
     let chain = pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
@@ -410,7 +410,7 @@ pub fn agent_chain(
     subject: &str,
     nb: i64,
     na: i64,
-) -> (Signer, pb::SignerChain) {
+) -> (TestKey, pb::SignerChain) {
     let (dev, deleg) = f.daemon.delegate_device(T0, T0 + 30 * DAY);
     let (session, cert) = session_cert(
         &dev,
@@ -435,7 +435,7 @@ pub fn hosted_chain(
     subject: &str,
     nb: i64,
     na: i64,
-) -> (Signer, pb::SignerChain) {
+) -> (TestKey, pb::SignerChain) {
     let (host_dev, host_deleg) = daemon.delegate_device(T0, T0 + 30 * DAY);
     let (agent_dev, agent_deleg) = agent.delegate_device(T0, T0 + 30 * DAY);
     let (session, cert) = session_cert(
@@ -457,7 +457,7 @@ pub fn hosted_chain(
 }
 
 pub fn signed_message(
-    session: &Signer,
+    session: &TestKey,
     chain: pb::SignerChain,
     audience: &str,
     issued_at: i64,
@@ -482,7 +482,7 @@ pub fn subject_on(d: &Principal, local: &str) -> String {
 }
 
 pub fn approval(
-    signer: &Signer,
+    signer: &TestKey,
     principal: &PublicKey,
     device: &PublicKey,
     audience: &str,
@@ -526,4 +526,14 @@ pub fn peer_revocation(
         .presence
         .sign(&peer_revocation_transcript(&revocation).unwrap());
     revocation
+}
+
+impl crate::Signer for TestKey {
+    fn public_key(&self) -> PublicKey {
+        self.public()
+    }
+
+    fn sign(&self, message: &[u8]) -> std::result::Result<crate::Signature, crate::SignerError> {
+        crate::Signer::sign(&self.0, message)
+    }
 }

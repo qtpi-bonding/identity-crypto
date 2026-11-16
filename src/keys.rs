@@ -10,7 +10,7 @@
 //! may be longer.
 
 use crate::jwk_duo::{KeyDuo, SigningKeyPair};
-use crate::session::sign;
+use crate::signer::sign_transcript;
 use crate::transcripts;
 use crate::verify::check_unlisted_span;
 use crate::{pb, PrincipalId, PublicKey, Result};
@@ -57,7 +57,7 @@ pub fn device_delegation(
 /// No window cap: the caller owns the window.
 pub fn sign_key_delegation(root: &SigningKeyPair, d: &mut pb::KeyDelegation) -> Result<()> {
     let transcript = transcripts::key_delegation_transcript(d)?;
-    d.signature = sign(root, &transcript)?.to_vec();
+    d.signature = sign_transcript(root, &transcript)?;
     Ok(())
 }
 
@@ -96,13 +96,13 @@ pub fn renewal_due(d: &pb::KeyDelegation, now: i64, margin_seconds: i64) -> bool
 /// signature of `key_challenge_transcript(audience, nonce, signing key)`.
 pub fn challenge_proof(duo: &KeyDuo, audience: &str, nonce: &[u8]) -> Result<Vec<u8>> {
     let transcript = transcripts::key_challenge_transcript(audience, nonce, &signing_public(duo))?;
-    Ok(sign(duo.signing_key_pair(), &transcript)?.to_vec())
+    Ok(sign_transcript(duo.signing_key_pair(), &transcript)?)
 }
 
 /// The current root's 64-byte signature authorizing a rename.
 pub fn rename_proof(root: &KeyDuo, nonce: &[u8], principal: &PrincipalId, new_name: &str) -> Result<Vec<u8>> {
     let transcript = transcripts::principal_rename_transcript(nonce, principal, new_name)?;
-    Ok(sign(root.signing_key_pair(), &transcript)?.to_vec())
+    Ok(sign_transcript(root.signing_key_pair(), &transcript)?)
 }
 
 /// The old root's signed succession by `new_root`.
@@ -114,7 +114,7 @@ pub fn rotation(old_root: &KeyDuo, genesis: &PrincipalId, new_root: &KeyDuo, iss
         issued_at_unix_seconds: issued_at,
         signature: vec![],
     };
-    r.signature = sign(old_root.signing_key_pair(), &transcripts::root_rotation_transcript(&r)?)?.to_vec();
+    r.signature = sign_transcript(old_root.signing_key_pair(), &transcripts::root_rotation_transcript(&r)?)?;
     Ok(r)
 }
 
@@ -128,13 +128,14 @@ pub fn revocation(signer: &KeyDuo, genesis: &PrincipalId, revoked: &PublicKey, r
         revoked_at_unix_seconds: revoked_at,
         signature: vec![],
     };
-    r.signature = sign(signer.signing_key_pair(), &transcripts::key_revocation_transcript(&r)?)?.to_vec();
+    r.signature = sign_transcript(signer.signing_key_pair(), &transcripts::key_revocation_transcript(&r)?)?;
     Ok(r)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::SignerError;
     use crate::jwk_duo::{EncryptionKeyPair, GenerationService};
     use crate::{verify_p256, Error};
 
@@ -301,16 +302,16 @@ mod tests {
     fn public_only_root_is_an_error_not_a_panic() {
         let (root, id) = genesis();
         let watcher = public_only(&root);
-        let sig_err = |r: Result<()>| assert!(matches!(r, Err(Error::InvalidKey(_))), "got {r:?}");
+        let sig_err = |r: Result<()>| assert!(matches!(r, Err(Error::Signer(SignerError::Unavailable))), "got {r:?}");
 
         let mut d = device_delegation(&id, &signing_public(&root), &signing_public(&duo()), &encryption_public(&duo()), T, T + DAY);
         sig_err(sign_key_delegation(watcher.signing_key_pair(), &mut d));
         assert!(d.signature.is_empty(), "a failed signing must leave the signature unset");
 
-        assert!(matches!(delegate_device(&watcher, &id, &duo(), T, T + DAY), Err(Error::InvalidKey(_))));
-        assert!(matches!(challenge_proof(&watcher, "grorg", b"n"), Err(Error::InvalidKey(_))));
-        assert!(matches!(rename_proof(&watcher, b"n", &id, "x"), Err(Error::InvalidKey(_))));
-        assert!(matches!(rotation(&watcher, &id, &duo(), T), Err(Error::InvalidKey(_))));
-        assert!(matches!(revocation(&watcher, &id, &signing_public(&duo()), T), Err(Error::InvalidKey(_))));
+        assert!(matches!(delegate_device(&watcher, &id, &duo(), T, T + DAY), Err(Error::Signer(SignerError::Unavailable))));
+        assert!(matches!(challenge_proof(&watcher, "grorg", b"n"), Err(Error::Signer(SignerError::Unavailable))));
+        assert!(matches!(rename_proof(&watcher, b"n", &id, "x"), Err(Error::Signer(SignerError::Unavailable))));
+        assert!(matches!(rotation(&watcher, &id, &duo(), T), Err(Error::Signer(SignerError::Unavailable))));
+        assert!(matches!(revocation(&watcher, &id, &signing_public(&duo()), T), Err(Error::Signer(SignerError::Unavailable))));
     }
 }
