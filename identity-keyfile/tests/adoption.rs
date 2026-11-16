@@ -175,6 +175,47 @@ fn adopt_root_refuses_owner_principal() {
 }
 
 #[test]
+fn adopt_root_refuses_owner_principal_when_already_adopted() {
+    let p = parent();
+    // Adopted through adopt_owner_root.
+    let dir = p.path().join("a");
+    let (_, id) = root_only(&dir);
+    let machine_path = p.path().join("machine");
+    private_dir(&machine_path);
+    let machine = MachineDir::at(&machine_path);
+    IdentityKeys::adopt_owner_root(&dir, NOW, TTL, &id, &machine).unwrap();
+    let before = snapshot(&dir);
+    assert!(matches!(
+        IdentityKeys::adopt_root(&dir, NOW, TTL, Some(&id)),
+        Err(KeyfileError::OwnerRoot)
+    ));
+    assert_eq!(snapshot(&dir), before);
+    // Still loads with no refusal, or with a different principal.
+    let other = principal_id(&generate());
+    assert_eq!(
+        IdentityKeys::adopt_root(&dir, NOW, TTL, None).unwrap().principal_id,
+        id
+    );
+    assert_eq!(
+        IdentityKeys::adopt_root(&dir, NOW, TTL, Some(&other)).unwrap().principal_id,
+        id
+    );
+
+    // Adopted through adopt_root itself.
+    let dir2 = p.path().join("b");
+    let (_, id2) = root_only(&dir2);
+    IdentityKeys::adopt_root(&dir2, NOW, TTL, None).unwrap();
+    assert!(matches!(
+        IdentityKeys::adopt_root(&dir2, NOW, TTL, Some(&id2)),
+        Err(KeyfileError::OwnerRoot)
+    ));
+    assert_eq!(
+        IdentityKeys::adopt_root(&dir2, NOW, TTL, Some(&other)).unwrap().principal_id,
+        id2
+    );
+}
+
+#[test]
 fn adopt_root_with_none_refuses_nothing() {
     let p = parent();
     let dir = p.path().join("a");
@@ -335,6 +376,20 @@ fn device_only_dirs_are_never_written() {
         )
         .err()
         .unwrap()
+    ));
+
+    // save, save_at and init_at refuse too, and write nothing.
+    assert!(is_dev(keys.save(&dir).err().unwrap()));
+    assert!(is_dev(
+        keys.save_at(&IdentityLayout::single(&dir)).err().unwrap()
+    ));
+    assert!(is_dev(
+        IdentityKeys::init_at(&IdentityLayout::single(&dir), NOW + DAY, TTL)
+            .err()
+            .unwrap()
+    ));
+    assert!(is_dev(
+        IdentityKeys::init(&dir, NOW + DAY, TTL).err().unwrap()
     ));
 
     assert_eq!(snapshot(&dir), before);

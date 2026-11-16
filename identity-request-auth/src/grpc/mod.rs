@@ -386,9 +386,9 @@ impl<K: TrustedDevices> RequestAuthLayer<K> {
         self
     }
 
-    /// The largest request body (the message inside the gRPC frame, plus its
-    /// 5-byte prefix when buffered) this layer buffers and passes to the core;
-    /// `None` means no limit. The default is `Some(`[`MAX_BODY_BYTES`]`)`.
+    /// The largest request message, in bytes, this layer accepts. The limit counts
+    /// the message only, not the 5-byte gRPC frame prefix, on the server and the
+    /// client alike; `None` means no limit. The default is `Some(`[`MAX_BODY_BYTES`]`)`.
     pub fn max_body(mut self, limit: Option<usize>) -> Self {
         self.config.max_body = limit;
         self

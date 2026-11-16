@@ -153,6 +153,33 @@ impl Drop for TempDirGuard {
     }
 }
 
+/// Creates the missing ancestors of `dir` with mode 0700, leaving existing
+/// ones (which may deliberately be looser) untouched.
+fn create_private_ancestors(dir: &Path) -> Result<(), KeyfileError> {
+    let mut path = dir;
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(path) {
+            Ok(_) => break,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                missing.push(path.to_path_buf());
+                match path.parent() {
+                    Some(parent) => path = parent,
+                    None => break,
+                }
+            }
+            Err(error) => return Err(crate::error::io(path, error)),
+        }
+    }
+    for path in missing.iter().rev() {
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(path)
+            .map_err(|error| crate::error::io(path, error))?;
+    }
+    Ok(())
+}
+
 fn clean_dead_temps(dir: &Path, parent: &Path) -> Result<(), KeyfileError> {
     let prefix = format!(
         "{}.tmp-",
@@ -389,6 +416,9 @@ impl IdentityKeys {
     /// [`IdentityKeys::save`] for a layout: creates both folders (mode 0700) if
     /// needed and takes `root_dir/.lock` then `device_dir/.lock`.
     pub fn save_at(&self, layout: &IdentityLayout) -> Result<(), KeyfileError> {
+        if is_device_only_layout(layout) {
+            return Err(KeyfileError::DeviceOnly(layout.device_dir().to_path_buf()));
+        }
         files::ensure_layout(layout)?;
         let _locks = files::lock_layout_exclusive(layout)?;
         self.write_all(layout)
@@ -465,6 +495,9 @@ impl IdentityKeys {
         now: i64,
         ttl_seconds: i64,
     ) -> Result<Self, KeyfileError> {
+        if is_device_only_layout(layout) {
+            return Err(KeyfileError::DeviceOnly(layout.device_dir().to_path_buf()));
+        }
         files::ensure_layout(layout)?;
         let keys = Self::generate_new(now, ttl_seconds)?;
         let _locks = files::lock_layout_exclusive(layout)?;
@@ -611,7 +644,7 @@ impl IdentityKeys {
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
             .unwrap_or(Path::new("."));
-        fs::create_dir_all(parent).map_err(|e| crate::error::io(parent, e))?;
+        create_private_ancestors(parent)?;
         clean_dead_temps(dir, parent)?;
         let mut temp = None;
         for _ in 0..8 {
@@ -731,6 +764,9 @@ impl IdentityKeys {
         }
         let _locks = files::lock_layout_exclusive(&layout)?;
         if exists(&dir.join(AGENT_ID_FILE)) {
+            if refuse.is_some() && refused(&read_duo(dir, ROOT_FILE)?) {
+                return Err(KeyfileError::OwnerRoot);
+            }
             return Self::load_verified_locked(&layout);
         }
         let root = read_duo(dir, ROOT_FILE)?;

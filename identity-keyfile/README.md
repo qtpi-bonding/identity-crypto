@@ -46,8 +46,8 @@ in `private_fs`; `MAX_DOCUMENT_BYTES` (1 MiB) for documents.
 
 ## Machine identity directory
 
-The machine identity directory holds the owner's own identity and the
-machine-level index (`enrolments.json`). `MachineDir` locates it:
+The machine identity directory holds service and machine identities and the
+machine-level index (`enrolments.json`), and never the owner's own key. `MachineDir` locates it:
 
 - `MachineDir::locate()` (or `locate_with(env)` for tests) resolves, in order:
   `MACHINE_IDENTITY_DIR`, then `$XDG_DATA_HOME/machine-identity`, then

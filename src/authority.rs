@@ -270,7 +270,11 @@ mod tests {
         let id2 = *verify_signed_document(&relayed, DOC_TYPE, &a).unwrap().id();
         assert_eq!(id1, id2);
         let mut want = [0u8; 32];
-        want.copy_from_slice(&crate::document::document_id(&doc).unwrap());
+        {
+            use sha2::{Digest, Sha256};
+            let transcript = crate::transcripts::signed_document_transcript(&doc).unwrap();
+            want.copy_from_slice(&Sha256::digest(&transcript));
+        }
         assert_eq!(id1, want);
     }
 

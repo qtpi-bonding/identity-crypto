@@ -1,5 +1,6 @@
-//! The machine identity directory: where the owner's own identity and the
-//! machine-level index live. Its location comes from the environment.
+//! The machine identity directory: where service and machine identities and
+//! the machine-level index live, and never the owner's own key. Its location
+//! comes from the environment.
 
 use crate::error::{EnrolmentCheck, KeyfileError};
 use crate::files;
@@ -94,6 +95,7 @@ pub fn service_identity_dir(
     machine: &MachineDir,
     key: &str,
 ) -> Result<(PathBuf, DirSource), KeyfileError> {
+    check_key(key)?;
     if let Some(dir) = service_override {
         if !dir.is_absolute() {
             return Err(KeyfileError::InvalidLayout(

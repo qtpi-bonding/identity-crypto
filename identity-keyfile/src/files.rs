@@ -196,21 +196,34 @@ pub(crate) fn ensure_dir(dir: &Path) -> Result<(), KeyfileError> {
     private_fs::create_private_dir(dir)
 }
 
-fn open_lock_file(dir: &Path) -> std::io::Result<File> {
-    OpenOptions::new()
+fn open_lock_file(dir: &Path) -> Result<File, KeyfileError> {
+    let p = dir.join(LOCK_FILE);
+    let file = OpenOptions::new()
         .read(true)
         .write(true)
         .create(true)
         .truncate(false)
         .mode(0o600)
-        .open(dir.join(LOCK_FILE))
+        // Refuses a symlinked `.lock` without following it, so a dangling
+        // link's target is never created either.
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&p)
+        .map_err(|e| match e.kind() {
+            ErrorKind::NotFound => KeyfileError::Missing(p.clone()),
+            _ if e.raw_os_error() == Some(libc::ELOOP) => {
+                KeyfileError::InsecureFile(p.clone())
+            }
+            _ => io(&p, e),
+        })?;
+    private_fs::check_private_file_handle(&file, &p)?;
+    Ok(file)
 }
 
 /// The exclusive advisory lock for a mutation. It is held until the returned
 /// `File` is dropped, so the caller keeps it alive for the whole operation.
 pub(crate) fn lock_exclusive(dir: &Path) -> Result<File, KeyfileError> {
     let lock_path = path(dir, LOCK_FILE);
-    let file = open_lock_file(dir).map_err(|e| io(&lock_path, e))?;
+    let file = open_lock_file(dir)?;
     file.lock().map_err(|e| io(&lock_path, e))?;
     Ok(file)
 }
@@ -225,15 +238,15 @@ pub(crate) fn lock_shared(dir: &Path) -> Result<Option<File>, KeyfileError> {
             file.lock_shared().map_err(|e| io(&lock_path, e))?;
             Ok(Some(file))
         }
-        Err(e)
+        Err(KeyfileError::Io { source, .. })
             if matches!(
-                e.kind(),
+                source.kind(),
                 ErrorKind::PermissionDenied | ErrorKind::ReadOnlyFilesystem
             ) =>
         {
             Ok(None)
         }
-        Err(e) => Err(io(&lock_path, e)),
+        Err(e) => Err(e),
     }
 }
 

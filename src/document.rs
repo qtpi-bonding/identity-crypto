@@ -77,6 +77,8 @@ pub fn check_document_time(document: &VerifiedDocument, now: i64) -> Result<()> 
 
 #[cfg(test)]
 mod tests {
+    use crate::transcripts::signed_document_transcript;
+    use sha2::{Digest, Sha256};
     use crate::testkit::{Principal, DOC_TYPE, T0};
     use crate::{
         check_document_time, document_id, now_unix, sign_document, verify_signed_document,
@@ -146,6 +148,18 @@ mod tests {
         let doc = sign_document(p.root(), &chain, draft(1, &[1, 2, 3])).unwrap();
         let v = verify_signed_document(&doc, DOC_TYPE, &chain).unwrap();
         assert_eq!(&document_id(&doc).unwrap(), v.id());
+    }
+
+    #[test]
+    fn document_id_is_sha256_of_the_transcript() {
+        let p = Principal::new();
+        let chain = AuthorityChain::genesis(p.genesis());
+        let doc = sign_document(p.root(), &chain, draft(1, &[1, 2, 3])).unwrap();
+        let transcript = signed_document_transcript(&doc).unwrap();
+        let want: [u8; 32] = Sha256::digest(&transcript).into();
+        assert_eq!(document_id(&doc).unwrap(), want);
+        let v = verify_signed_document(&doc, DOC_TYPE, &chain).unwrap();
+        assert_eq!(v.id(), &want);
     }
 
     #[test]

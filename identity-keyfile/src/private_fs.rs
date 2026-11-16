@@ -185,6 +185,23 @@ pub fn read_private_file(path: &Path, cap: usize) -> Result<Zeroizing<Vec<u8>>, 
     read_capped(&mut file, path, cap)
 }
 
+/// Checks an already-opened file handle: a regular file with
+/// `mode & 0o077 == 0`, owned by the effective user. Used for lock files,
+/// which are opened with O_NOFOLLOW|O_CREAT and then checked on the handle,
+/// not the path, so the check cannot be raced.
+pub(crate) fn check_private_file_handle(file: &File, path: &Path) -> Result<(), KeyfileError> {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    let uid = unsafe { libc::geteuid() };
+    let meta = file.metadata().map_err(|error| io(path, error))?;
+    if !meta.is_file() || meta.mode() & 0o077 != 0 {
+        return Err(KeyfileError::InsecureFile(path.to_path_buf()));
+    }
+    if meta.uid() != uid {
+        return Err(KeyfileError::WrongOwner(path.to_path_buf()));
+    }
+    Ok(())
+}
+
 /// Reads a public file inside an already-checked directory: no mode or owner
 /// check, but still no symlink, no non-regular file and no more than `cap` bytes.
 pub fn read_regular_file(path: &Path, cap: usize) -> Result<Vec<u8>, KeyfileError> {

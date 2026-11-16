@@ -363,6 +363,24 @@ fn index_key_grammar() {
             "key {k:?}"
         );
     }
+    // service_identity_dir applies the same grammar, with the same error.
+    for k in ["", ".", "..", "a/b/..", "a/../b", "Grorg", "/x", "a b", too_long.as_str()] {
+        assert!(
+            matches!(
+                service_identity_dir(None, &machine, k),
+                Err(KeyfileError::InvalidEnrolmentKey(ref bad)) if bad == k
+            ),
+            "service_identity_dir key {k:?}"
+        );
+        // An override does not bypass the grammar either.
+        assert!(
+            matches!(
+                service_identity_dir(Some(&dir), &machine, k),
+                Err(KeyfileError::InvalidEnrolmentKey(_))
+            ),
+            "service_identity_dir override key {k:?}"
+        );
+    }
     // Boundary keys are accepted.
     for k in ["a", "0x", "a.b_c", "a:b/c-d", "a".repeat(128).as_str()] {
         let k = k.replace('_', "-");
@@ -411,4 +429,25 @@ fn index_loose_file_refused() {
         EnrolmentIndex::read(&machine),
         Err(KeyfileError::InsecureFile(_))
     ));
+}
+
+#[test]
+fn fresh_host_default_dir_create_and_enrol() {
+    let parent = tempfile::tempdir().unwrap();
+    fs::set_permissions(parent.path(), fs::Permissions::from_mode(0o700)).unwrap();
+    let machine = MachineDir::at(parent.path().join("machine"));
+    assert!(!machine.path().exists());
+    let (dir, source) = service_identity_dir(None, &machine, "grorg").unwrap();
+    assert_eq!(source, DirSource::Default);
+    let keys = IdentityKeys::create_or_load(&dir, NOW, TTL).unwrap();
+    EnrolmentIndex::enrol(&machine, "grorg", entry(&dir), &owner()).unwrap();
+    let index = EnrolmentIndex::read(&machine).unwrap();
+    assert_eq!(
+        index.checked("grorg").unwrap().unwrap().principal_id,
+        keys.principal_id
+    );
+    let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(machine.path()), 0o700, "machine dir");
+    assert_eq!(mode(&machine.path().join("services")), 0o700, "services");
+    assert_eq!(mode(&dir), 0o700, "service dir");
 }
