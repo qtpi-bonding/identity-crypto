@@ -5,6 +5,7 @@ mod error;
 mod files;
 mod keys;
 mod layout;
+mod machine;
 pub mod private_fs;
 
 pub use error::{EnrolmentCheck, KeyfileError, VerifyCheck};
@@ -15,6 +16,8 @@ pub use files::{
 };
 pub use keys::{device_keys_at, read_principal, DeviceKeys, DevicePublic, IdentityKeys};
 pub use layout::IdentityLayout;
+pub use keys::is_device_only;
+pub use machine::{MachineDir, MACHINE_IDENTITY_DIR_ENV};
 
 #[cfg(feature = "testkit")]
 pub mod testkit;

@@ -1,7 +1,7 @@
 //! The split layout: the root key in one folder, everything else in the device
 //! folder an agent may be shown.
 
-use identity_crypto::{principal_id, signing_public};
+use identity_crypto::signing_public;
 use identity_keyfile::*;
 use std::collections::BTreeSet;
 use std::fs;
@@ -192,31 +192,31 @@ fn split_rotate_root_then_renew() {
 }
 
 #[test]
-fn split_create_or_load_is_idempotent_and_recommits_an_uncommitted_attempt() {
+fn split_create_or_load_is_idempotent_and_refuses_an_uncommitted_attempt() {
     let s = split();
     let first = IdentityKeys::create_or_load_at(&s.layout, NOW, TTL).unwrap();
     let again = IdentityKeys::create_or_load_at(&s.layout, NOW, TTL).unwrap();
     assert_eq!(first.principal_id, again.principal_id);
     fs::remove_file(s.dev.join("agent_id")).unwrap();
-    let second = IdentityKeys::create_or_load_at(&s.layout, NOW, TTL).unwrap();
-    assert_eq!(second.principal_id, first.principal_id);
-    let loaded = IdentityKeys::load_verified_at(&s.layout).unwrap();
-    assert_eq!(signing_public(&loaded.root), signing_public(&first.root));
+    // No implicit adoption: the root without an agent_id is an orphan.
+    assert!(matches!(
+        IdentityKeys::create_or_load_at(&s.layout, NOW, TTL),
+        Err(KeyfileError::OrphanRoot(p)) if p == s.root
+    ));
 }
 
 #[test]
-fn split_create_or_load_keeps_an_orphan_root_as_the_genesis() {
+fn split_create_or_load_refuses_an_orphan_root() {
     let s = split();
     fs::create_dir(&s.root).unwrap();
     fs::set_permissions(&s.root, fs::Permissions::from_mode(0o700)).unwrap();
     let root = generate();
-    let expected = principal_id(&root);
     write_duo(&s.root, ROOT_FILE, &root).unwrap();
-    let keys = IdentityKeys::create_or_load_at(&s.layout, NOW, TTL).unwrap();
-    assert_eq!(keys.principal_id, expected);
-    assert_eq!(signing_public(&keys.root), signing_public(&root));
-    let loaded = IdentityKeys::load_verified_at(&s.layout).unwrap();
-    assert_eq!(loaded.principal_id, expected);
+    assert!(matches!(
+        IdentityKeys::create_or_load_at(&s.layout, NOW, TTL),
+        Err(KeyfileError::OrphanRoot(p)) if p == s.root
+    ));
+    assert_eq!(names(&s.root), set(&["root.jwk.json"]));
 }
 
 #[test]
@@ -243,13 +243,13 @@ fn split_create_or_load_races_to_one_identity() {
 }
 
 #[test]
-fn split_renew_without_the_root_file_is_missing() {
+fn split_renew_without_the_root_file_is_device_only() {
     let s = split();
     IdentityKeys::init_at(&s.layout, NOW, TTL).unwrap();
     fs::remove_file(s.root.join("root.jwk.json")).unwrap();
     match IdentityKeys::renew_at(&s.layout, NOW + DAY, TTL, false) {
-        Err(KeyfileError::Missing(path)) => assert_eq!(path, s.root.join("root.jwk.json")),
-        other => panic!("expected Missing, got {:?}", other.err()),
+        Err(KeyfileError::DeviceOnly(path)) => assert_eq!(path, s.layout.device_dir()),
+        other => panic!("expected DeviceOnly, got {:?}", other.err()),
     }
 }
 

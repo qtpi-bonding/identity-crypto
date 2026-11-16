@@ -7,6 +7,7 @@ use crate::files::{
 };
 use crate::generate;
 use crate::layout::IdentityLayout;
+use crate::machine::MachineDir;
 use identity_crypto::jwk_duo::KeyDuo;
 use identity_crypto::transcripts;
 use identity_crypto::{
@@ -187,32 +188,13 @@ fn clean_dead_temps(dir: &Path, parent: &Path) -> Result<(), KeyfileError> {
 }
 
 fn verify_identity(keys: &IdentityKeys) -> Result<(), KeyfileError> {
-    let genesis = keys
-        .delegation
-        .principal_genesis
-        .as_ref()
-        .ok_or(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
-    let genesis = PublicKey::try_from(genesis)
-        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
-    let chain = AuthorityChain::from_rotations(genesis, &keys.rotations)
-        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
-    // The chain must end at the root on disk before agent_id is compared
+    let chain = chain_of(&keys.delegation, &keys.rotations)?;
+    // The chain must end at the root on disk before anything else is compared
     // against it, so a foreign genesis is reported as such, not as agent_id.
-    let root_signing = signing_public(&keys.root);
-    if &root_signing != chain.head() {
+    if &signing_public(&keys.root) != chain.head() {
         return Err(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis));
     }
-    if keys.principal_id != chain.principal() {
-        return Err(KeyfileError::VerifyFailed(VerifyCheck::AgentId));
-    }
-    let signing_root = keys
-        .delegation
-        .signing_root
-        .as_ref()
-        .ok_or(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot))?;
-    if signing_root != &pb::PublicKey::from(chain.head()) {
-        return Err(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot));
-    }
+    check_identity_part(&keys.principal_id, &keys.delegation, &chain)?;
     if keys.delegation.delegated.as_ref()
         != Some(&pb::PublicKey::from(&signing_public(&keys.device)))
     {
@@ -223,12 +205,69 @@ fn verify_identity(keys: &IdentityKeys) -> Result<(), KeyfileError> {
     {
         return Err(KeyfileError::VerifyFailed(VerifyCheck::DelegatedEncryption));
     }
-    if keys.delegation.purpose != pb::KeyPurpose::Device as i32 {
+    check_signature_part(&keys.delegation, &chain)
+}
+
+/// The authority chain a delegation names: its genesis, then the rotations.
+fn chain_of(
+    delegation: &pb::KeyDelegation,
+    rotations: &[pb::RootRotation],
+) -> Result<AuthorityChain, KeyfileError> {
+    let genesis = delegation
+        .principal_genesis
+        .as_ref()
+        .ok_or(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
+    let genesis = PublicKey::try_from(genesis)
+        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
+    AuthorityChain::from_rotations(genesis, rotations)
+        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))
+}
+
+/// The public checks shared by `verify_identity` and `read_principal`: the
+/// rotation chain from the delegation's genesis, `agent_id` against the chain
+/// principal, the signing root, the device purpose and the delegation signature.
+/// Returns the verified chain. Reads no private key.
+pub(crate) fn check_public(
+    id: &PrincipalId,
+    delegation: &pb::KeyDelegation,
+    rotations: &[pb::RootRotation],
+) -> Result<AuthorityChain, KeyfileError> {
+    let chain = chain_of(delegation, rotations)?;
+    check_identity_part(id, delegation, &chain)?;
+    check_signature_part(delegation, &chain)?;
+    Ok(chain)
+}
+
+/// `agent_id` against the chain principal, then the delegation's signing root.
+fn check_identity_part(
+    id: &PrincipalId,
+    delegation: &pb::KeyDelegation,
+    chain: &AuthorityChain,
+) -> Result<(), KeyfileError> {
+    if id != &chain.principal() {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::AgentId));
+    }
+    let signing_root = delegation
+        .signing_root
+        .as_ref()
+        .ok_or(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot))?;
+    if signing_root != &pb::PublicKey::from(chain.head()) {
+        return Err(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot));
+    }
+    Ok(())
+}
+
+/// The device purpose, then the delegation signature under the chain head.
+fn check_signature_part(
+    delegation: &pb::KeyDelegation,
+    chain: &AuthorityChain,
+) -> Result<(), KeyfileError> {
+    if delegation.purpose != pb::KeyPurpose::Device as i32 {
         return Err(KeyfileError::VerifyFailed(VerifyCheck::Purpose));
     }
-    let transcript = transcripts::key_delegation_transcript(&keys.delegation)
+    let transcript = transcripts::key_delegation_transcript(delegation)
         .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::Signature))?;
-    if verify_p256(chain.head(), &transcript, &keys.delegation.signature).is_err() {
+    if verify_p256(chain.head(), &transcript, &delegation.signature).is_err() {
         return Err(KeyfileError::VerifyFailed(VerifyCheck::Signature));
     }
     Ok(())
@@ -472,6 +511,9 @@ impl IdentityKeys {
         ttl_seconds: i64,
         new_device: bool,
     ) -> Result<Self, KeyfileError> {
+        if is_device_only_layout(layout) {
+            return Err(KeyfileError::DeviceOnly(layout.device_dir().to_path_buf()));
+        }
         files::check_layout(layout)?;
         let _locks = files::lock_layout_exclusive(layout)?;
         let dir = layout.device_dir();
@@ -523,30 +565,42 @@ impl IdentityKeys {
         now: i64,
         ttl_seconds: i64,
     ) -> Result<Self, KeyfileError> {
-        if Self::exists_at(layout) {
-            return Self::load_verified_at(layout);
-        }
         if layout.is_split() {
+            if Self::exists_at(layout) {
+                return Self::load_verified_at(layout);
+            }
+            // Refuse before creating directories or lock files: nothing is written.
+            if is_device_only(layout.device_dir()) {
+                return Err(KeyfileError::DeviceOnly(layout.device_dir().to_path_buf()));
+            }
+            if layout.has_root() && !exists(&layout.device_dir().join(AGENT_ID_FILE)) {
+                return Err(KeyfileError::OrphanRoot(layout.root_dir().to_path_buf()));
+            }
             files::ensure_layout(layout)?;
             let _locks = files::lock_layout_exclusive(layout)?;
             if exists(&layout.device_dir().join(AGENT_ID_FILE)) {
                 return Self::load_verified_locked(layout);
             }
-            let root_path = layout.root_dir().join(ROOT_FILE);
-            if exists(&root_path) {
-                let keys = Self::generate_under(
-                    read_duo(layout.root_dir(), ROOT_FILE)?,
-                    now,
-                    ttl_seconds,
-                )?;
-                keys.write_device_files(layout)?;
-                return Ok(keys);
+            if is_device_only(layout.device_dir()) {
+                return Err(KeyfileError::DeviceOnly(layout.device_dir().to_path_buf()));
+            }
+            if layout.has_root() {
+                return Err(KeyfileError::OrphanRoot(layout.root_dir().to_path_buf()));
             }
             let keys = Self::generate_new(now, ttl_seconds)?;
             keys.write_all(layout)?;
             return Ok(keys);
         }
         let dir = layout.device_dir();
+        if is_device_only(dir) {
+            return Err(KeyfileError::DeviceOnly(dir.to_path_buf()));
+        }
+        if Self::exists_at(layout) {
+            return Self::load_verified_at(layout);
+        }
+        if layout.has_root() && !exists(&dir.join(AGENT_ID_FILE)) {
+            return Err(KeyfileError::OrphanRoot(dir.to_path_buf()));
+        }
         // A symlink or a loose directory is refused, never renamed over.
         match fs::symlink_metadata(dir) {
             Ok(_) => private_fs::check_private_dir(dir)?,
@@ -650,6 +704,73 @@ impl IdentityKeys {
         Self::load_verified_locked(layout)
     }
 
+    /// Adopts the root already in a single-layout folder `dir` as this agent's
+    /// genesis, creating the device, delegation and `agent_id` under it.
+    ///
+    /// Under the exclusive lock: `dir` must be private and hold `root.jwk.json`.
+    /// When `agent_id` is already present this loads and verifies it instead
+    /// (idempotent). Otherwise any partial device files are overwritten and
+    /// `agent_id` is written last. `refuse`: when `Some(p)` and the root's
+    /// principal is `p`, returns `OwnerRoot` and writes nothing. `None` refuses
+    /// nothing.
+    pub fn adopt_root(
+        dir: &Path,
+        now: i64,
+        ttl_seconds: i64,
+        refuse: Option<&PrincipalId>,
+    ) -> Result<Self, KeyfileError> {
+        let layout = IdentityLayout::single(dir);
+        if is_device_only(dir) {
+            return Err(KeyfileError::DeviceOnly(dir.to_path_buf()));
+        }
+        files::check_layout(&layout)?;
+        // Refused before the lock file is created: a refusal writes nothing.
+        let refused = |root: &KeyDuo| refuse == Some(&principal_id(root));
+        if !exists(&dir.join(AGENT_ID_FILE)) && refused(&read_duo(dir, ROOT_FILE)?) {
+            return Err(KeyfileError::OwnerRoot);
+        }
+        let _locks = files::lock_layout_exclusive(&layout)?;
+        if exists(&dir.join(AGENT_ID_FILE)) {
+            return Self::load_verified_locked(&layout);
+        }
+        let root = read_duo(dir, ROOT_FILE)?;
+        if refused(&root) {
+            return Err(KeyfileError::OwnerRoot);
+        }
+        let keys = Self::generate_under(root, now, ttl_seconds)?;
+        keys.write_device_files(&layout)?;
+        Ok(keys)
+    }
+
+    /// The owner's own registration: adopts the root in `dir` only when its
+    /// principal is `owner`. `dir` must not be, or lie inside, the machine
+    /// identity directory (symlinks resolved). A missing machine directory is
+    /// `MachineDirMissing`.
+    pub fn adopt_owner_root(
+        dir: &Path,
+        now: i64,
+        ttl_seconds: i64,
+        owner: &PrincipalId,
+        machine: &MachineDir,
+    ) -> Result<Self, KeyfileError> {
+        let machine_path = machine.path();
+        if !exists(machine_path) {
+            return Err(KeyfileError::MachineDirMissing(machine_path.to_path_buf()));
+        }
+        let machine_real = machine_path
+            .canonicalize()
+            .map_err(|e| crate::error::io(machine_path, e))?;
+        let dir_real = IdentityLayout::single(dir).resolved_device_dir()?;
+        if dir_real.starts_with(&machine_real) {
+            return Err(KeyfileError::InsideMachineDir(dir.to_path_buf()));
+        }
+        let root = read_duo(dir, ROOT_FILE)?;
+        if &principal_id(&root) != owner {
+            return Err(KeyfileError::NotOwnerRoot);
+        }
+        Self::adopt_root(dir, now, ttl_seconds, None)
+    }
+
     /// The body of `load_verified_at`, for callers that already hold the locks.
     fn load_verified_locked(layout: &IdentityLayout) -> Result<Self, KeyfileError> {
         let keys = Self::load_files(layout)?;
@@ -716,6 +837,11 @@ impl IdentityKeys {
         ttl_seconds: i64,
         margin_seconds: i64,
     ) -> Result<bool, KeyfileError> {
+        if let Some(layout) = layout {
+            if is_device_only_layout(layout) {
+                return Err(KeyfileError::DeviceOnly(layout.device_dir().to_path_buf()));
+            }
+        }
         if !renewal_due(&self.delegation, now, margin_seconds) {
             return Ok(false);
         }
@@ -784,6 +910,9 @@ impl IdentityKeys {
         layout: &IdentityLayout,
         now: i64,
     ) -> Result<pb::RootRotation, KeyfileError> {
+        if is_device_only_layout(layout) {
+            return Err(KeyfileError::DeviceOnly(layout.device_dir().to_path_buf()));
+        }
         files::check_layout(layout)?;
         let _locks = files::lock_layout_exclusive(layout)?;
         let keys = Self::load_locked(layout)?;
@@ -823,8 +952,7 @@ impl IdentityKeys {
 
 /// The principal stored in `dir`, read from `agent_id` and `delegation.json`
 /// only (no private key). `Ok(None)` when missing; verified as in the spec.
-pub fn read_principal(_dir: &Path) -> Result<Option<PrincipalId>, KeyfileError> {
-    let dir = _dir;
+pub fn read_principal(dir: &Path) -> Result<Option<PrincipalId>, KeyfileError> {
     match fs::symlink_metadata(dir) {
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(crate::error::io(dir, error)),
@@ -835,38 +963,29 @@ pub fn read_principal(_dir: &Path) -> Result<Option<PrincipalId>, KeyfileError> 
     }
     let id = read_principal_id(dir)?;
     let delegation = read_delegation(dir)?;
-    let genesis = delegation
-        .principal_genesis
-        .as_ref()
-        .ok_or(KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
-    let genesis = PublicKey::try_from(genesis)
-        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
     let rotations = read_rotations(dir)
         .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
-    let chain = AuthorityChain::from_rotations(genesis, &rotations.rotations)
-        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::PrincipalGenesis))?;
-    if id != chain.principal() {
-        return Err(KeyfileError::VerifyFailed(VerifyCheck::AgentId));
-    }
-    let signing_root = PublicKey::try_from(
-        delegation
-            .signing_root
-            .as_ref()
-            .ok_or(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot))?,
-    )
-    .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::SigningRoot))?;
-    if &signing_root != chain.head() {
-        return Err(KeyfileError::VerifyFailed(VerifyCheck::SigningRoot));
-    }
-    if delegation.purpose != pb::KeyPurpose::Device as i32 {
-        return Err(KeyfileError::VerifyFailed(VerifyCheck::Purpose));
-    }
-    let transcript = transcripts::key_delegation_transcript(&delegation)
-        .map_err(|_| KeyfileError::VerifyFailed(VerifyCheck::Signature))?;
-    if verify_p256(chain.head(), &transcript, &delegation.signature).is_err() {
-        return Err(KeyfileError::VerifyFailed(VerifyCheck::Signature));
-    }
+    check_public(&id, &delegation, &rotations.rotations)?;
     Ok(Some(id))
+}
+
+/// True when `dir` holds `agent_id`, `device.jwk.json` and `delegation.json`
+/// and no `root.jwk.json`: a device-only folder, which is never written.
+pub fn is_device_only(dir: &Path) -> bool {
+    exists(&dir.join(AGENT_ID_FILE))
+        && exists(&dir.join(DEVICE_FILE))
+        && exists(&dir.join(DELEGATION_FILE))
+        && !exists(&dir.join(ROOT_FILE))
+}
+
+/// [`is_device_only`] for a layout. A split layout is device-only when its
+/// `root_dir` holds no root, and its `device_dir` holds the device files.
+pub(crate) fn is_device_only_layout(layout: &IdentityLayout) -> bool {
+    if layout.is_split() {
+        !layout.has_root() && is_device_only(layout.device_dir())
+    } else {
+        is_device_only(layout.device_dir())
+    }
 }
 
 impl DeviceKeys {

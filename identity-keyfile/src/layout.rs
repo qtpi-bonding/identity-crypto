@@ -70,6 +70,14 @@ impl IdentityLayout {
         self.root_dir != self.device_dir
     }
 
+    /// True when `root_dir/root.jwk.json` is a regular file (not a symlink or a directory).
+    pub fn has_root(&self) -> bool {
+        match std::fs::symlink_metadata(self.root_dir.join(ROOT_FILE)) {
+            Ok(meta) => meta.is_file(),
+            Err(_) => false,
+        }
+    }
+
     /// The folder that holds the file called `name`.
     pub(crate) fn dir_of(&self, name: &str) -> &Path {
         if name == ROOT_FILE {
@@ -77,6 +85,14 @@ impl IdentityLayout {
         } else {
             &self.device_dir
         }
+    }
+}
+
+impl IdentityLayout {
+    /// The device folder with symlinks resolved (a missing folder resolves
+    /// through its nearest existing ancestor).
+    pub(crate) fn resolved_device_dir(&self) -> Result<PathBuf, KeyfileError> {
+        resolve(&self.device_dir)
     }
 }
 
