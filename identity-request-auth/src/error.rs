@@ -78,7 +78,7 @@ pub enum AuthError {
     #[coded(code = "entropy", class = Infrastructure, grpc = Internal)]
     Entropy(String),
     #[error("the session certificate has expired")]
-    #[coded(code = "session_expired", class = Logical, grpc = Unauthenticated)]
+    #[coded(code = "session_expired", class = Transient, grpc = Unauthenticated)]
     SessionExpired,
     #[error("no caller is attached to this request")]
     #[coded(code = "no_caller", class = Infrastructure, grpc = Unauthenticated)]

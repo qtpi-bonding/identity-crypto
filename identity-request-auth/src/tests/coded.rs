@@ -105,7 +105,7 @@ fn table() -> Vec<(AuthError, &'static str, ErrorClass, Code)> {
         (
             AuthError::SessionExpired,
             "session_expired",
-            L,
+            T,
             Code::Unauthenticated,
         ),
         (AuthError::NoCaller, "no_caller", I, Code::Unauthenticated),
@@ -147,6 +147,34 @@ fn auth_error_status_table_unchanged() {
         );
     }
     let _ = REJECT_SOURCE;
+}
+
+/// An expired session is retryable once the client renews: class Transient on the wire and in
+/// the trailer, with the code and the UNAUTHENTICATED status unchanged.
+#[test]
+fn session_expired_is_transient_with_its_code_and_status() {
+    let err = AuthError::SessionExpired;
+    assert_eq!(CodedError::class(&err), ErrorClass::Transient);
+    assert_eq!(
+        CodedError::code(&err),
+        "identity.request_auth.session_expired"
+    );
+    let status = default_reject(err);
+    assert_eq!(status.code(), Code::Unauthenticated);
+    let meta = |key: &str| {
+        status
+            .metadata()
+            .get(key)
+            .unwrap_or_else(|| panic!("{key}"))
+            .to_str()
+            .unwrap()
+            .to_owned()
+    };
+    assert_eq!(
+        meta("x-error-code"),
+        "identity.request_auth.session_expired"
+    );
+    assert_eq!(meta("x-error-class"), "transient");
 }
 
 fn code_of(resp: &http::Response<tonic::body::Body>) -> String {

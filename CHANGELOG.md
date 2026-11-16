@@ -25,6 +25,10 @@ Breaking changes, grouped by consumer:
 - `impl Clock` requires `fn now(&self) -> Timestamp`. Calls become
   `clock.now().seconds`.
 - `LookupError` lives at `identity_request_auth::LookupError`.
+- `AuthError::SessionExpired` is class `Transient` (was `Logical`). Its code
+  `identity.request_auth.session_expired`, its trailers and its gRPC status
+  `UNAUTHENTICATED` are unchanged. A watch that follows with `op-listen` now
+  reconnects after the client renews its certificate instead of ending.
 - Testkit renames: `testkit::Signer` becomes `TestKey`;
   `testkit::sign_document` becomes `sign_test_document`; `FakeClock` gains
   `set_at`.

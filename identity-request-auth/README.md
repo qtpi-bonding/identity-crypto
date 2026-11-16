@@ -159,7 +159,7 @@ maps each one through `coded_error::grpc::to_status` (source
 | `Verify` | `verify` | Logical | `UNAUTHENTICATED` |
 | `Credential` | `credential` | Infrastructure | `INTERNAL` |
 | `Entropy` | `entropy` | Infrastructure | `INTERNAL` |
-| `SessionExpired` | `session_expired` | Logical | `UNAUTHENTICATED` |
+| `SessionExpired` | `session_expired` | Transient | `UNAUTHENTICATED` |
 | `NoCaller` | `no_caller` | Infrastructure | `UNAUTHENTICATED` |
 | `UnsignableRequest` | `unsignable_request` | Logical | `INVALID_ARGUMENT` |
 
