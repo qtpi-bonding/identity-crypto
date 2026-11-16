@@ -135,13 +135,13 @@ fn refuses_a_missing_path_as_missing() {
 }
 
 #[test]
-fn refuses_a_dangling_symlink_as_missing() {
+fn refuses_a_dangling_symlink_as_insecure_file() {
     let dir = tempdir();
     let link = dir.path().join("link");
     symlink(dir.path().join("nowhere"), &link).unwrap();
     let err = read_duo_file(&link).unwrap_err();
     assert!(
-        matches!(&err, KeyfileError::Missing(q) if q == &link),
+        matches!(&err, KeyfileError::InsecureFile(q) if q == &link),
         "{err:?}"
     );
 }
@@ -191,13 +191,18 @@ fn refuses_garbage_empty_and_non_utf8_as_not_a_key_set() {
 }
 
 #[test]
-fn symlink_to_valid_0600_is_accepted() {
+fn symlink_to_valid_0600_is_refused_as_insecure_file() {
     let dir = tempdir();
     let duo = generate();
     let target = put(dir.path(), "real.json", key_text(&duo).as_bytes(), 0o600);
     let link = dir.path().join("link.json");
     symlink(&target, &link).unwrap();
-    assert_accepted(&duo, &read_duo_file(&link).unwrap());
+    let err = read_duo_file(&link).unwrap_err();
+    assert!(
+        matches!(&err, KeyfileError::InsecureFile(q) if q == &link),
+        "{err:?}"
+    );
+    let _ = duo;
 }
 
 #[test]

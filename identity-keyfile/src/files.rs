@@ -3,10 +3,11 @@ use crate::layout::IdentityLayout;
 use identity_crypto::jwk_duo::{KeyDuo, KeyDuoSerializer};
 use identity_crypto::{pb, PrincipalId};
 use std::fs::{self, File, OpenOptions};
-use std::io::{ErrorKind, Read, Write};
-use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::io::{ErrorKind, Read};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::private_fs::{self, MAX_KEY_FILE_BYTES};
 
 #[cfg(test)]
 use std::cell::RefCell;
@@ -20,11 +21,6 @@ pub const AGENT_ID_FILE: &str = "agent_id";
 pub const HISTORY_FILE: &str = "retired_devices.json";
 pub const ROTATIONS_FILE: &str = "rotations.json";
 pub const LOCK_FILE: &str = ".lock";
-
-/// Maximum accepted size of a private key-set file.
-const MAX_KEY_FILE_BYTES: u64 = 16 * 1024;
-
-static COUNTER: AtomicU64 = AtomicU64::new(0);
 
 #[cfg(test)]
 thread_local! {
@@ -41,7 +37,7 @@ pub(crate) fn fail_writes_to(name: Option<&'static str>) {
 }
 
 #[cfg(test)]
-fn injected_failure(p: &Path) -> bool {
+pub(crate) fn injected_failure(p: &Path) -> bool {
     let name = FAIL_ON.with(|f| *f.borrow());
     name.is_some_and(|name| p.file_name() == Some(OsStr::new(name)))
 }
@@ -52,6 +48,7 @@ fn path(dir: &Path, name: &str) -> PathBuf {
 
 /// The directory a bare relative name lives in. `Path::parent` of `"x"` is
 /// `Some("")`, which is not a usable directory, so it becomes `"."`.
+#[cfg(test)]
 fn parent_dir(p: &Path) -> &Path {
     match p.parent() {
         Some(dir) if !dir.as_os_str().is_empty() => dir,
@@ -79,22 +76,9 @@ fn parse<T: serde::de::DeserializeOwned>(p: &Path) -> Result<T, KeyfileError> {
     })
 }
 
-/// Writes `bytes` to `p` as a mode-0600 file, through a fresh temporary name
-/// in the same directory (`.{name}.{pid}.{counter}.tmp`).
+/// Writes `bytes` to `p` as a mode-0600 file through `private_fs`.
 pub(crate) fn write_private(p: &Path, bytes: &[u8]) -> Result<(), KeyfileError> {
-    let name = p
-        .file_name()
-        .ok_or_else(|| {
-            io(
-                p,
-                std::io::Error::new(ErrorKind::InvalidInput, "no file name"),
-            )
-        })?
-        .to_string_lossy()
-        .into_owned();
-    let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    let tmp = parent_dir(p).join(format!(".{name}.{}.{n}.tmp", std::process::id()));
-    write_private_at(p, bytes, &tmp)
+    private_fs::write_private_atomic(p, bytes, 0o600)
 }
 
 /// Writes `bytes` to `p` through the caller-chosen temporary path `tmp`.
@@ -103,40 +87,18 @@ pub(crate) fn write_private(p: &Path, bytes: &[u8]) -> Result<(), KeyfileError> 
 /// entry at `tmp`, including a symlink (dangling or not), makes the open fail.
 /// It is never followed, reused or removed by this call. Only a temporary this
 /// call created is removed on error.
+#[cfg(test)]
 pub(crate) fn write_private_at(p: &Path, bytes: &[u8], tmp: &Path) -> Result<(), KeyfileError> {
-    #[cfg(test)]
-    if injected_failure(p) {
-        return Err(io(p, std::io::Error::other("injected failure")));
-    }
-    let mut options = OpenOptions::new();
-    options.write(true).create_new(true).mode(0o600);
-    // A failed open means the entry at `tmp` is not ours: return without
-    // touching it.
-    let mut file = options.open(tmp).map_err(|e| io(tmp, e))?;
-    let staged = (|| -> Result<(), KeyfileError> {
-        file.set_permissions(fs::Permissions::from_mode(0o600))
-            .map_err(|e| io(tmp, e))?;
-        file.write_all(bytes).map_err(|e| io(tmp, e))?;
-        file.sync_all().map_err(|e| io(tmp, e))?;
-        fs::rename(tmp, p).map_err(|e| io(p, e))
-    })();
-    if let Err(error) = staged {
-        let _ = fs::remove_file(tmp);
-        return Err(error);
-    }
-    // The rename has already happened, so the new file is in place. A failed
-    // parent fsync is still reported as Err even though the file is written.
-    let dir = parent_dir(p);
-    File::open(dir)
-        .and_then(|f| f.sync_all())
-        .map_err(|e| io(dir, e))
+    crate::private_fs::write_private_via(p, bytes, 0o600, tmp)
 }
 
 pub fn write_duo(dir: &Path, name: &str, duo: &KeyDuo) -> Result<(), KeyfileError> {
     let p = path(dir, name);
     // An export failure is a failure to produce the bytes, not a parse error.
-    let text = KeyDuoSerializer::export_key_duo_jwk(duo)
-        .map_err(|e| io(&p, std::io::Error::other(e.to_string())))?;
+    let text = KeyDuoSerializer::export_key_duo_jwk(duo).map_err(|e| KeyfileError::Serialize {
+        path: p.clone(),
+        msg: e.to_string(),
+    })?;
     write_private(&p, text.as_bytes())
 }
 
@@ -154,36 +116,16 @@ pub fn read_duo(dir: &Path, name: &str) -> Result<KeyDuo, KeyfileError> {
 
 /// Reads one private key-set file at an arbitrary path.
 pub fn read_duo_file(path: &Path) -> Result<KeyDuo, KeyfileError> {
-    let mut file = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NONBLOCK)
-        .open(path)
-        .map_err(|error| {
-            if error.kind() == ErrorKind::NotFound {
-                KeyfileError::Missing(path.to_path_buf())
-            } else {
-                io(path, error)
-            }
-        })?;
-    let metadata = file.metadata().map_err(|error| io(path, error))?;
-    if !metadata.is_file() {
-        return Err(KeyfileError::NotAKeySet(path.to_path_buf()));
-    }
-    if metadata.mode() & 0o077 != 0 {
-        return Err(KeyfileError::InsecureFile(path.to_path_buf()));
-    }
-
-    let mut bytes = Vec::new();
-    (&mut file)
-        .take(MAX_KEY_FILE_BYTES + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|error| io(path, error))?;
-    if bytes.len() as u64 > MAX_KEY_FILE_BYTES {
-        return Err(KeyfileError::NotAKeySet(path.to_path_buf()));
-    }
+    let bytes = match private_fs::read_private_file(path, MAX_KEY_FILE_BYTES) {
+        Ok(bytes) => bytes,
+        Err(KeyfileError::NotAFile(_) | KeyfileError::TooLarge { .. }) => {
+            return Err(KeyfileError::NotAKeySet(path.to_path_buf()))
+        }
+        Err(error) => return Err(error),
+    };
     let text =
-        String::from_utf8(bytes).map_err(|_| KeyfileError::NotAKeySet(path.to_path_buf()))?;
-    KeyDuoSerializer::import_key_duo_jwk(&text)
+        std::str::from_utf8(&bytes).map_err(|_| KeyfileError::NotAKeySet(path.to_path_buf()))?;
+    KeyDuoSerializer::import_key_duo_jwk(text)
         .map_err(|_| KeyfileError::NotAKeySet(path.to_path_buf()))
 }
 
@@ -233,7 +175,7 @@ pub fn read_principal_id(dir: &Path) -> Result<PrincipalId, KeyfileError> {
 
 fn write_json<T: serde::Serialize>(dir: &Path, name: &str, value: &T) -> Result<(), KeyfileError> {
     let p = path(dir, name);
-    let text = serde_json::to_string_pretty(value).map_err(|e| KeyfileError::Parse {
+    let text = serde_json::to_string_pretty(value).map_err(|e| KeyfileError::Serialize {
         path: p.clone(),
         msg: e.to_string(),
     })?;
@@ -258,35 +200,13 @@ fn read_optional<T: serde::de::DeserializeOwned + Default>(
 /// Creates the agent directory (mode 0700) when it is missing, then checks it.
 /// Used by `init` and `save`, the operations that may create the directory.
 pub(crate) fn ensure_dir(dir: &Path) -> Result<(), KeyfileError> {
-    match fs::symlink_metadata(dir) {
-        Ok(_) => {}
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(dir)
-                .map_err(|e| io(dir, e))?;
-        }
-        Err(e) => return Err(io(dir, e)),
-    }
-    check_dir(dir)
+    private_fs::create_private_dir(dir)
 }
 
-/// Requires an existing agent directory with no group or other access
-/// (`mode & 0o077 == 0`). A symlink or a non-directory is refused. Writes
-/// nothing.
+/// Requires an existing agent directory: private (`mode & 0o077 == 0`), owned
+/// by the effective user, not a symlink. Writes nothing.
 pub(crate) fn check_dir(dir: &Path) -> Result<(), KeyfileError> {
-    let meta = match fs::symlink_metadata(dir) {
-        Ok(meta) => meta,
-        Err(e) if e.kind() == ErrorKind::NotFound => {
-            return Err(KeyfileError::Missing(dir.to_path_buf()))
-        }
-        Err(e) => return Err(io(dir, e)),
-    };
-    if !meta.is_dir() || meta.mode() & 0o077 != 0 {
-        return Err(KeyfileError::InsecureDir(dir.to_path_buf()));
-    }
-    Ok(())
+    private_fs::check_private_dir(dir)
 }
 
 fn open_lock_file(dir: &Path) -> std::io::Result<File> {
@@ -473,5 +393,22 @@ mod tests {
     fn parent_of_a_bare_name_is_the_current_directory() {
         assert_eq!(parent_dir(Path::new("root.jwk.json")), Path::new("."));
         assert_eq!(parent_dir(Path::new("dir/root.jwk.json")), Path::new("dir"));
+    }
+
+    #[test]
+    fn serialization_failure_is_serialize_not_parse() {
+        struct Failing;
+        impl serde::Serialize for Failing {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("nope"))
+            }
+        }
+        let dir = private_dir();
+        let err = write_json(dir.path(), "x.json", &Failing).unwrap_err();
+        assert!(
+            matches!(&err, KeyfileError::Serialize { path, .. } if path == &dir.path().join("x.json")),
+            "{err:?}"
+        );
+        assert!(!dir.path().join("x.json").exists());
     }
 }

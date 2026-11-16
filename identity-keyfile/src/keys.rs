@@ -17,10 +17,7 @@ use std::fs;
 use std::io::ErrorKind;
 use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-
-static TEMP_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// The keys of one self-rooted agent, as stored in an agent directory.
 ///
@@ -563,7 +560,7 @@ impl IdentityKeys {
         clean_dead_temps(dir, parent)?;
         let mut temp = None;
         for _ in 0..8 {
-            let n = TEMP_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let n = crate::private_fs::next_temp_suffix();
             let nanos = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| duration.as_nanos() as u64)

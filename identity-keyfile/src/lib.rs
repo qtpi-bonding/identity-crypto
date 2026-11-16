@@ -5,8 +5,9 @@ mod error;
 mod files;
 mod keys;
 mod layout;
+pub mod private_fs;
 
-pub use error::{KeyfileError, VerifyCheck};
+pub use error::{EnrolmentCheck, KeyfileError, VerifyCheck};
 pub use files::{
     read_delegation, read_duo, read_duo_file, read_history, read_principal_id, read_rotations,
     write_delegation, write_duo, write_history, write_principal_id, write_rotations, AGENT_ID_FILE,

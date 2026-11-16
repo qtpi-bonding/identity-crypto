@@ -146,7 +146,7 @@ pub(crate) fn sign_transcript<S: Signer + ?Sized>(signer: &S, transcript: &[u8])
 mod tests {
     use super::*;
     use crate::jwk_duo::{GenerationService, KeyDuo, SigningKeyPair};
-    use crate::{challenge_proof, signing_public, verify_p256, Error, PublicKey};
+    use crate::{signing_public, verify_p256, Error, PublicKey};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
