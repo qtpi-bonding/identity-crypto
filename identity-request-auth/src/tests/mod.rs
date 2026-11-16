@@ -4,3 +4,6 @@ mod request;
 
 #[cfg(feature = "tonic")]
 mod grpc;
+
+#[cfg(feature = "tonic")]
+mod coded;

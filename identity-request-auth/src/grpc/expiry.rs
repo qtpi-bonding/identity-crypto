@@ -1,4 +1,5 @@
-use crate::Clock;
+use crate::grpc::default_reject;
+use crate::{AuthError, Clock};
 use bytes::Bytes;
 use http::HeaderMap;
 use http_body::{Body as HttpBody, Frame};
@@ -40,7 +41,7 @@ impl ExpiringBody {
     fn end(&mut self) -> Poll<Option<Result<Frame<Bytes>, Status>>> {
         self.done = true;
         let mut trailers = HeaderMap::new();
-        Status::unauthenticated("the session certificate has expired")
+        default_reject(AuthError::SessionExpired)
             .add_header(&mut trailers)
             .ok();
         Poll::Ready(Some(Ok(Frame::trailers(trailers))))

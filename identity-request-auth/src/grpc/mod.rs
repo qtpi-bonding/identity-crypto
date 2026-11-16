@@ -82,29 +82,14 @@ fn all_unary() -> KindOf {
 
 type BoxFuture<T, E> = Pin<Box<dyn Future<Output = Result<T, E>> + Send>>;
 
-/// The default mapping from a refusal to a gRPC status. A service that wants
-/// its own coded errors passes its own `on_reject` instead.
-///
-/// | refusal | status |
-/// |---|---|
-/// | `LookupUnavailable` | `UNAVAILABLE` |
-/// | `BodyTooLarge`, `Busy` | `RESOURCE_EXHAUSTED` |
-/// | `StreamingRequestUnsupported` | `UNIMPLEMENTED` |
-/// | `Entropy`, `Credential` | `INTERNAL` |
-/// | everything else, `IssuedBeforeStart` included | `UNAUTHENTICATED` |
-///
-/// Every `UNAUTHENTICATED` status carries the refusal's own message, which is how
-/// `IssuedBeforeStart` is told from `Skew` here; a service that needs a code for
-/// it maps the variant in its own `on_reject`.
+/// The source label stamped on every coded refusal this crate sends.
+pub const REJECT_SOURCE: &str = "identity-request-auth";
+
+/// The default mapping from a refusal to a coded gRPC status: the status code
+/// and the `x-error-code` metadata both come from the refusal's `CodedError`
+/// table. A service that wants its own coded errors passes its own `on_reject`.
 pub fn default_reject(err: AuthError) -> Status {
-    let message = err.to_string();
-    match err {
-        AuthError::LookupUnavailable => Status::unavailable(message),
-        AuthError::BodyTooLarge { .. } | AuthError::Busy => Status::resource_exhausted(message),
-        AuthError::StreamingRequestUnsupported(_) => Status::unimplemented(message),
-        AuthError::Entropy(_) | AuthError::Credential(_) => Status::internal(message),
-        _ => Status::unauthenticated(message),
-    }
+    coded_error::grpc::to_status(&err, REJECT_SOURCE)
 }
 
 /// Strips the gRPC length prefix from one uncompressed message.
@@ -258,21 +243,21 @@ where
 
             let framed = match buffer(body, config.max_body).await {
                 Ok(framed) => framed,
-                Err(e @ AuthError::BodyTooLarge { .. }) => {
-                    return Ok(Status::resource_exhausted(e.to_string()).into_http())
+                Err(AuthError::Malformed(_)) => {
+                    return Ok(default_reject(AuthError::UnsignableRequest("request body")).into_http())
                 }
-                Err(e) => {
-                    return Ok(Status::internal(format!("cannot read the request: {e}")).into_http())
-                }
+                Err(e) => return Ok(default_reject(e).into_http()),
             };
             let message = match unframe(&framed) {
                 Ok(message) => message,
-                Err(e) => return Ok(Status::invalid_argument(e.to_string()).into_http()),
+                Err(_) => {
+                    return Ok(default_reject(AuthError::UnsignableRequest("gRPC frame header")).into_http())
+                }
             };
             let audience = audience_for(service, method, &config.server_id);
             let signed = match seal_request(&config.signer, &audience, body_type, message) {
                 Ok(signed) => signed,
-                Err(e) => return Ok(Status::internal(e.to_string()).into_http()),
+                Err(e) => return Ok(default_reject(e).into_http()),
             };
 
             let mut metadata = MetadataMap::from_headers(std::mem::take(&mut parts.headers));

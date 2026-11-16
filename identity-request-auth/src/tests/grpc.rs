@@ -25,18 +25,18 @@ use tonic::metadata::{MetadataMap, MetadataValue};
 use tower::{service_fn, Layer, Service, ServiceExt};
 
 const SERVER: &str = "server-1";
-const PATH: &str = "/acme.v1.Inventory/ListItems";
+pub(super) const PATH: &str = "/acme.v1.Inventory/ListItems";
 const HEALTH: &str = "/acme.v1.Inventory/Health";
 const DELETE: &str = "/acme.v1.Inventory/DeleteItem";
-const WATCH: &str = "/acme.v1.Inventory/Watch";
+pub(super) const WATCH: &str = "/acme.v1.Inventory/Watch";
 const UPLOAD: &str = "/acme.v1.Inventory/Upload";
 const CHAT: &str = "/acme.v1.Inventory/Chat";
 const MYSTERY: &str = "/acme.v1.Inventory/Mystery";
 /// Declared client-streaming, but with no body type: unregistered.
 const GHOST: &str = "/acme.v1.Inventory/Ghost";
 const BODY_TYPE: &str = "type.googleapis.com/acme.v1.ListItemsRequest";
-const MESSAGE: &[u8] = b"\x0a\x03abc";
-const T0: i64 = 1_800_000_000;
+pub(super) const MESSAGE: &[u8] = b"\x0a\x03abc";
+pub(super) const T0: i64 = 1_800_000_000;
 
 fn body_type_of(path: &str) -> Option<&'static str> {
     match path {
@@ -61,14 +61,14 @@ fn kind_of(path: &str) -> MethodKind {
 }
 
 /// A gRPC length-prefixed frame around one uncompressed message.
-fn framed(message: &[u8]) -> Vec<u8> {
+pub(super) fn framed(message: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8];
     out.extend((message.len() as u32).to_be_bytes());
     out.extend_from_slice(message);
     out
 }
 
-fn request(path: &str, body: Vec<u8>) -> Request<Body> {
+pub(super) fn request(path: &str, body: Vec<u8>) -> Request<Body> {
     Request::builder()
         .uri(path)
         .body(Body::new(Full::new(Bytes::from(body))))
@@ -84,7 +84,7 @@ fn with_header(req: &mut Request<Body>, signed: &pb::SignedMessage) {
     *req.headers_mut() = metadata.into_headers();
 }
 
-fn grpc_status(resp: &Response<Body>) -> Option<String> {
+pub(super) fn grpc_status(resp: &Response<Body>) -> Option<String> {
     resp.headers()
         .get("grpc-status")
         .map(|v| v.to_str().expect("ascii").to_owned())
@@ -92,8 +92,8 @@ fn grpc_status(resp: &Response<Body>) -> Option<String> {
 
 /// The server side: a verifier over a shared device table, and the layer
 /// wrapping a handler that records what it sees.
-struct Server {
-    clock: Arc<FakeClock>,
+pub(super) struct Server {
+    pub(super) clock: Arc<FakeClock>,
     devices: Arc<StaticDevices>,
     genesis: PublicKey,
     signer: Arc<RequestSigner>,
@@ -104,10 +104,10 @@ struct Server {
     /// The `Debug` of every refusal the layer made, in order.
     refusals: Arc<Mutex<Vec<String>>>,
     /// What a streaming response yields: the handler's body reads from here.
-    stream: Arc<Mutex<VecDeque<Bytes>>>,
+    pub(super) stream: Arc<Mutex<VecDeque<Bytes>>>,
 }
 
-fn server() -> Server {
+pub(super) fn server() -> Server {
     server_with(NonceCaps::default())
 }
 
@@ -132,6 +132,33 @@ fn server_with(caps: NonceCaps) -> Server {
 }
 
 impl Server {
+    pub(super) fn client_with_reject(
+        &self,
+        reject: impl Fn(crate::AuthError) -> tonic::Status + Clone + Send + Sync + 'static,
+    ) -> impl Service<Request<Body>, Response = Response<Body>, Error = Infallible, Future: Send>
+           + Clone
+           + Send {
+        let verifier = Arc::new(Verifier::new(
+            self.devices.clone(),
+            ClockTolerance::default(),
+            self.caps,
+        ));
+        let clock: Arc<dyn Clock> = self.clock.clone();
+        let layer = RequestAuthLayer::new(
+            verifier,
+            clock,
+            SERVER,
+            body_type_of,
+            |path: &str| path == HEALTH,
+            reject,
+        )
+        .method_kinds(kind_of);
+        SignRequests::new(self.signer.clone(), SERVER, body_type_of)
+            .method_kinds(kind_of)
+            .pass_through(|path| path == HEALTH)
+            .layer(layer.layer(self.handler()))
+    }
+
     fn layer(&self) -> RequestAuthLayer<Arc<StaticDevices>> {
         let verifier = Arc::new(Verifier::new(
             self.devices.clone(),
@@ -198,7 +225,7 @@ impl Server {
     }
 
     /// The client layer over the protected server.
-    fn client(
+    pub(super) fn client(
         &self,
     ) -> impl Service<Request<Body>, Response = Response<Body>, Error = Infallible, Future: Send>
            + Clone
@@ -245,7 +272,7 @@ impl HttpBody for Unread {
 }
 
 /// Polls a body once, without a runtime to wake it.
-fn poll_once(body: &mut Body) -> Poll<Option<Result<Frame<Bytes>, tonic::Status>>> {
+pub(super) fn poll_once(body: &mut Body) -> Poll<Option<Result<Frame<Bytes>, tonic::Status>>> {
     let mut cx = Context::from_waker(Waker::noop());
     Pin::new(body).poll_frame(&mut cx)
 }
@@ -939,7 +966,10 @@ async fn layer_refuses_request_after_mid_second_revocation() {
         .await
         .expect("infallible");
     assert_eq!(grpc_status(&resp).as_deref(), Some("16"), "UNAUTHENTICATED");
-    // The x-error-code header (identity.request_auth.unknown_author) is asserted in Task 12.
+    assert_eq!(
+        resp.headers().get("x-error-code").expect("coded").to_str().unwrap(),
+        "identity.request_auth.unknown_author"
+    );
     assert_eq!(*reached.lock().expect("lock"), 0);
 
     clock.set_at(ts(T0, 300_000_000));
