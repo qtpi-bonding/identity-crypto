@@ -205,6 +205,7 @@ impl<S> Layer<S> for SignRequests {
         SignedClient {
             inner,
             config: self.clone(),
+            principal: None,
         }
     }
 }
@@ -214,6 +215,23 @@ impl<S> Layer<S> for SignRequests {
 pub struct SignedClient<S> {
     inner: S,
     config: SignRequests,
+    principal: Option<identity_crypto::PrincipalId>,
+}
+
+impl<S> SignedClient<S> {
+    /// The principal whose device signs these requests: `Some` for a client
+    /// built by `from_identity_dir` (the identity directory's principal), `None`
+    /// for one built from a plain [`SignRequests`] layer, which knows only a
+    /// signer.
+    pub fn principal(&self) -> Option<&identity_crypto::PrincipalId> {
+        self.principal.as_ref()
+    }
+
+    #[cfg(feature = "client")]
+    pub(crate) fn with_principal(mut self, principal: identity_crypto::PrincipalId) -> Self {
+        self.principal = Some(principal);
+        self
+    }
 }
 
 impl<S> Service<Request<Body>> for SignedClient<S>

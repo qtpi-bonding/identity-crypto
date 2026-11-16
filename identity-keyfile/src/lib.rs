@@ -2,6 +2,7 @@
 compile_error!("identity-keyfile writes 0600 key files and needs a unix target");
 
 pub mod document_loader;
+pub mod enrol_cli;
 mod error;
 mod files;
 mod keys;

@@ -657,6 +657,38 @@ fn renew_if_due_renews_at_the_margin_and_not_before() {
     assert_eq!(fs::read(&file).unwrap(), on_disk, "no dir, no write");
 }
 
+#[test]
+fn concurrent_renew_if_due_calls_leave_a_valid_delegation() {
+    let parent = parent();
+    let dir = parent.path().join("daemon");
+    IdentityKeys::create_or_load(&dir, NOW, TTL).unwrap();
+    let due = NOW + 15 * DAY;
+    let barrier = Arc::new(Barrier::new(4));
+    let handles: Vec<_> = (0..4)
+        .map(|_| {
+            let (dir, barrier) = (dir.clone(), barrier.clone());
+            thread::spawn(move || {
+                let mut keys = IdentityKeys::load_verified(&dir).unwrap();
+                barrier.wait();
+                keys.renew_if_due(Some(&dir), due, TTL, 15 * DAY)
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap().expect("no error from any renewer");
+    }
+    let file = dir.join(DELEGATION_FILE);
+    assert_eq!(mode(&file), 0o600);
+    let reloaded = IdentityKeys::load_verified(&dir).unwrap();
+    assert_eq!(reloaded.delegation.issued_at_unix_seconds, due);
+    let stray: Vec<_> = fs::read_dir(&dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.contains(".tmp"))
+        .collect();
+    assert!(stray.is_empty(), "no temp files left: {stray:?}");
+}
+
 // ---- insecure directories ----
 
 /// A complete identity at `<parent>/daemon`, made world-readable.

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- identity-request-auth: `SignedClient::principal()` returns the principal of the identity directory a client was built from (`from_identity_dir`); `None` for a client built from the plain `SignRequests` layer.
+- identity-keyfile: new `identity-enrol` binary (`identity-enrol enrol --machine-dir D --key K --dir X`, library module `enrol_cli`), idempotent, coded errors, uses `EnrolmentIndex::enrol` only.
+- identity-keyfile: `renew_if_due` confirmed to write `delegation.json` atomically under the identity lock; a concurrent-renewal test was added.
+
 ## identity-crypto 0.11.0, identity-keyfile 0.11.0, identity-request-auth 0.2.0
 
 This release changes the three crates together and has no backward

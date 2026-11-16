@@ -27,3 +27,12 @@ identity-crypto = { workspace = true, features = ["testkit"] }
 [[test]]
 name = "testkit"
 required-features = ["testkit"]
+
+# The enrolment-index tool for scripts: `identity-enrol enrol --machine-dir D --key K --dir X`.
+[[bin]]
+name = "identity-enrol"
+path = "src/bin/identity-enrol.rs"
+
+[[test]]
+name = "enrol_cli"
+required-features = ["testkit"]

@@ -99,6 +99,7 @@ impl SignedClient<Channel> {
         layer: impl FnOnce(Arc<RequestSigner>, String) -> SignRequests,
     ) -> Result<SignedChannel, ChannelError> {
         let keys = DeviceKeys::load(dir).map_err(ChannelError::Identity)?;
+        let principal = keys.principal_id.clone();
         let genesis = keys.principal_id.genesis().clone();
         let credentials = DeviceCredentials::new(keys.device, genesis);
         let signer = Arc::new(RequestSigner::new(credentials, clock));
@@ -110,6 +111,8 @@ impl SignedClient<Channel> {
                 .await
                 .map_err(ChannelError::Audience)?,
         };
-        Ok(layer(signer, server_id).layer(channel))
+        Ok(layer(signer, server_id)
+            .layer(channel)
+            .with_principal(principal))
     }
 }

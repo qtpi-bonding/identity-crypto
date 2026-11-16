@@ -186,6 +186,11 @@ async fn signed_channel_audience_fixed_and_discover() {
         seen.recv_timeout(Duration::from_secs(5)).expect("handler"),
         principal
     );
+    assert_eq!(
+        channel.principal(),
+        Some(&principal),
+        "the getter returns the identity directory's principal"
+    );
 
     // Discover: runs on the unsigned channel.
     let discover: crate::grpc::DiscoverAudience = Arc::new(|channel: Channel| {
@@ -255,4 +260,18 @@ fn endpoint_defaults_sets_timeouts() {
     assert!(endpoint_defaults("not a uri with spaces").is_err());
     // tonic exposes no getters for the timeouts on `Endpoint` and its Debug output is opaque;
     // the settings themselves are asserted by reading `endpoint_defaults` (Task 14 review).
+}
+
+#[tokio::test]
+async fn a_client_from_the_plain_layer_has_no_principal() {
+    use tower::Layer;
+    let clock = FakeClock::new(T0);
+    let dir = TempIdentityDir::new(T0, 3600);
+    let keys = identity_keyfile::DeviceKeys::load(dir.path()).expect("device keys");
+    let credentials =
+        crate::DeviceCredentials::new(keys.device, keys.principal_id.genesis().clone());
+    let dyn_clock: Arc<dyn Clock> = clock;
+    let signer = Arc::new(crate::RequestSigner::new(credentials, dyn_clock));
+    let client = sign_layer(signer, SERVER.into()).layer(());
+    assert!(client.principal().is_none());
 }
