@@ -1,5 +1,5 @@
 use crate::{AuthError, Clock};
-use identity_crypto::{jwk_duo::SigningKeyPair, pb, PublicKey, SessionCredential};
+use identity_crypto::{pb, PublicKey, SessionCredential, Signer};
 use std::sync::{Arc, Mutex};
 
 /// Lifetime of a minted session credential, in seconds (5 minutes).
@@ -13,16 +13,17 @@ pub trait CredentialSource: Send + Sync {
     fn mint(&self, not_before: i64, not_after: i64) -> Result<SessionCredential, AuthError>;
 }
 
-/// Mints each session under one device key for one principal.
+/// Mints each session under one device key for one principal. The device key
+/// is any [`Signer`], so a hardware or prompting backend can hold it.
 pub struct DeviceCredentials {
-    device: SigningKeyPair,
+    device: Box<dyn Signer>,
     principal_genesis: PublicKey,
 }
 
 impl DeviceCredentials {
-    pub fn new(device: SigningKeyPair, principal_genesis: PublicKey) -> Self {
+    pub fn new<S: Signer + 'static>(device: S, principal_genesis: PublicKey) -> Self {
         Self {
-            device,
+            device: Box::new(device),
             principal_genesis,
         }
     }
@@ -30,8 +31,13 @@ impl DeviceCredentials {
 
 impl CredentialSource for DeviceCredentials {
     fn mint(&self, not_before: i64, not_after: i64) -> Result<SessionCredential, AuthError> {
-        identity_crypto::mint_session(&self.device, &self.principal_genesis, not_before, not_after)
-            .map_err(AuthError::Credential)
+        identity_crypto::mint_session(
+            self.device.as_ref(),
+            &self.principal_genesis,
+            not_before,
+            not_after,
+        )
+        .map_err(AuthError::Credential)
     }
 }
 

@@ -10,6 +10,8 @@ readme = "README.md"
 default = []
 # The tonic/tower layer, built only from the core. Off by default.
 tonic = ["dep:async-trait", "dep:tonic", "dep:tower", "dep:http", "dep:http-body", "dep:http-body-util", "dep:prost", "dep:bytes", "dep:tokio", "coded-error/grpc"]
+# A signed gRPC client channel built from an identity directory.
+client = ["tonic", "dep:identity-keyfile"]
 # Test fixtures (fake clock, static device table) for consumers' dev-dependencies.
 testkit = []
 
@@ -26,10 +28,13 @@ http-body = { version = "1", optional = true }
 http-body-util = { version = "0.1", optional = true }
 # Only `time`: a server-streaming response that sits idle still ends when its session does.
 tokio = { version = "1", optional = true, default-features = false, features = ["time"] }
+identity-keyfile = { workspace = true, optional = true }
 prost = { version = "0.13", optional = true }
 bytes = { version = "1", optional = true }
 
 [dev-dependencies]
+identity-keyfile = { workspace = true, features = ["testkit"] }
+tokio-stream = { version = "0.1", features = ["net"] }
 # identity-crypto's own fixtures (a signed registry and its Resolver), to test the core against the real full-chain verifier.
 identity-crypto = { workspace = true, features = ["testkit"] }
-tokio = { version = "1", features = ["macros", "rt", "test-util", "time"] }
+tokio = { version = "1", features = ["macros", "rt", "test-util", "time", "net"] }

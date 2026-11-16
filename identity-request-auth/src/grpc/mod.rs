@@ -25,10 +25,14 @@
 //!   by default, or what `max_body` sets (`None` for no limit). The core itself
 //!   applies no limit; this layer passes its own to it.
 
+mod client;
 mod devices;
 mod expiry;
 mod verifier;
 
+#[cfg(feature = "client")]
+pub use client::{AudienceSource, ChannelError, DiscoverAudience, SignedChannel};
+pub use client::{endpoint_defaults, CONNECT_TIMEOUT, KEEPALIVE_INTERVAL, KEEPALIVE_TIMEOUT};
 pub use devices::TrustedDevices;
 pub use verifier::Verifier;
 
