@@ -21,6 +21,21 @@ pub(crate) fn next_temp_suffix() -> u64 {
     TEMP_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+/// 128 random bits from the standard library's per-instance random hasher keys
+/// (seeded from the operating system), mixed with the process counter. Not a
+/// secret: it only has to be unguessable enough that a stale file never collides.
+fn random_u128() -> u128 {
+    use std::hash::{BuildHasher, Hasher};
+    let part = |salt: u64| {
+        let mut h = std::collections::hash_map::RandomState::new().build_hasher();
+        h.write_u64(salt);
+        h.write_u32(std::process::id());
+        h.finish() as u128
+    };
+    let n = next_temp_suffix();
+    (part(n) << 64) | part(!n)
+}
+
 /// The directory a bare relative name lives in. `Path::parent` of `"x"` is
 /// `Some("")`, which is not a usable directory, so it becomes `"."`.
 fn parent_dir(p: &Path) -> &Path {
@@ -35,7 +50,6 @@ fn parent_dir(p: &Path) -> &Path {
 /// O_EXCL, fsynced, renamed over `path`, and the parent is fsynced. A temporary
 /// this call created is removed on failure. The parent must exist.
 pub fn write_private_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), KeyfileError> {
-    let n = next_temp_suffix();
     let name = path
         .file_name()
         .ok_or_else(|| {
@@ -46,7 +60,7 @@ pub fn write_private_atomic(path: &Path, bytes: &[u8], mode: u32) -> Result<(), 
         })?
         .to_string_lossy()
         .into_owned();
-    let tmp = parent_dir(path).join(format!(".{name}.{}.{n}.tmp", std::process::id()));
+    let tmp = parent_dir(path).join(format!(".{name}.{:032x}.tmp", random_u128()));
     write_private_via(path, bytes, mode, &tmp)
 }
 
@@ -185,13 +199,19 @@ pub fn read_private_file(path: &Path, cap: usize) -> Result<Zeroizing<Vec<u8>>, 
     read_capped(&mut file, path, cap)
 }
 
+/// The effective user id of this process. Wraps `geteuid`, so callers need no
+/// `unsafe` of their own.
+pub fn effective_uid() -> u32 {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
+}
+
 /// Checks an already-opened file handle: a regular file with
 /// `mode & 0o077 == 0`, owned by the effective user. Used for lock files,
 /// which are opened with O_NOFOLLOW|O_CREAT and then checked on the handle,
 /// not the path, so the check cannot be raced.
-pub(crate) fn check_private_file_handle(file: &File, path: &Path) -> Result<(), KeyfileError> {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    let uid = unsafe { libc::geteuid() };
+pub fn check_private_file_handle(file: &File, path: &Path) -> Result<(), KeyfileError> {
+    let uid = effective_uid();
     let meta = file.metadata().map_err(|error| io(path, error))?;
     if !meta.is_file() || meta.mode() & 0o077 != 0 {
         return Err(KeyfileError::InsecureFile(path.to_path_buf()));

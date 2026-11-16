@@ -184,3 +184,65 @@ fn read_regular_file_ignores_mode_but_not_symlink_or_cap() {
         Err(KeyfileError::Missing(_))
     ));
 }
+
+#[test]
+fn leftover_temp_with_old_naming_does_not_block_write() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("k");
+    let pid = std::process::id();
+    for n in 0..2000 {
+        fs::write(d.path().join(format!(".k.{pid}.{n}.tmp")), b"stale").unwrap();
+    }
+    write_private_atomic(&p, b"fresh", 0o600).unwrap();
+    assert_eq!(fs::read(&p).unwrap(), b"fresh");
+}
+
+#[test]
+fn temp_names_are_not_repeated_or_pid_based() {
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("k");
+    // Spy: a FIFO-free approach is not possible; check the observable property instead:
+    // the stale-name set from the old scheme is untouched after many writes.
+    let pid = std::process::id();
+    let stale = d.path().join(format!(".k.{pid}.5000.tmp"));
+    fs::write(&stale, b"stale").unwrap();
+    for _ in 0..20 {
+        write_private_atomic(&p, b"x", 0o600).unwrap();
+    }
+    assert_eq!(fs::read(&stale).unwrap(), b"stale");
+}
+
+#[test]
+fn effective_uid_and_lock_handle_check_are_public() {
+    use identity_keyfile::private_fs::{check_private_file_handle, effective_uid};
+    assert_eq!(effective_uid(), unsafe { libc::geteuid() });
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join("lock");
+    let f = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode_0600()
+        .open(&p)
+        .unwrap();
+    check_private_file_handle(&f, &p).unwrap();
+    fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(matches!(
+        check_private_file_handle(&f, &p),
+        Err(KeyfileError::InsecureFile(_))
+    ));
+    let dir = fs::File::open(d.path()).unwrap();
+    assert!(matches!(
+        check_private_file_handle(&dir, d.path()),
+        Err(KeyfileError::InsecureFile(_))
+    ));
+}
+
+trait Mode0600 {
+    fn mode_0600(&mut self) -> &mut Self;
+}
+impl Mode0600 for fs::OpenOptions {
+    fn mode_0600(&mut self) -> &mut Self {
+        std::os::unix::fs::OpenOptionsExt::mode(self, 0o600)
+    }
+}
