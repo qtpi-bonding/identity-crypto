@@ -33,7 +33,7 @@ pub use devices::TrustedDevices;
 pub use verifier::Verifier;
 
 use crate::MAX_BODY_BYTES;
-use crate::{audience_for, seal_request, split_path, AuthError, Clock, RequestSigner};
+use crate::{audience_for, seal_request, split_path, AuthError, Clock, RequestSigner, VerifiedCaller};
 use expiry::ExpiringBody;
 use http::{Request, Response};
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
@@ -108,9 +108,10 @@ fn unframe(bytes: &[u8]) -> Result<&[u8], AuthError> {
     Ok(message)
 }
 
-/// Reads a whole request body, refusing one over `max_body` (`None`: no limit).
-/// The body is cut at the limit, so the reported length of an over-limit body is
-/// one byte over it.
+/// Reads a whole framed request body (the 5-byte prefix plus the message), refusing
+/// one whose message is over `max_body` (`None`: no limit). `max_body` counts the
+/// message bytes only, so the buffer is cut at `max + 5`, and a longer message is
+/// refused with its real length.
 async fn buffer(body: Body, max_body: Option<usize>) -> Result<bytes::Bytes, AuthError> {
     let Some(max) = max_body else {
         return match body.collect().await {
@@ -118,10 +119,20 @@ async fn buffer(body: Body, max_body: Option<usize>) -> Result<bytes::Bytes, Aut
             Err(_) => Err(AuthError::Malformed("request body")),
         };
     };
-    match Limited::new(body, max).collect().await {
-        Ok(collected) => Ok(collected.to_bytes()),
+    match Limited::new(body, max.saturating_add(5)).collect().await {
+        Ok(collected) => {
+            let framed = collected.to_bytes();
+            let message_len = framed.len().saturating_sub(5);
+            if message_len > max {
+                return Err(AuthError::BodyTooLarge {
+                    len: message_len,
+                    max,
+                });
+            }
+            Ok(framed)
+        }
         Err(e) if e.is::<LengthLimitError>() => Err(AuthError::BodyTooLarge {
-            len: max.saturating_add(1),
+            len: max.saturating_add(1), // the cut proves at least one byte over
             max,
         }),
         Err(_) => Err(AuthError::Malformed("request body")),
@@ -284,6 +295,7 @@ struct Config<K> {
     on_reject: Arc<dyn Fn(AuthError) -> Status + Send + Sync>,
     reject_issued_before: i64,
     max_body: Option<usize>,
+    caller_extension: Option<CallerExtension>,
 }
 
 impl<K> Clone for Config<K> {
@@ -298,14 +310,37 @@ impl<K> Clone for Config<K> {
             on_reject: self.on_reject.clone(),
             reject_issued_before: self.reject_issued_before,
             max_body: self.max_body,
+            caller_extension: self.caller_extension.clone(),
         }
     }
 }
+
+/// Inserts a caller-derived extension into the request, given the verified caller.
+type CallerExtension = Arc<dyn Fn(&VerifiedCaller, &mut http::Extensions) + Send + Sync>;
 
 /// Server layer: refuses any request to a non-allow-listed method unless its
 /// signed message verifies.
 pub struct RequestAuthLayer<K> {
     config: Config<K>,
+}
+
+impl<K> Clone for RequestAuthLayer<K> {
+    fn clone(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+        }
+    }
+}
+
+/// The verified caller of a request that passed the layer; a coded
+/// `no_caller` refusal otherwise.
+// `Status` is the error type of every tonic handler; the signature is part of the API.
+#[allow(clippy::result_large_err)]
+pub fn caller<T>(request: &tonic::Request<T>) -> Result<&VerifiedCaller, Status> {
+    request
+        .extensions()
+        .get::<VerifiedCaller>()
+        .ok_or_else(|| default_reject(AuthError::NoCaller))
 }
 
 impl<K: TrustedDevices> RequestAuthLayer<K> {
@@ -329,6 +364,7 @@ impl<K: TrustedDevices> RequestAuthLayer<K> {
                 on_reject: Arc::new(on_reject),
                 reject_issued_before,
                 max_body: Some(MAX_BODY_BYTES),
+                caller_extension: None,
             },
         }
     }
@@ -378,6 +414,20 @@ impl<S, K> Layer<S> for RequestAuthLayer<K> {
     }
 }
 
+impl<K: TrustedDevices> RequestAuthLayer<K> {
+    /// After a request verifies, inserts `f(&caller)` into its extensions next to
+    /// the [`VerifiedCaller`], so a handler can read a type of its own choosing.
+    pub fn caller_extension<X: Clone + Send + Sync + 'static>(
+        mut self,
+        f: impl Fn(&VerifiedCaller) -> X + Send + Sync + 'static,
+    ) -> Self {
+        self.config.caller_extension = Some(Arc::new(move |caller, extensions| {
+            extensions.insert(f(caller));
+        }));
+        self
+    }
+}
+
 /// The server service built by [`RequestAuthLayer`].
 pub struct RequireSigned<S, K> {
     inner: S,
@@ -422,6 +472,8 @@ where
         let config = self.config.clone();
         Box::pin(async move {
             let (mut parts, body) = req.into_parts();
+            // Nothing a request arrives with may pass for a verified caller.
+            parts.extensions.remove::<VerifiedCaller>();
             let path = parts.uri.path().to_owned();
             // A pass-through method is skipped before anything else: no
             // buffering, no hashing, no size limit.
@@ -498,6 +550,9 @@ where
             };
 
             let not_after = caller.session_not_after();
+            if let Some(extend) = &config.caller_extension {
+                extend(&caller, &mut parts.extensions);
+            }
             parts.extensions.insert(caller);
             let response = inner
                 .call(Request::from_parts(parts, Body::new(Full::new(collected))))

@@ -989,3 +989,217 @@ fn lookup_unavailable_is_unavailable() {
     let resp = block_on(client.oneshot(request(PATH, framed(MESSAGE)))).expect("infallible");
     assert_eq!(grpc_status(&resp).as_deref(), Some("14"), "UNAVAILABLE");
 }
+
+// Task 13: Clone layer, caller(), caller extension, nonce order, one body limit.
+
+#[derive(Clone, Debug, PartialEq)]
+struct Tag(String);
+
+fn error_code(resp: &Response<Body>) -> String {
+    resp.headers()
+        .get("x-error-code")
+        .expect("x-error-code")
+        .to_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn signed_request(s: &Server, message: &[u8]) -> Request<Body> {
+    let audience = audience_for("acme.v1.Inventory", "ListItems", SERVER);
+    let signed = seal_request(&s.signer, &audience, BODY_TYPE, message).expect("sealing");
+    let mut req = request(PATH, framed(message));
+    with_header(&mut req, &signed);
+    req
+}
+
+fn layer_over(s: &Server, verifier: Arc<Verifier<Arc<StaticDevices>>>) -> RequestAuthLayer<Arc<StaticDevices>> {
+    let clock: Arc<dyn Clock> = s.clock.clone();
+    RequestAuthLayer::new(
+        verifier,
+        clock,
+        SERVER,
+        body_type_of,
+        |path: &str| path == HEALTH,
+        crate::grpc::default_reject,
+    )
+    .method_kinds(kind_of)
+}
+
+#[tokio::test]
+async fn request_auth_layer_clone_shares_nonce_cache() {
+    let s = server();
+    let original = s.layer();
+    let cloned = original.clone();
+    let first = original.layer(s.handler());
+    let second = cloned.layer(s.handler());
+    let audience = audience_for("acme.v1.Inventory", "ListItems", SERVER);
+    let signed = seal_request(&s.signer, &audience, BODY_TYPE, MESSAGE).expect("sealing");
+
+    let mut req = request(PATH, framed(MESSAGE));
+    with_header(&mut req, &signed);
+    let resp = first.oneshot(req).await.expect("infallible");
+    assert_eq!(grpc_status(&resp), None, "accepted by the original");
+
+    let mut again = request(PATH, framed(MESSAGE));
+    with_header(&mut again, &signed);
+    let resp = second.oneshot(again).await.expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("16"));
+    assert_eq!(s.refusals(), ["Replayed"]);
+}
+
+#[tokio::test]
+async fn caller_extension_inserted() {
+    let s = server();
+    let seen: Arc<Mutex<Option<(Tag, PrincipalId)>>> = Arc::new(Mutex::new(None));
+    let handler = {
+        let seen = seen.clone();
+        service_fn(move |req: Request<Body>| {
+            let seen = seen.clone();
+            async move {
+                let tag = req.extensions().get::<Tag>().cloned();
+                let caller = req
+                    .extensions()
+                    .get::<VerifiedCaller>()
+                    .map(|c| c.principal().clone());
+                *seen.lock().expect("lock") = tag.zip(caller);
+                Ok::<_, Infallible>(Response::new(Body::empty()))
+            }
+        })
+    };
+    let svc = s
+        .layer()
+        .caller_extension(|c| Tag(c.principal().to_string()))
+        .layer(handler);
+    let resp = svc
+        .oneshot(signed_request(&s, MESSAGE))
+        .await
+        .expect("infallible");
+    assert_eq!(grpc_status(&resp), None, "accepted");
+    let (tag, principal) = seen.lock().unwrap().clone().expect("tag and caller inserted");
+    assert_eq!(tag, Tag(principal.to_string()));
+    assert_eq!(principal, PrincipalId::from_genesis(s.genesis.clone()));
+}
+
+#[test]
+fn caller_without_layer_is_no_caller() {
+    let request = tonic::Request::new(());
+    let status = crate::grpc::caller(&request).expect_err("no caller");
+    assert_eq!(status.code(), tonic::Code::Unauthenticated);
+    assert_eq!(
+        status.metadata().get("x-error-code").expect("coded").to_str().unwrap(),
+        "identity.request_auth.no_caller"
+    );
+}
+
+#[tokio::test]
+async fn issued_before_start_does_not_consume_nonce() {
+    let s = server_with(NonceCaps {
+        per_key: 1,
+        total: 1,
+    });
+    let verifier = Arc::new(Verifier::new(
+        s.devices.clone(),
+        ClockTolerance::default(),
+        s.caps,
+    ));
+    let strict = layer_over(&s, verifier.clone())
+        .reject_issued_before(T0 + 1)
+        .layer(s.handler());
+    let resp = strict
+        .oneshot(signed_request(&s, MESSAGE))
+        .await
+        .expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("16"), "IssuedBeforeStart");
+    assert_eq!(s.handler_calls(), 0);
+
+    let open = layer_over(&s, verifier)
+        .reject_issued_before(0)
+        .layer(s.handler());
+    let resp = open
+        .oneshot(signed_request(&s, MESSAGE))
+        .await
+        .expect("infallible");
+    assert_eq!(grpc_status(&resp), None, "no Busy: the refused request took no slot");
+    assert_eq!(s.handler_calls(), 1);
+}
+
+#[tokio::test]
+async fn body_limit_single_boundary() {
+    let s = server();
+    let counting = Arc::new(CountingDevices {
+        inner: s.devices.clone(),
+        lookups: Mutex::new(0),
+    });
+    let clock: Arc<dyn Clock> = s.clock.clone();
+    let layer = RequestAuthLayer::new(
+        Arc::new(Verifier::new(
+            counting.clone(),
+            ClockTolerance::default(),
+            NonceCaps::default(),
+        )),
+        clock,
+        SERVER,
+        body_type_of,
+        |path: &str| path == HEALTH,
+        crate::grpc::default_reject,
+    )
+    .method_kinds(kind_of)
+    .max_body(Some(100));
+    let server_svc = layer.layer(s.handler());
+    let client = SignRequests::new(s.signer.clone(), SERVER, body_type_of)
+        .method_kinds(kind_of)
+        .max_body(Some(100))
+        .layer(server_svc.clone());
+
+    // 100-byte message: accepted by the client and the server.
+    let ok = vec![7u8; 100];
+    let resp = client
+        .clone()
+        .oneshot(request(PATH, framed(&ok)))
+        .await
+        .expect("infallible");
+    assert_eq!(grpc_status(&resp), None, "100 accepted");
+    assert_eq!(s.handler_calls(), 1);
+    let lookups_after_ok = *counting.lookups.lock().unwrap();
+
+    // 101 bytes: the client refuses.
+    let big = vec![7u8; 101];
+    let resp = client
+        .oneshot(request(PATH, framed(&big)))
+        .await
+        .expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("8"));
+    assert_eq!(error_code(&resp), "identity.request_auth.body_too_large");
+
+    // 101 bytes straight to the server: refused before any lookup.
+    let resp = server_svc
+        .oneshot(signed_request(&s, &big))
+        .await
+        .expect("infallible");
+    assert_eq!(grpc_status(&resp).as_deref(), Some("8"));
+    assert_eq!(error_code(&resp), "identity.request_auth.body_too_large");
+    assert_eq!(s.handler_calls(), 1);
+    assert_eq!(
+        *counting.lookups.lock().unwrap(),
+        lookups_after_ok,
+        "no lookup for the over-limit body"
+    );
+}
+
+/// Counts lookups made through it.
+struct CountingDevices {
+    inner: Arc<StaticDevices>,
+    lookups: Mutex<u32>,
+}
+
+#[async_trait::async_trait]
+impl TrustedDevices for CountingDevices {
+    async fn devices_for(
+        &self,
+        genesis: &PublicKey,
+        at: Timestamp,
+    ) -> Result<Vec<PublicKey>, LookupError> {
+        *self.lookups.lock().unwrap() += 1;
+        self.inner.devices_for(genesis, at).await
+    }
+}
