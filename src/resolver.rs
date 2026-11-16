@@ -142,17 +142,17 @@ mod tests {
         // a larger body with the registry at field 1 and unknown fields elsewhere
         let mut body = carrier_body(&f.registry());
         body.extend([0x10, 0x01]); // field 2, varint 1
-        let doc = sign_document(&f.owner, 1, body);
+        let doc = sign_test_document(&f.owner, 1, body);
         let v = verify_signed_document(&doc, DOC_TYPE, &AuthorityChain::genesis(f.owner.genesis())).unwrap();
         assert!(Resolver::from_document(&v, DOC_TYPE).is_ok());
         assert_eq!(Resolver::from_document(&v, "other").unwrap_err(), Error::WrongDocumentType);
         // field 1 twice
         let mut twice = carrier_body(&f.registry());
         twice.extend(carrier_body(&f.registry()));
-        let v = verify_signed_document(&sign_document(&f.owner, 1, twice), DOC_TYPE, &AuthorityChain::genesis(f.owner.genesis())).unwrap();
+        let v = verify_signed_document(&sign_test_document(&f.owner, 1, twice), DOC_TYPE, &AuthorityChain::genesis(f.owner.genesis())).unwrap();
         invalid(Resolver::from_document(&v, DOC_TYPE), "body");
         // no field 1
-        let v = verify_signed_document(&sign_document(&f.owner, 1, vec![0x10, 0x01]), DOC_TYPE, &AuthorityChain::genesis(f.owner.genesis())).unwrap();
+        let v = verify_signed_document(&sign_test_document(&f.owner, 1, vec![0x10, 0x01]), DOC_TYPE, &AuthorityChain::genesis(f.owner.genesis())).unwrap();
         invalid(Resolver::from_document(&v, DOC_TYPE), "body");
         let _ = pb::RegistryCarrier::default().encode_to_vec();
     }

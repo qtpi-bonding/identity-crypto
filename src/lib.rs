@@ -29,6 +29,7 @@
 //! ```
 
 mod authority;
+mod document;
 mod clock;
 mod keys;
 mod accepted;
@@ -51,6 +52,7 @@ pub mod transcripts;
 pub mod testkit;
 
 pub use authority::{verify_signed_document, AuthorityChain, VerifiedDocument};
+pub use document::{check_document_time, document_id, sign_document, DocumentDraft};
 pub use accepted::AcceptedChains;
 pub use error::{Error, Result};
 pub use principal::{PrincipalId, ShortId};

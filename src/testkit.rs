@@ -177,20 +177,17 @@ pub fn carrier_body(reg: &pb::PrincipalRegistry) -> Vec<u8> {
 }
 
 /// A document signed by `authority`'s current root, carrying its rotations.
-pub fn sign_document(authority: &Principal, version: u64, body: Vec<u8>) -> pb::SignedDocument {
-    let mut document = pb::SignedDocument {
-        signer_genesis: pk(&authority.genesis()),
-        signing: pk(&authority.root().public()),
-        document_type: DOC_TYPE.into(),
+pub fn sign_test_document(authority: &Principal, version: u64, body: Vec<u8>) -> pb::SignedDocument {
+    let chain = AuthorityChain::from_rotations(authority.genesis(), &authority.rotations)
+        .expect("fixture rotations are valid");
+    let draft = DocumentDraft {
+        document_type: DOC_TYPE,
         version,
-        issued_at_unix_seconds: T0,
-        expires_at_unix_seconds: T0 + 90 * DAY,
-        body,
-        signature: vec![],
-        signer_rotations: authority.rotations.clone(),
+        issued_at: T0,
+        expires_at: T0 + 90 * DAY,
+        body: &body,
     };
-    resign_document(authority, &mut document);
-    document
+    crate::sign_document(authority.root(), &chain, draft).expect("fixture signing succeeds")
 }
 
 pub fn resign_document(authority: &Principal, document: &mut pb::SignedDocument) {
@@ -228,7 +225,7 @@ pub fn sign_cert(device: &TestKey, cert: &mut pb::DelegationCert) {
     cert.signature = device.sign(&session_delegation_transcript(cert).unwrap());
 }
 
-use crate::{verify_signed_document, AuthorityChain, Resolver, Result};
+use crate::{verify_signed_document, AuthorityChain, DocumentDraft, Resolver, Result};
 
 /// The standard registry: the authority (owner) with a laptop binding
 /// (device + presence key, hosted on `daemon`), the daemon, and a
@@ -301,7 +298,7 @@ impl Fleet {
     }
 
     pub fn document(&self, version: u64) -> pb::SignedDocument {
-        sign_document(&self.owner, version, carrier_body(&self.registry()))
+        sign_test_document(&self.owner, version, carrier_body(&self.registry()))
     }
 
     pub fn try_resolver(&self) -> Result<Resolver> {
@@ -315,7 +312,7 @@ impl Fleet {
 
 /// Signs `reg` as `authority`'s version 1 and builds a resolver from it.
 pub fn resolver_for(authority: &Principal, reg: pb::PrincipalRegistry) -> Result<Resolver> {
-    let doc = sign_document(authority, 1, carrier_body(&reg));
+    let doc = sign_test_document(authority, 1, carrier_body(&reg));
     let verified = verify_signed_document(
         &doc,
         DOC_TYPE,
@@ -349,7 +346,7 @@ mod tests {
             &delegation.signature
         )
         .is_ok());
-        let document = sign_document(&principal, 1, vec![1]);
+        let document = sign_test_document(&principal, 1, vec![1]);
         assert!(verify_p256(
             &principal.root().public(),
             &signed_document_transcript(&document).unwrap(),

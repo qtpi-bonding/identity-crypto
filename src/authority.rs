@@ -1,8 +1,8 @@
 //! The authority's root chain and verified documents (1b spec section 3).
 
+use crate::document::document_id;
 use crate::transcripts::{root_rotation_transcript, signed_document_transcript};
 use crate::{pb, verify_p256, Error, PrincipalId, PublicKey, Result};
-use sha2::{Digest, Sha256};
 
 fn req(k: Option<&pb::PublicKey>, field: &'static str) -> Result<PublicKey> {
     PublicKey::try_from(k.ok_or(Error::MissingField(field))?)
@@ -160,10 +160,8 @@ pub fn verify_signed_document(
     if &signing != chain.head() {
         return Err(Error::NotCurrentRoot);
     }
-    let transcript = signed_document_transcript(doc)?;
-    verify_p256(&signing, &transcript, &doc.signature)?;
-    let mut id = [0u8; 32];
-    id.copy_from_slice(&Sha256::digest(&transcript));
+    let id = document_id(doc)?;
+    verify_p256(&signing, &signed_document_transcript(doc)?, &doc.signature)?;
     Ok(VerifiedDocument {
         id,
         chain,
@@ -180,6 +178,7 @@ mod tests {
     use super::*;
     use crate::testkit::*;
     use prost::Message;
+    use crate::testkit::{resign_document, sign_test_document as sign_document};
 
     fn accept(p: &Principal) -> AuthorityChain { AuthorityChain::genesis(p.genesis()) }
 
@@ -271,7 +270,7 @@ mod tests {
         let id2 = *verify_signed_document(&relayed, DOC_TYPE, &a).unwrap().id();
         assert_eq!(id1, id2);
         let mut want = [0u8; 32];
-        want.copy_from_slice(&sha2::Sha256::digest(crate::transcripts::signed_document_transcript(&doc).unwrap()));
+        want.copy_from_slice(&crate::document::document_id(&doc).unwrap());
         assert_eq!(id1, want);
     }
 

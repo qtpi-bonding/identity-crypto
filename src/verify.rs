@@ -1447,7 +1447,7 @@ mod tests {
         let p = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
         let mut registry = f.registry();
         registry.entries[1].name = Some("server".into());
-        let document = sign_document(&f.owner, 2, carrier_body(&registry));
+        let document = sign_test_document(&f.owner, 2, carrier_body(&registry));
         let authority = AuthorityChain::genesis(f.owner.genesis());
         let r2 = Resolver::from_document(
             &verify_signed_document(&document, DOC_TYPE, &authority).unwrap(),
