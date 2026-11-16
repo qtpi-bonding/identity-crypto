@@ -15,13 +15,19 @@ pub struct PrincipalId {
 pub struct ShortId([u8; 8]);
 
 impl PrincipalId {
-    pub fn from_genesis(genesis: PublicKey) -> Self { Self { genesis } }
-    pub fn genesis(&self) -> &PublicKey { &self.genesis }
+    pub fn from_genesis(genesis: PublicKey) -> Self {
+        Self { genesis }
+    }
+    pub fn genesis(&self) -> &PublicKey {
+        &self.genesis
+    }
 
     /// Human input: the prefix and the hex are ASCII case-insensitive.
     pub fn parse(s: &str) -> Result<Self> {
         let malformed = |why: &str| Error::MalformedPrincipal(why.to_string());
-        let prefix = s.get(..PREFIX.len()).ok_or_else(|| malformed("missing p256: prefix"))?;
+        let prefix = s
+            .get(..PREFIX.len())
+            .ok_or_else(|| malformed("missing p256: prefix"))?;
         if !prefix.eq_ignore_ascii_case(PREFIX) {
             return Err(malformed("missing p256: prefix"));
         }
@@ -30,12 +36,16 @@ impl PrincipalId {
             return Err(malformed("expected 130 hex digits"));
         }
         let bytes = hex::decode(hex_part).map_err(|_| malformed("not hex"))?;
-        Ok(Self { genesis: PublicKey::p256(&bytes)? })
+        Ok(Self {
+            genesis: PublicKey::p256(&bytes)?,
+        })
     }
 
     pub fn parse_canonical(s: &str) -> Result<Self> {
         let id = Self::parse(s)?;
-        if id.to_string() != s { return Err(Error::NonCanonicalPrincipal); }
+        if id.to_string() != s {
+            return Err(Error::NonCanonicalPrincipal);
+        }
         Ok(id)
     }
 
@@ -54,12 +64,16 @@ impl std::fmt::Display for PrincipalId {
 }
 
 impl std::fmt::Debug for PrincipalId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { write!(f, "{:?}", self.genesis) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self.genesis)
+    }
 }
 
 impl ShortId {
     pub fn parse(s: &str) -> Result<Self> {
-        if s.len() != 16 { return Err(Error::MalformedShortId("expected 16 hex digits".into())); }
+        if s.len() != 16 {
+            return Err(Error::MalformedShortId("expected 16 hex digits".into()));
+        }
         let bytes = hex::decode(s).map_err(|_| Error::MalformedShortId("not hex".into()))?;
         let mut out = [0u8; 8];
         out.copy_from_slice(&bytes);
@@ -67,30 +81,46 @@ impl ShortId {
     }
 
     pub fn parse_canonical(s: &str) -> Result<Self> {
-        if !s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
+        if !s
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        {
             return Err(Error::MalformedShortId("expected lowercase hex".into()));
         }
         Self::parse(s)
     }
 
-    pub fn as_bytes(&self) -> &[u8; 8] { &self.0 }
+    pub fn as_bytes(&self) -> &[u8; 8] {
+        &self.0
+    }
 }
 
 impl std::fmt::Display for ShortId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str(&hex::encode(self.0)) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&hex::encode(self.0))
+    }
 }
 
 impl std::fmt::Debug for ShortId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { std::fmt::Display::fmt(self, f) }
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self, f)
+    }
 }
 
 macro_rules! canonical_string_serde {
     ($t:ty) => {
         impl serde::Serialize for $t {
-            fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> { s.collect_str(self) }
+            fn serialize<S: serde::Serializer>(
+                &self,
+                s: S,
+            ) -> std::result::Result<S::Ok, S::Error> {
+                s.collect_str(self)
+            }
         }
         impl<'de> serde::Deserialize<'de> for $t {
-            fn deserialize<D: serde::Deserializer<'de>>(d: D) -> std::result::Result<Self, D::Error> {
+            fn deserialize<D: serde::Deserializer<'de>>(
+                d: D,
+            ) -> std::result::Result<Self, D::Error> {
                 let s = String::deserialize(d)?;
                 <$t>::parse_canonical(&s).map_err(serde::de::Error::custom)
             }
@@ -127,8 +157,14 @@ mod tests {
         let upper_prefix = format!("P256:{}", p.genesis().to_hex());
         assert_eq!(PrincipalId::parse(&upper_hex).unwrap(), p);
         assert_eq!(PrincipalId::parse(&upper_prefix).unwrap(), p);
-        assert_eq!(PrincipalId::parse_canonical(&upper_hex), Err(Error::NonCanonicalPrincipal));
-        assert_eq!(PrincipalId::parse_canonical(&upper_prefix), Err(Error::NonCanonicalPrincipal));
+        assert_eq!(
+            PrincipalId::parse_canonical(&upper_hex),
+            Err(Error::NonCanonicalPrincipal)
+        );
+        assert_eq!(
+            PrincipalId::parse_canonical(&upper_prefix),
+            Err(Error::NonCanonicalPrincipal)
+        );
     }
 
     #[test]
@@ -144,20 +180,35 @@ mod tests {
             String::new(),
             format!("p256:{}zz", &hex[..128]),
         ] {
-            assert!(matches!(PrincipalId::parse(&bad), Err(Error::MalformedPrincipal(_))), "{bad}");
+            assert!(
+                matches!(PrincipalId::parse(&bad), Err(Error::MalformedPrincipal(_))),
+                "{bad}"
+            );
         }
         let off_curve = format!("p256:04{}", "00".repeat(64));
-        assert!(matches!(PrincipalId::parse(&off_curve), Err(Error::InvalidKey(_))));
+        assert!(matches!(
+            PrincipalId::parse(&off_curve),
+            Err(Error::InvalidKey(_))
+        ));
     }
 
     #[test]
     fn non_ascii_never_panics() {
         for bad in ["p256é", "p25é:abc", "é", "p256:é"] {
-            assert!(matches!(PrincipalId::parse(bad), Err(Error::MalformedPrincipal(_))), "{bad}");
+            assert!(
+                matches!(PrincipalId::parse(bad), Err(Error::MalformedPrincipal(_))),
+                "{bad}"
+            );
         }
         let sixteen_bytes = "ééééééééb"; // 8 two-byte chars + 'b' = 17 bytes
-        assert!(matches!(ShortId::parse(sixteen_bytes), Err(Error::MalformedShortId(_))));
-        assert!(matches!(ShortId::parse("éééééééé"), Err(Error::MalformedShortId(_)))); // 16 bytes
+        assert!(matches!(
+            ShortId::parse(sixteen_bytes),
+            Err(Error::MalformedShortId(_))
+        ));
+        assert!(matches!(
+            ShortId::parse("éééééééé"),
+            Err(Error::MalformedShortId(_))
+        )); // 16 bytes
     }
 
     #[test]
@@ -177,9 +228,18 @@ mod tests {
         assert_eq!(ShortId::parse(&text).unwrap(), s);
         assert_eq!(ShortId::parse(&text.to_uppercase()).unwrap(), s);
         assert_eq!(ShortId::parse_canonical(&text).unwrap(), s);
-        assert!(matches!(ShortId::parse_canonical(&text.to_uppercase()), Err(Error::MalformedShortId(_))));
-        assert!(matches!(ShortId::parse(&text[..15]), Err(Error::MalformedShortId(_))));
-        assert!(matches!(ShortId::parse("zzzzzzzzzzzzzzzz"), Err(Error::MalformedShortId(_))));
+        assert!(matches!(
+            ShortId::parse_canonical(&text.to_uppercase()),
+            Err(Error::MalformedShortId(_))
+        ));
+        assert!(matches!(
+            ShortId::parse(&text[..15]),
+            Err(Error::MalformedShortId(_))
+        ));
+        assert!(matches!(
+            ShortId::parse("zzzzzzzzzzzzzzzz"),
+            Err(Error::MalformedShortId(_))
+        ));
     }
 
     #[test]

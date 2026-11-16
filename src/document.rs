@@ -77,13 +77,13 @@ pub fn check_document_time(document: &VerifiedDocument, now: i64) -> Result<()> 
 
 #[cfg(test)]
 mod tests {
-    use crate::transcripts::signed_document_transcript;
-    use sha2::{Digest, Sha256};
     use crate::testkit::{Principal, DOC_TYPE, T0};
+    use crate::transcripts::signed_document_transcript;
     use crate::{
         check_document_time, document_id, now_unix, sign_document, verify_signed_document,
         AuthorityChain, DocumentDraft, Error, VerifiedDocument, SKEW_SECONDS,
     };
+    use sha2::{Digest, Sha256};
 
     fn draft(version: u64, body: &[u8]) -> DocumentDraft<'_> {
         DocumentDraft {

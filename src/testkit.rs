@@ -177,7 +177,11 @@ pub fn carrier_body(reg: &pb::PrincipalRegistry) -> Vec<u8> {
 }
 
 /// A document signed by `authority`'s current root, carrying its rotations.
-pub fn sign_test_document(authority: &Principal, version: u64, body: Vec<u8>) -> pb::SignedDocument {
+pub fn sign_test_document(
+    authority: &Principal,
+    version: u64,
+    body: Vec<u8>,
+) -> pb::SignedDocument {
     let chain = AuthorityChain::from_rotations(authority.genesis(), &authority.rotations)
         .expect("fixture rotations are valid");
     let draft = DocumentDraft {

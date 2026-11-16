@@ -51,9 +51,14 @@ impl Enc {
         b.push(0);
         Self(b)
     }
-    fn finish(self) -> Vec<u8> { self.0 }
+    fn finish(self) -> Vec<u8> {
+        self.0
+    }
     fn var(&mut self, x: &[u8]) -> Result<()> {
-        let n = u32::try_from(x.len()).map_err(|_| Error::InvalidField { field: "length", reason: "exceeds u32" })?;
+        let n = u32::try_from(x.len()).map_err(|_| Error::InvalidField {
+            field: "length",
+            reason: "exceeds u32",
+        })?;
         self.0.extend_from_slice(&n.to_be_bytes());
         self.0.extend_from_slice(x);
         Ok(())
@@ -62,13 +67,25 @@ impl Enc {
         self.u8("scheme", k.scheme() as i64)?;
         self.var(k.as_bytes())
     }
-    fn principal(&mut self, genesis: &PublicKey) -> Result<()> { self.key(genesis) }
-    fn absent(&mut self) { self.0.push(0); }
-    fn present(&mut self) { self.0.push(1); }
+    fn principal(&mut self, genesis: &PublicKey) -> Result<()> {
+        self.key(genesis)
+    }
+    fn absent(&mut self) {
+        self.0.push(0);
+    }
+    fn present(&mut self) {
+        self.0.push(1);
+    }
     fn opt_key(&mut self, k: Option<&PublicKey>) -> Result<()> {
         match k {
-            Some(k) => { self.present(); self.key(k) }
-            None => { self.absent(); Ok(()) }
+            Some(k) => {
+                self.present();
+                self.key(k)
+            }
+            None => {
+                self.absent();
+                Ok(())
+            }
         }
     }
     fn u8(&mut self, field: &'static str, v: i64) -> Result<()> {
@@ -76,23 +93,43 @@ impl Enc {
         self.0.push(b);
         Ok(())
     }
-    fn i64(&mut self, v: i64) { self.0.extend_from_slice(&v.to_be_bytes()); }
-    fn u64(&mut self, v: u64) { self.0.extend_from_slice(&v.to_be_bytes()); }
-    fn i32(&mut self, v: i32) { self.0.extend_from_slice(&v.to_be_bytes()); }
+    fn i64(&mut self, v: i64) {
+        self.0.extend_from_slice(&v.to_be_bytes());
+    }
+    fn u64(&mut self, v: u64) {
+        self.0.extend_from_slice(&v.to_be_bytes());
+    }
+    fn i32(&mut self, v: i32) {
+        self.0.extend_from_slice(&v.to_be_bytes());
+    }
     fn u32(&mut self, field: &'static str, n: usize) -> Result<()> {
-        let n = u32::try_from(n).map_err(|_| Error::InvalidField { field, reason: "too many" })?;
+        let n = u32::try_from(n).map_err(|_| Error::InvalidField {
+            field,
+            reason: "too many",
+        })?;
         self.0.extend_from_slice(&n.to_be_bytes());
         Ok(())
     }
     fn fixed(&mut self, field: &'static str, x: &[u8], n: usize) -> Result<()> {
-        if x.len() != n { return Err(Error::BadLength { field, expected: n, actual: x.len() }); }
+        if x.len() != n {
+            return Err(Error::BadLength {
+                field,
+                expected: n,
+                actual: x.len(),
+            });
+        }
         self.0.extend_from_slice(x);
         Ok(())
     }
 }
 
 fn non_empty(field: &'static str, x: &[u8]) -> Result<()> {
-    if x.is_empty() { return Err(Error::InvalidField { field, reason: "empty" }); }
+    if x.is_empty() {
+        return Err(Error::InvalidField {
+            field,
+            reason: "empty",
+        });
+    }
     Ok(())
 }
 
@@ -117,7 +154,11 @@ pub fn key_challenge_transcript(audience: &str, nonce: &[u8], new: &PublicKey) -
 }
 
 /// `principal-rename.v1 := tag ‖ len(nonce) ‖ PRINCIPAL ‖ len(new_name)`.
-pub fn principal_rename_transcript(nonce: &[u8], principal: &PrincipalId, new_name: &str) -> Result<Vec<u8>> {
+pub fn principal_rename_transcript(
+    nonce: &[u8],
+    principal: &PrincipalId,
+    new_name: &str,
+) -> Result<Vec<u8>> {
     non_empty("nonce", nonce)?;
     non_empty("new_name", new_name.as_bytes())?;
     let mut e = Enc::new(PRINCIPAL_RENAME_TAG);
@@ -134,13 +175,21 @@ pub fn key_delegation_transcript(d: &pb::KeyDelegation) -> Result<Vec<u8>> {
     let root = req(d.signing_root.as_ref(), "signing_root")?;
     let purpose = match pb::KeyPurpose::try_from(d.purpose) {
         Ok(p @ (pb::KeyPurpose::Device | pb::KeyPurpose::Approval)) => p,
-        _ => return Err(Error::InvalidField { field: "purpose", reason: "must be DEVICE or APPROVAL" }),
+        _ => {
+            return Err(Error::InvalidField {
+                field: "purpose",
+                reason: "must be DEVICE or APPROVAL",
+            })
+        }
     };
     let delegated = req(d.delegated.as_ref(), "delegated")?;
     let encryption = match (purpose, d.delegated_encryption.as_ref()) {
         (pb::KeyPurpose::Device, None) => return Err(Error::MissingField("delegated_encryption")),
         (pb::KeyPurpose::Approval, Some(_)) => {
-            return Err(Error::InvalidField { field: "delegated_encryption", reason: "forbidden for APPROVAL" })
+            return Err(Error::InvalidField {
+                field: "delegated_encryption",
+                reason: "forbidden for APPROVAL",
+            })
         }
         (_, k) => opt_key(k)?,
     };
@@ -149,7 +198,9 @@ pub fn key_delegation_transcript(d: &pb::KeyDelegation) -> Result<Vec<u8>> {
         None => false,
     };
     if root == delegated || encryption_clash {
-        return Err(Error::NotDistinct("signing_root, delegated, delegated_encryption"));
+        return Err(Error::NotDistinct(
+            "signing_root, delegated, delegated_encryption",
+        ));
     }
     let mut e = Enc::new(KEY_DELEGATION_TAG);
     e.principal(&principal)?;
@@ -201,11 +252,26 @@ pub fn session_delegation_transcript(c: &pb::DelegationCert) -> Result<Vec<u8>> 
 }
 
 fn encode_cert_body(e: &mut Enc, c: &pb::DelegationCert) -> Result<()> {
-    if c.mode > 1 { return Err(Error::InvalidField { field: "mode", reason: "must be 0 or 1" }); }
+    if c.mode > 1 {
+        return Err(Error::InvalidField {
+            field: "mode",
+            reason: "must be 0 or 1",
+        });
+    }
     let principal = req(c.principal_genesis.as_ref(), "principal_genesis")?;
     let (host, subject) = if c.mode == 0 {
-        if c.host_genesis.is_some() { return Err(Error::InvalidField { field: "host_genesis", reason: "forbidden in mode 0" }); }
-        if c.subject.is_some() { return Err(Error::InvalidField { field: "subject", reason: "forbidden in mode 0" }); }
+        if c.host_genesis.is_some() {
+            return Err(Error::InvalidField {
+                field: "host_genesis",
+                reason: "forbidden in mode 0",
+            });
+        }
+        if c.subject.is_some() {
+            return Err(Error::InvalidField {
+                field: "subject",
+                reason: "forbidden in mode 0",
+            });
+        }
         (None, None)
     } else {
         let host = req(c.host_genesis.as_ref(), "host_genesis")?;
@@ -215,23 +281,66 @@ fn encode_cert_body(e: &mut Enc, c: &pb::DelegationCert) -> Result<()> {
     };
     let device = req(c.device.as_ref(), "device")?;
     let session = req(c.session.as_ref(), "session")?;
-    if device == session { return Err(Error::NotDistinct("device, session")); }
+    if device == session {
+        return Err(Error::NotDistinct("device, session"));
+    }
     e.u8("mode", i64::from(c.mode))?;
     e.principal(&principal)?;
-    match &host { Some(h) => { e.present(); e.principal(h)?; }, None => e.absent() }
-    match subject { Some(s) => { e.present(); e.var(s.as_bytes())?; }, None => e.absent() }
-    e.key(&device)?; e.key(&session)?;
-    e.i64(c.not_before_unix_seconds); e.i64(c.not_after_unix_seconds);
+    match &host {
+        Some(h) => {
+            e.present();
+            e.principal(h)?;
+        }
+        None => e.absent(),
+    }
+    match subject {
+        Some(s) => {
+            e.present();
+            e.var(s.as_bytes())?;
+        }
+        None => e.absent(),
+    }
+    e.key(&device)?;
+    e.key(&session)?;
+    e.i64(c.not_before_unix_seconds);
+    e.i64(c.not_after_unix_seconds);
     Ok(())
 }
 
 pub fn signed_message_transcript(m: &pb::SignedMessage) -> Result<Vec<u8>> {
     use pb::signer_chain::Chain;
-    let chain = m.signer.as_ref().ok_or(Error::MissingField("signer"))?.chain.as_ref().ok_or(Error::MissingField("signer.chain"))?;
+    let chain = m
+        .signer
+        .as_ref()
+        .ok_or(Error::MissingField("signer"))?
+        .chain
+        .as_ref()
+        .ok_or(Error::MissingField("signer.chain"))?;
     let (cert, paths) = match chain {
-        Chain::SelfRooted(s) => (s.session.as_ref(), ["signer.self_rooted.session", "signer.self_rooted.session.principal_genesis", "signer.self_rooted.session.session"]),
-        Chain::HostVouched(h) => (h.session.as_ref(), ["signer.host_vouched.session", "signer.host_vouched.session.principal_genesis", "signer.host_vouched.session.session"]),
-        Chain::DaemonHosted(d) => (d.session.as_ref(), ["signer.daemon_hosted.session", "signer.daemon_hosted.session.principal_genesis", "signer.daemon_hosted.session.session"]),
+        Chain::SelfRooted(s) => (
+            s.session.as_ref(),
+            [
+                "signer.self_rooted.session",
+                "signer.self_rooted.session.principal_genesis",
+                "signer.self_rooted.session.session",
+            ],
+        ),
+        Chain::HostVouched(h) => (
+            h.session.as_ref(),
+            [
+                "signer.host_vouched.session",
+                "signer.host_vouched.session.principal_genesis",
+                "signer.host_vouched.session.session",
+            ],
+        ),
+        Chain::DaemonHosted(d) => (
+            d.session.as_ref(),
+            [
+                "signer.daemon_hosted.session",
+                "signer.daemon_hosted.session.principal_genesis",
+                "signer.daemon_hosted.session.session",
+            ],
+        ),
     };
     let cert = cert.ok_or(Error::MissingField(paths[0]))?;
     let principal = req(cert.principal_genesis.as_ref(), paths[1])?;
@@ -239,17 +348,32 @@ pub fn signed_message_transcript(m: &pb::SignedMessage) -> Result<Vec<u8>> {
     non_empty("audience", m.audience.as_bytes())?;
     non_empty("body_type", m.body_type.as_bytes())?;
     let mut e = Enc::new(SIGNED_MESSAGE_TAG);
-    e.principal(&principal)?; e.key(&session)?; e.var(m.audience.as_bytes())?;
-    e.fixed("nonce", &m.nonce, 16)?; e.i64(m.issued_at_unix_seconds);
-    match &m.in_reply_to_nonce { Some(n) => { e.present(); e.fixed("in_reply_to_nonce", n, 16)?; }, None => e.absent() }
-    e.var(m.body_type.as_bytes())?; e.var(&m.body)?;
+    e.principal(&principal)?;
+    e.key(&session)?;
+    e.var(m.audience.as_bytes())?;
+    e.fixed("nonce", &m.nonce, 16)?;
+    e.i64(m.issued_at_unix_seconds);
+    match &m.in_reply_to_nonce {
+        Some(n) => {
+            e.present();
+            e.fixed("in_reply_to_nonce", n, 16)?;
+        }
+        None => e.absent(),
+    }
+    e.var(m.body_type.as_bytes())?;
+    e.var(&m.body)?;
     Ok(e.finish())
 }
 
 /// `hosted-session.v1 := tag ‖ CERT body (as session-delegation.v1, without its tag)`.
 /// The cert must be mode 1; the agent device signs these bytes.
 pub fn hosted_session_transcript(c: &pb::DelegationCert) -> Result<Vec<u8>> {
-    if c.mode != 1 { return Err(Error::InvalidField { field: "mode", reason: "must be 1 for a hosted session" }); }
+    if c.mode != 1 {
+        return Err(Error::InvalidField {
+            field: "mode",
+            reason: "must be 1 for a hosted session",
+        });
+    }
     let mut e = Enc::new(HOSTED_SESSION_TAG);
     encode_cert_body(&mut e, c)?;
     Ok(e.finish())
@@ -276,25 +400,50 @@ pub fn hosted_session_transcript(c: &pb::DelegationCert) -> Result<Vec<u8>> {
 /// signer-chain bytes: that transcript already fixes the author's genesis, session key, audience
 /// and body. The delegation's own signature and window are not transcript concerns.
 pub fn delivery_transcript(d: &pb::Delivery) -> Result<Vec<u8>> {
-    let signer = d.signer_device.as_ref().ok_or(Error::MissingField("signer_device"))?;
-    let principal = req(signer.principal_genesis.as_ref(), "signer_device.principal_genesis")?;
+    let signer = d
+        .signer_device
+        .as_ref()
+        .ok_or(Error::MissingField("signer_device"))?;
+    let principal = req(
+        signer.principal_genesis.as_ref(),
+        "signer_device.principal_genesis",
+    )?;
     let device = req(signer.delegated.as_ref(), "signer_device.delegated")?;
     non_empty("delivery_id", d.delivery_id.as_bytes())?;
     non_empty("recipient_id", d.recipient_id.as_bytes())?;
-    let recipient_devices = d.recipient_devices.iter().map(PublicKey::try_from).collect::<Result<Vec<_>>>()?;
-    let at = d.attested_at.as_ref().ok_or(Error::MissingField("attested_at"))?;
+    let recipient_devices = d
+        .recipient_devices
+        .iter()
+        .map(PublicKey::try_from)
+        .collect::<Result<Vec<_>>>()?;
+    let at = d
+        .attested_at
+        .as_ref()
+        .ok_or(Error::MissingField("attested_at"))?;
     if !(0..=999_999_999).contains(&at.nanos) {
-        return Err(Error::InvalidField { field: "attested_at.nanos", reason: "out of range" });
+        return Err(Error::InvalidField {
+            field: "attested_at.nanos",
+            reason: "out of range",
+        });
     }
     if d.via.len() != d.messages.len() {
-        return Err(Error::InvalidField { field: "via", reason: "one entry per message" });
+        return Err(Error::InvalidField {
+            field: "via",
+            reason: "one entry per message",
+        });
     }
     let mut e = Enc::new(DELIVERY_TAG);
-    e.principal(&principal)?; e.key(&device)?;
-    e.var(d.delivery_id.as_bytes())?; e.var(d.recipient_id.as_bytes())?;
+    e.principal(&principal)?;
+    e.key(&device)?;
+    e.var(d.delivery_id.as_bytes())?;
+    e.var(d.recipient_id.as_bytes())?;
     e.u32("recipient_devices", recipient_devices.len())?;
-    for k in &recipient_devices { e.key(k)?; }
-    e.u64(d.sequence); e.i64(at.seconds); e.i32(at.nanos);
+    for k in &recipient_devices {
+        e.key(k)?;
+    }
+    e.u64(d.sequence);
+    e.i64(at.seconds);
+    e.i32(at.nanos);
     e.u32("messages", d.messages.len())?;
     for (m, via) in d.messages.iter().zip(&d.via) {
         e.var(&signed_message_transcript(m)?)?;
@@ -313,11 +462,16 @@ pub fn delivery_transcript(d: &pb::Delivery) -> Result<Vec<u8>> {
     }
     let mut prev: Option<&str> = None;
     for n in &d.names {
-        PrincipalId::parse_canonical(&n.principal_id)
-            .map_err(|_| Error::InvalidField { field: "names.principal_id", reason: "not canonical" })?;
+        PrincipalId::parse_canonical(&n.principal_id).map_err(|_| Error::InvalidField {
+            field: "names.principal_id",
+            reason: "not canonical",
+        })?;
         non_empty("names.name", n.name.as_bytes())?;
         if prev.is_some_and(|p| p >= n.principal_id.as_str()) {
-            return Err(Error::InvalidField { field: "names", reason: "not sorted" });
+            return Err(Error::InvalidField {
+                field: "names",
+                reason: "not sorted",
+            });
         }
         prev = Some(&n.principal_id);
     }
@@ -344,8 +498,13 @@ pub fn signed_document_transcript(d: &pb::SignedDocument) -> Result<Vec<u8>> {
     let signing = req(d.signing.as_ref(), "signing")?;
     non_empty("document_type", d.document_type.as_bytes())?;
     let mut e = Enc::new(SIGNED_DOCUMENT_TAG);
-    e.principal(&signer)?; e.key(&signing)?; e.var(d.document_type.as_bytes())?;
-    e.u64(d.version); e.i64(d.issued_at_unix_seconds); e.i64(d.expires_at_unix_seconds); e.var(&d.body)?;
+    e.principal(&signer)?;
+    e.key(&signing)?;
+    e.var(d.document_type.as_bytes())?;
+    e.u64(d.version);
+    e.i64(d.issued_at_unix_seconds);
+    e.i64(d.expires_at_unix_seconds);
+    e.var(&d.body)?;
     Ok(e.finish())
 }
 
@@ -355,13 +514,19 @@ pub fn approval_transcript(a: &pb::Approval) -> Result<Vec<u8>> {
     let principal = req(a.principal_genesis.as_ref(), "principal_genesis")?;
     let approval_key = req(a.approval_key.as_ref(), "approval_key")?;
     let device = req(a.device.as_ref(), "device")?;
-    if approval_key == device { return Err(Error::NotDistinct("approval_key, device")); }
+    if approval_key == device {
+        return Err(Error::NotDistinct("approval_key, device"));
+    }
     non_empty("audience", a.audience.as_bytes())?;
     let mut e = Enc::new(APPROVAL_TAG);
-    e.principal(&principal)?; e.key(&approval_key)?; e.key(&device)?;
-    e.var(a.audience.as_bytes())?; e.var(a.request_id.as_bytes())?;
+    e.principal(&principal)?;
+    e.key(&approval_key)?;
+    e.key(&device)?;
+    e.var(a.audience.as_bytes())?;
+    e.var(a.request_id.as_bytes())?;
     e.fixed("request_digest", &a.request_digest, 32)?;
-    e.u8("accept", i64::from(a.accept))?; e.i64(a.issued_at_unix_seconds);
+    e.u8("accept", i64::from(a.accept))?;
+    e.i64(a.issued_at_unix_seconds);
     Ok(e.finish())
 }
 
@@ -373,8 +538,11 @@ pub fn peer_revocation_transcript(p: &pb::PeerRevocation) -> Result<Vec<u8>> {
     let target = req(p.target_genesis.as_ref(), "target_genesis")?;
     let revoked = opt_key(p.revoked.as_ref())?;
     let mut e = Enc::new(PEER_REVOCATION_TAG);
-    e.principal(&revoker)?; e.key(&approval_key)?; e.principal(&target)?;
-    e.opt_key(revoked.as_ref())?; e.i64(p.issued_at_unix_seconds);
+    e.principal(&revoker)?;
+    e.key(&approval_key)?;
+    e.principal(&target)?;
+    e.opt_key(revoked.as_ref())?;
+    e.i64(p.issued_at_unix_seconds);
     e.fixed("document_id", &p.document_id, 32)?;
     Ok(e.finish())
 }
@@ -395,18 +563,26 @@ pub struct RequestDigestInput<'a> {
 /// `request-digest.v1 := tag ‖ PRINCIPAL(requester) ‖ PRINCIPAL(host) ‖ opt(len(subject))
 /// ‖ len(instance_id) ‖ len(action_id) ‖ len(parameters) ‖ len(request_id) ‖ PRINCIPAL(target)`.
 pub fn request_digest_transcript(i: &RequestDigestInput<'_>) -> Result<Vec<u8>> {
-    if let Some(subject) = i.subject { non_empty("subject", subject.as_bytes())?; }
+    if let Some(subject) = i.subject {
+        non_empty("subject", subject.as_bytes())?;
+    }
     non_empty("instance_id", i.instance_id.as_bytes())?;
     non_empty("action_id", i.action_id.as_bytes())?;
     non_empty("request_id", i.request_id.as_bytes())?;
     let mut e = Enc::new(REQUEST_DIGEST_TAG);
-    e.principal(i.requester.genesis())?; e.principal(i.host.genesis())?;
+    e.principal(i.requester.genesis())?;
+    e.principal(i.host.genesis())?;
     match i.subject {
-        Some(s) => { e.present(); e.var(s.as_bytes())?; }
+        Some(s) => {
+            e.present();
+            e.var(s.as_bytes())?;
+        }
         None => e.absent(),
     }
-    e.var(i.instance_id.as_bytes())?; e.var(i.action_id.as_bytes())?;
-    e.var(i.parameters)?; e.var(i.request_id.as_bytes())?;
+    e.var(i.instance_id.as_bytes())?;
+    e.var(i.action_id.as_bytes())?;
+    e.var(i.parameters)?;
+    e.var(i.request_id.as_bytes())?;
     e.principal(i.target.genesis())?;
     Ok(e.finish())
 }
@@ -451,11 +627,18 @@ pub fn client_request_digest_transcript(i: &ClientRequestDigestInput<'_>) -> Res
     let mut e = Enc::new(CLIENT_REQUEST_DIGEST_TAG);
     e.principal(i.requester.genesis())?;
     match i.host {
-        Some(h) => { e.present(); e.principal(h.genesis())?; }
+        Some(h) => {
+            e.present();
+            e.principal(h.genesis())?;
+        }
         None => e.absent(),
     }
     match i.resource {
-        Some((kind, id)) => { e.present(); e.var(kind.as_bytes())?; e.var(id.as_bytes())?; }
+        Some((kind, id)) => {
+            e.present();
+            e.var(kind.as_bytes())?;
+            e.var(id.as_bytes())?;
+        }
         None => e.absent(),
     }
     e.var(i.message_kind.as_bytes())?;
@@ -495,7 +678,10 @@ mod tests {
     #[test]
     fn tags_are_distinct_and_prefix_free() {
         for (i, a) in ALL_TAGS.iter().enumerate() {
-            assert!(a.starts_with("identitycrypto.") && (a.ends_with(".v1") || *a == DELIVERY_TAG), "{a}");
+            assert!(
+                a.starts_with("identitycrypto.") && (a.ends_with(".v1") || *a == DELIVERY_TAG),
+                "{a}"
+            );
             for (j, b) in ALL_TAGS.iter().enumerate() {
                 if i != j {
                     assert!(!b.starts_with(a), "{a} is a prefix of {b}");
@@ -526,8 +712,20 @@ mod tests {
     #[test]
     fn one_byte_scalars_reject_out_of_range() {
         let mut e = Enc::new("t");
-        assert_eq!(e.u8("x", 256), Err(Error::ScalarOutOfRange { field: "x", value: 256 }));
-        assert_eq!(e.u8("x", -1), Err(Error::ScalarOutOfRange { field: "x", value: -1 }));
+        assert_eq!(
+            e.u8("x", 256),
+            Err(Error::ScalarOutOfRange {
+                field: "x",
+                value: 256
+            })
+        );
+        assert_eq!(
+            e.u8("x", -1),
+            Err(Error::ScalarOutOfRange {
+                field: "x",
+                value: -1
+            })
+        );
         assert!(e.u8("x", 255).is_ok());
     }
 
@@ -536,11 +734,17 @@ mod tests {
         let new = k();
         assert_eq!(
             key_challenge_transcript("", &[1], &new),
-            Err(Error::InvalidField { field: "audience", reason: "empty" })
+            Err(Error::InvalidField {
+                field: "audience",
+                reason: "empty"
+            })
         );
         assert_eq!(
             key_challenge_transcript("a", &[], &new),
-            Err(Error::InvalidField { field: "nonce", reason: "empty" })
+            Err(Error::InvalidField {
+                field: "nonce",
+                reason: "empty"
+            })
         );
     }
 
@@ -555,11 +759,17 @@ mod tests {
         assert_eq!(t, want);
         assert_eq!(
             principal_rename_transcript(&[1], &p, ""),
-            Err(Error::InvalidField { field: "new_name", reason: "empty" })
+            Err(Error::InvalidField {
+                field: "new_name",
+                reason: "empty"
+            })
         );
         assert_eq!(
             principal_rename_transcript(&[], &p, "x"),
-            Err(Error::InvalidField { field: "nonce", reason: "empty" })
+            Err(Error::InvalidField {
+                field: "nonce",
+                reason: "empty"
+            })
         );
     }
 
@@ -571,7 +781,8 @@ mod tests {
             signing_root: pk(&k()),
             purpose: purpose as i32,
             delegated: pk(&k()),
-            delegated_encryption: (purpose == pb::KeyPurpose::Device).then(|| pb::PublicKey::from(&k())),
+            delegated_encryption: (purpose == pb::KeyPurpose::Device)
+                .then(|| pb::PublicKey::from(&k())),
             issued_at_unix_seconds: 1_700_000_000,
             not_after_unix_seconds: 1_702_592_000,
             signature: vec![],
@@ -581,94 +792,278 @@ mod tests {
     pub(crate) fn cert0() -> pb::DelegationCert {
         let device = k();
         pb::DelegationCert {
-            principal_genesis: pk(&device), mode: 0, device: pk(&device), session: pk(&k()),
-            host_genesis: None, subject: None, not_before_unix_seconds: 1,
-            not_after_unix_seconds: 2, signature: vec![0xab; 64],
+            principal_genesis: pk(&device),
+            mode: 0,
+            device: pk(&device),
+            session: pk(&k()),
+            host_genesis: None,
+            subject: None,
+            not_before_unix_seconds: 1,
+            not_after_unix_seconds: 2,
+            signature: vec![0xab; 64],
         }
     }
 
     pub(crate) fn cert1() -> pb::DelegationCert {
         pb::DelegationCert {
-            principal_genesis: pk(&k()), mode: 1, host_genesis: pk(&k()),
-            subject: Some("3b6a27bcceb6a42d/i5".into()), ..cert0()
+            principal_genesis: pk(&k()),
+            mode: 1,
+            host_genesis: pk(&k()),
+            subject: Some("3b6a27bcceb6a42d/i5".into()),
+            ..cert0()
         }
     }
 
     pub(crate) fn message() -> pb::SignedMessage {
         pb::SignedMessage {
-            signer: Some(pb::SignerChain { chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
-                device: Some(delegation(pb::KeyPurpose::Device)), session: Some(cert0()),
-            }))}), audience: "structmux-fleet:3b6a27bcceb6a42d".into(), nonce: vec![5; 16],
-            issued_at_unix_seconds: 7, in_reply_to_nonce: None,
-            body_type: "type.googleapis.com/structmux.v1.FleetRequest".into(), body: vec![1,2,3], signature: vec![],
+            signer: Some(pb::SignerChain {
+                chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                    device: Some(delegation(pb::KeyPurpose::Device)),
+                    session: Some(cert0()),
+                })),
+            }),
+            audience: "structmux-fleet:3b6a27bcceb6a42d".into(),
+            nonce: vec![5; 16],
+            issued_at_unix_seconds: 7,
+            in_reply_to_nonce: None,
+            body_type: "type.googleapis.com/structmux.v1.FleetRequest".into(),
+            body: vec![1, 2, 3],
+            signature: vec![],
         }
     }
 
     #[test]
     fn session_delegation_layouts() {
         let c = cert0();
-        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
-        let mut want = b"identitycrypto.session-delegation.v1\0".to_vec(); want.push(0);
-        want.extend(key(&c.principal_genesis)); want.extend([0,0]); want.extend(key(&c.device)); want.extend(key(&c.session));
-        want.extend(1i64.to_be_bytes()); want.extend(2i64.to_be_bytes());
+        let key = |p: &Option<pb::PublicKey>| {
+            key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap())
+        };
+        let mut want = b"identitycrypto.session-delegation.v1\0".to_vec();
+        want.push(0);
+        want.extend(key(&c.principal_genesis));
+        want.extend([0, 0]);
+        want.extend(key(&c.device));
+        want.extend(key(&c.session));
+        want.extend(1i64.to_be_bytes());
+        want.extend(2i64.to_be_bytes());
         assert_eq!(session_delegation_transcript(&c).unwrap(), want);
-        let c = cert1(); let mut want = b"identitycrypto.session-delegation.v1\0".to_vec(); want.push(1);
-        want.extend(key(&c.principal_genesis)); want.push(1); want.extend(key(&c.host_genesis)); want.push(1);
-        want.extend([0,0,0,19]); want.extend(b"3b6a27bcceb6a42d/i5"); want.extend(key(&c.device)); want.extend(key(&c.session));
-        want.extend(1i64.to_be_bytes()); want.extend(2i64.to_be_bytes());
+        let c = cert1();
+        let mut want = b"identitycrypto.session-delegation.v1\0".to_vec();
+        want.push(1);
+        want.extend(key(&c.principal_genesis));
+        want.push(1);
+        want.extend(key(&c.host_genesis));
+        want.push(1);
+        want.extend([0, 0, 0, 19]);
+        want.extend(b"3b6a27bcceb6a42d/i5");
+        want.extend(key(&c.device));
+        want.extend(key(&c.session));
+        want.extend(1i64.to_be_bytes());
+        want.extend(2i64.to_be_bytes());
         assert_eq!(session_delegation_transcript(&c).unwrap(), want);
     }
 
     #[test]
     fn session_delegation_checks() {
-        let run = |f: &dyn Fn(&mut pb::DelegationCert), base: fn() -> pb::DelegationCert| { let mut c=base(); f(&mut c); session_delegation_transcript(&c) };
-        assert_eq!(run(&|c| c.mode=2, cert0), Err(Error::InvalidField{field:"mode",reason:"must be 0 or 1"}));
-        assert_eq!(run(&|c| c.host_genesis=pk(&k()), cert0), Err(Error::InvalidField{field:"host_genesis",reason:"forbidden in mode 0"}));
-        assert_eq!(run(&|c| c.subject=Some(String::new()), cert0), Err(Error::InvalidField{field:"subject",reason:"forbidden in mode 0"}));
-        assert_eq!(run(&|c| c.host_genesis=None, cert1), Err(Error::MissingField("host_genesis")));
-        assert_eq!(run(&|c| c.subject=None, cert1), Err(Error::MissingField("subject")));
-        assert_eq!(run(&|c| c.subject=Some(String::new()), cert1), Err(Error::InvalidField{field:"subject",reason:"empty"}));
-        assert_eq!(run(&|c| c.session=c.device.clone(), cert0), Err(Error::NotDistinct("device, session")));
-        assert_eq!(run(&|c| c.session=c.device.clone(), cert1), Err(Error::NotDistinct("device, session")));
-        assert_eq!(run(&|c| c.device=None, cert0), Err(Error::MissingField("device")));
+        let run = |f: &dyn Fn(&mut pb::DelegationCert), base: fn() -> pb::DelegationCert| {
+            let mut c = base();
+            f(&mut c);
+            session_delegation_transcript(&c)
+        };
+        assert_eq!(
+            run(&|c| c.mode = 2, cert0),
+            Err(Error::InvalidField {
+                field: "mode",
+                reason: "must be 0 or 1"
+            })
+        );
+        assert_eq!(
+            run(&|c| c.host_genesis = pk(&k()), cert0),
+            Err(Error::InvalidField {
+                field: "host_genesis",
+                reason: "forbidden in mode 0"
+            })
+        );
+        assert_eq!(
+            run(&|c| c.subject = Some(String::new()), cert0),
+            Err(Error::InvalidField {
+                field: "subject",
+                reason: "forbidden in mode 0"
+            })
+        );
+        assert_eq!(
+            run(&|c| c.host_genesis = None, cert1),
+            Err(Error::MissingField("host_genesis"))
+        );
+        assert_eq!(
+            run(&|c| c.subject = None, cert1),
+            Err(Error::MissingField("subject"))
+        );
+        assert_eq!(
+            run(&|c| c.subject = Some(String::new()), cert1),
+            Err(Error::InvalidField {
+                field: "subject",
+                reason: "empty"
+            })
+        );
+        assert_eq!(
+            run(&|c| c.session = c.device.clone(), cert0),
+            Err(Error::NotDistinct("device, session"))
+        );
+        assert_eq!(
+            run(&|c| c.session = c.device.clone(), cert1),
+            Err(Error::NotDistinct("device, session"))
+        );
+        assert_eq!(
+            run(&|c| c.device = None, cert0),
+            Err(Error::MissingField("device"))
+        );
     }
 
     #[test]
     fn signed_message_layout() {
-        let mut m=message(); m.in_reply_to_nonce=Some(vec![6;16]); let cert=cert0();
-        if let Some(pb::signer_chain::Chain::SelfRooted(s))=m.signer.as_mut().and_then(|s|s.chain.as_mut()) { s.session=Some(cert.clone()); }
-        let key=|p:&Option<pb::PublicKey>|key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
-        let mut want=b"identitycrypto.signed-message.v1\0".to_vec(); want.extend(key(&cert.principal_genesis)); want.extend(key(&cert.session));
-        want.extend((m.audience.len() as u32).to_be_bytes()); want.extend(m.audience.as_bytes()); want.extend([5;16]); want.extend(7i64.to_be_bytes());
-        want.push(1); want.extend([6;16]); want.extend((m.body_type.len() as u32).to_be_bytes()); want.extend(m.body_type.as_bytes()); want.extend([0,0,0,3,1,2,3]);
-        assert_eq!(signed_message_transcript(&m).unwrap(),want);
+        let mut m = message();
+        m.in_reply_to_nonce = Some(vec![6; 16]);
+        let cert = cert0();
+        if let Some(pb::signer_chain::Chain::SelfRooted(s)) =
+            m.signer.as_mut().and_then(|s| s.chain.as_mut())
+        {
+            s.session = Some(cert.clone());
+        }
+        let key = |p: &Option<pb::PublicKey>| {
+            key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap())
+        };
+        let mut want = b"identitycrypto.signed-message.v1\0".to_vec();
+        want.extend(key(&cert.principal_genesis));
+        want.extend(key(&cert.session));
+        want.extend((m.audience.len() as u32).to_be_bytes());
+        want.extend(m.audience.as_bytes());
+        want.extend([5; 16]);
+        want.extend(7i64.to_be_bytes());
+        want.push(1);
+        want.extend([6; 16]);
+        want.extend((m.body_type.len() as u32).to_be_bytes());
+        want.extend(m.body_type.as_bytes());
+        want.extend([0, 0, 0, 3, 1, 2, 3]);
+        assert_eq!(signed_message_transcript(&m).unwrap(), want);
     }
 
     #[test]
     fn signed_message_checks() {
-        let mut m=message(); m.signer=None; assert_eq!(signed_message_transcript(&m),Err(Error::MissingField("signer")));
-        let mut m=message(); m.signer=Some(pb::SignerChain{chain:None}); assert_eq!(signed_message_transcript(&m),Err(Error::MissingField("signer.chain")));
-        let mut m=message(); m.signer=Some(pb::SignerChain{chain:Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched{host_device:None,session:None}))}); assert_eq!(signed_message_transcript(&m),Err(Error::MissingField("signer.host_vouched.session")));
-        let mut m=message(); m.signer=Some(pb::SignerChain{chain:Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched{host_device:None,session:Some(cert1())}))}); assert!(signed_message_transcript(&m).is_ok());
-        let mut m=message(); m.nonce=vec![5;15]; assert_eq!(signed_message_transcript(&m),Err(Error::BadLength{field:"nonce",expected:16,actual:15}));
-        let mut m=message(); m.in_reply_to_nonce=Some(vec![]); assert_eq!(signed_message_transcript(&m),Err(Error::BadLength{field:"in_reply_to_nonce",expected:16,actual:0}));
-        let mut m=message(); m.audience.clear(); assert_eq!(signed_message_transcript(&m),Err(Error::InvalidField{field:"audience",reason:"empty"}));
-        let mut m=message(); m.body_type.clear(); assert_eq!(signed_message_transcript(&m),Err(Error::InvalidField{field:"body_type",reason:"empty"}));
+        let mut m = message();
+        m.signer = None;
+        assert_eq!(
+            signed_message_transcript(&m),
+            Err(Error::MissingField("signer"))
+        );
+        let mut m = message();
+        m.signer = Some(pb::SignerChain { chain: None });
+        assert_eq!(
+            signed_message_transcript(&m),
+            Err(Error::MissingField("signer.chain"))
+        );
+        let mut m = message();
+        m.signer = Some(pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched {
+                host_device: None,
+                session: None,
+            })),
+        });
+        assert_eq!(
+            signed_message_transcript(&m),
+            Err(Error::MissingField("signer.host_vouched.session"))
+        );
+        let mut m = message();
+        m.signer = Some(pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched {
+                host_device: None,
+                session: Some(cert1()),
+            })),
+        });
+        assert!(signed_message_transcript(&m).is_ok());
+        let mut m = message();
+        m.nonce = vec![5; 15];
+        assert_eq!(
+            signed_message_transcript(&m),
+            Err(Error::BadLength {
+                field: "nonce",
+                expected: 16,
+                actual: 15
+            })
+        );
+        let mut m = message();
+        m.in_reply_to_nonce = Some(vec![]);
+        assert_eq!(
+            signed_message_transcript(&m),
+            Err(Error::BadLength {
+                field: "in_reply_to_nonce",
+                expected: 16,
+                actual: 0
+            })
+        );
+        let mut m = message();
+        m.audience.clear();
+        assert_eq!(
+            signed_message_transcript(&m),
+            Err(Error::InvalidField {
+                field: "audience",
+                reason: "empty"
+            })
+        );
+        let mut m = message();
+        m.body_type.clear();
+        assert_eq!(
+            signed_message_transcript(&m),
+            Err(Error::InvalidField {
+                field: "body_type",
+                reason: "empty"
+            })
+        );
     }
 
     #[test]
     fn signed_document_layout_and_checks() {
-        let (g,s)=(k(),k()); let d=pb::SignedDocument{signer_genesis:pk(&g),signing:pk(&s),document_type:"t".into(),version:u64::MAX,issued_at_unix_seconds:1,expires_at_unix_seconds:0,body:vec![9],signature:vec![],signer_rotations:vec![]};
-        let mut want=b"identitycrypto.signed-document.v1\0".to_vec(); want.extend(key_bytes(&g)); want.extend(key_bytes(&s)); want.extend([0,0,0,1,b't']); want.extend(u64::MAX.to_be_bytes()); want.extend(1i64.to_be_bytes()); want.extend(0i64.to_be_bytes()); want.extend([0,0,0,1,9]);
-        assert_eq!(signed_document_transcript(&d).unwrap(),want);
-        let empty=pb::SignedDocument{document_type:String::new(),..d}; assert_eq!(signed_document_transcript(&empty),Err(Error::InvalidField{field:"document_type",reason:"empty"}));
+        let (g, s) = (k(), k());
+        let d = pb::SignedDocument {
+            signer_genesis: pk(&g),
+            signing: pk(&s),
+            document_type: "t".into(),
+            version: u64::MAX,
+            issued_at_unix_seconds: 1,
+            expires_at_unix_seconds: 0,
+            body: vec![9],
+            signature: vec![],
+            signer_rotations: vec![],
+        };
+        let mut want = b"identitycrypto.signed-document.v1\0".to_vec();
+        want.extend(key_bytes(&g));
+        want.extend(key_bytes(&s));
+        want.extend([0, 0, 0, 1, b't']);
+        want.extend(u64::MAX.to_be_bytes());
+        want.extend(1i64.to_be_bytes());
+        want.extend(0i64.to_be_bytes());
+        want.extend([0, 0, 0, 1, 9]);
+        assert_eq!(signed_document_transcript(&d).unwrap(), want);
+        let empty = pb::SignedDocument {
+            document_type: String::new(),
+            ..d
+        };
+        assert_eq!(
+            signed_document_transcript(&empty),
+            Err(Error::InvalidField {
+                field: "document_type",
+                reason: "empty"
+            })
+        );
     }
 
     #[test]
     fn key_delegation_layout() {
         let d = delegation(pb::KeyPurpose::Device);
         let t = key_delegation_transcript(&d).unwrap();
-        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let key = |p: &Option<pb::PublicKey>| {
+            key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap())
+        };
         let mut want = b"identitycrypto.key-delegation.v1\0".to_vec();
         want.extend(key(&d.principal_genesis));
         want.extend(key(&d.signing_root));
@@ -690,20 +1085,31 @@ mod tests {
             d.purpose = p;
             key_delegation_transcript(&d)
         };
-        let bad_purpose = Err(Error::InvalidField { field: "purpose", reason: "must be DEVICE or APPROVAL" });
+        let bad_purpose = Err(Error::InvalidField {
+            field: "purpose",
+            reason: "must be DEVICE or APPROVAL",
+        });
         for p in [0, 1, 4, 99] {
             assert_eq!(purpose(p), bad_purpose, "purpose {p}");
         }
         let mut d = delegation(pb::KeyPurpose::Device);
         d.delegated_encryption = None;
-        assert_eq!(key_delegation_transcript(&d), Err(Error::MissingField("delegated_encryption")));
+        assert_eq!(
+            key_delegation_transcript(&d),
+            Err(Error::MissingField("delegated_encryption"))
+        );
         let mut a = delegation(pb::KeyPurpose::Approval);
         a.delegated_encryption = pk(&k());
         assert_eq!(
             key_delegation_transcript(&a),
-            Err(Error::InvalidField { field: "delegated_encryption", reason: "forbidden for APPROVAL" })
+            Err(Error::InvalidField {
+                field: "delegated_encryption",
+                reason: "forbidden for APPROVAL"
+            })
         );
-        let not_distinct = Err(Error::NotDistinct("signing_root, delegated, delegated_encryption"));
+        let not_distinct = Err(Error::NotDistinct(
+            "signing_root, delegated, delegated_encryption",
+        ));
         let mut d = delegation(pb::KeyPurpose::Device);
         d.delegated = d.signing_root.clone();
         assert_eq!(key_delegation_transcript(&d), not_distinct);
@@ -715,15 +1121,21 @@ mod tests {
         assert_eq!(key_delegation_transcript(&d), not_distinct);
         let mut d = delegation(pb::KeyPurpose::Device);
         d.principal_genesis = None;
-        assert_eq!(key_delegation_transcript(&d), Err(Error::MissingField("principal_genesis")));
+        assert_eq!(
+            key_delegation_transcript(&d),
+            Err(Error::MissingField("principal_genesis"))
+        );
     }
 
     #[test]
     fn key_revocation_layout_and_self_revocation() {
         let (p, r, by) = (k(), k(), k());
         let rev = pb::KeyRevocation {
-            principal_genesis: pk(&p), revoked: pk(&r), revoked_by: pk(&by),
-            revoked_at_unix_seconds: -5, signature: vec![],
+            principal_genesis: pk(&p),
+            revoked: pk(&r),
+            revoked_by: pk(&by),
+            revoked_at_unix_seconds: -5,
+            signature: vec![],
         };
         let t = key_revocation_transcript(&rev).unwrap();
         let mut want = b"identitycrypto.key-revocation.v1\0".to_vec();
@@ -732,18 +1144,30 @@ mod tests {
         want.extend(key_bytes(&by));
         want.extend((-5i64).to_be_bytes());
         assert_eq!(t, want);
-        let own = pb::KeyRevocation { revoked_by: pk(&r), ..rev.clone() };
+        let own = pb::KeyRevocation {
+            revoked_by: pk(&r),
+            ..rev.clone()
+        };
         assert!(key_revocation_transcript(&own).is_ok());
-        let missing = pb::KeyRevocation { revoked_by: None, ..rev };
-        assert_eq!(key_revocation_transcript(&missing), Err(Error::MissingField("revoked_by")));
+        let missing = pb::KeyRevocation {
+            revoked_by: None,
+            ..rev
+        };
+        assert_eq!(
+            key_revocation_transcript(&missing),
+            Err(Error::MissingField("revoked_by"))
+        );
     }
 
     #[test]
     fn root_rotation_layout_and_distinctness() {
         let (p, old, new) = (k(), k(), k());
         let rot = pb::RootRotation {
-            principal_genesis: pk(&p), old_root: pk(&old), new_root: pk(&new),
-            issued_at_unix_seconds: 9, signature: vec![],
+            principal_genesis: pk(&p),
+            old_root: pk(&old),
+            new_root: pk(&new),
+            issued_at_unix_seconds: 9,
+            signature: vec![],
         };
         let mut want = b"identitycrypto.root-rotation.v1\0".to_vec();
         want.extend(key_bytes(&p));
@@ -751,179 +1175,561 @@ mod tests {
         want.extend(key_bytes(&new));
         want.extend(9i64.to_be_bytes());
         assert_eq!(root_rotation_transcript(&rot).unwrap(), want);
-        let same = pb::RootRotation { new_root: pk(&old), ..rot };
-        assert_eq!(root_rotation_transcript(&same), Err(Error::NotDistinct("old_root, new_root")));
+        let same = pb::RootRotation {
+            new_root: pk(&old),
+            ..rot
+        };
+        assert_eq!(
+            root_rotation_transcript(&same),
+            Err(Error::NotDistinct("old_root, new_root"))
+        );
     }
 
     pub(crate) fn approval() -> pb::Approval {
         pb::Approval {
-            principal_genesis: pk(&k()), approval_key: pk(&k()), device: pk(&k()),
-            audience: "structmux:3b6a27bcceb6a42d".into(), request_id: "r4".into(),
-            request_digest: vec![0x11; 32], accept: true, issued_at_unix_seconds: 3, signature: vec![],
+            principal_genesis: pk(&k()),
+            approval_key: pk(&k()),
+            device: pk(&k()),
+            audience: "structmux:3b6a27bcceb6a42d".into(),
+            request_id: "r4".into(),
+            request_digest: vec![0x11; 32],
+            accept: true,
+            issued_at_unix_seconds: 3,
+            signature: vec![],
         }
     }
 
     pub(crate) fn peer_revocation() -> pb::PeerRevocation {
         pb::PeerRevocation {
-            revoker_genesis: pk(&k()), approval_key: pk(&k()), target_genesis: pk(&k()),
-            revoked: None, issued_at_unix_seconds: 4, signature: vec![], document_id: vec![0x22; 32],
+            revoker_genesis: pk(&k()),
+            approval_key: pk(&k()),
+            target_genesis: pk(&k()),
+            revoked: None,
+            issued_at_unix_seconds: 4,
+            signature: vec![],
+            document_id: vec![0x22; 32],
         }
     }
 
     #[test]
     fn approval_layout_and_checks() {
         let a = approval();
-        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let key = |p: &Option<pb::PublicKey>| {
+            key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap())
+        };
         let mut want = b"identitycrypto.approval.v1\0".to_vec();
-        want.extend(key(&a.principal_genesis)); want.extend(key(&a.approval_key)); want.extend(key(&a.device));
-        want.extend((a.audience.len() as u32).to_be_bytes()); want.extend(a.audience.as_bytes());
-        want.extend([0, 0, 0, 2, b'r', b'4']); want.extend([0x11; 32]); want.push(1); want.extend(3i64.to_be_bytes());
+        want.extend(key(&a.principal_genesis));
+        want.extend(key(&a.approval_key));
+        want.extend(key(&a.device));
+        want.extend((a.audience.len() as u32).to_be_bytes());
+        want.extend(a.audience.as_bytes());
+        want.extend([0, 0, 0, 2, b'r', b'4']);
+        want.extend([0x11; 32]);
+        want.push(1);
+        want.extend(3i64.to_be_bytes());
         assert_eq!(approval_transcript(&a).unwrap(), want);
-        let rejected = pb::Approval { accept: false, ..approval() };
+        let rejected = pb::Approval {
+            accept: false,
+            ..approval()
+        };
         assert_eq!(approval_transcript(&rejected).unwrap()[want.len() - 9], 0);
-        let short = pb::Approval { request_digest: vec![0; 31], ..approval() };
-        assert_eq!(approval_transcript(&short), Err(Error::BadLength { field: "request_digest", expected: 32, actual: 31 }));
-        let a = approval(); let same = pb::Approval { device: a.approval_key.clone(), ..a };
-        assert_eq!(approval_transcript(&same), Err(Error::NotDistinct("approval_key, device")));
-        let empty = pb::Approval { audience: String::new(), ..approval() };
-        assert_eq!(approval_transcript(&empty), Err(Error::InvalidField { field: "audience", reason: "empty" }));
+        let short = pb::Approval {
+            request_digest: vec![0; 31],
+            ..approval()
+        };
+        assert_eq!(
+            approval_transcript(&short),
+            Err(Error::BadLength {
+                field: "request_digest",
+                expected: 32,
+                actual: 31
+            })
+        );
+        let a = approval();
+        let same = pb::Approval {
+            device: a.approval_key.clone(),
+            ..a
+        };
+        assert_eq!(
+            approval_transcript(&same),
+            Err(Error::NotDistinct("approval_key, device"))
+        );
+        let empty = pb::Approval {
+            audience: String::new(),
+            ..approval()
+        };
+        assert_eq!(
+            approval_transcript(&empty),
+            Err(Error::InvalidField {
+                field: "audience",
+                reason: "empty"
+            })
+        );
     }
 
     #[test]
     fn peer_revocation_layout_and_checks() {
         let p = peer_revocation();
-        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let key = |p: &Option<pb::PublicKey>| {
+            key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap())
+        };
         let mut want = b"identitycrypto.peer-revocation.v1\0".to_vec();
-        want.extend(key(&p.revoker_genesis)); want.extend(key(&p.approval_key)); want.extend(key(&p.target_genesis));
-        want.push(0); want.extend(4i64.to_be_bytes()); want.extend([0x22; 32]);
+        want.extend(key(&p.revoker_genesis));
+        want.extend(key(&p.approval_key));
+        want.extend(key(&p.target_genesis));
+        want.push(0);
+        want.extend(4i64.to_be_bytes());
+        want.extend([0x22; 32]);
         assert_eq!(peer_revocation_transcript(&p).unwrap(), want);
-        let one_key = pb::PeerRevocation { revoked: pk(&k()), ..peer_revocation() };
-        let t = peer_revocation_transcript(&one_key).unwrap(); assert_eq!(t.len(), want.len() + 70);
-        let missing = pb::PeerRevocation { target_genesis: None, ..peer_revocation() };
-        assert_eq!(peer_revocation_transcript(&missing), Err(Error::MissingField("target_genesis")));
-        let short = pb::PeerRevocation { document_id: vec![0x22; 31], ..peer_revocation() };
-        assert_eq!(peer_revocation_transcript(&short), Err(Error::BadLength { field: "document_id", expected: 32, actual: 31 }));
+        let one_key = pb::PeerRevocation {
+            revoked: pk(&k()),
+            ..peer_revocation()
+        };
+        let t = peer_revocation_transcript(&one_key).unwrap();
+        assert_eq!(t.len(), want.len() + 70);
+        let missing = pb::PeerRevocation {
+            target_genesis: None,
+            ..peer_revocation()
+        };
+        assert_eq!(
+            peer_revocation_transcript(&missing),
+            Err(Error::MissingField("target_genesis"))
+        );
+        let short = pb::PeerRevocation {
+            document_id: vec![0x22; 31],
+            ..peer_revocation()
+        };
+        assert_eq!(
+            peer_revocation_transcript(&short),
+            Err(Error::BadLength {
+                field: "document_id",
+                expected: 32,
+                actual: 31
+            })
+        );
     }
 
     #[test]
     fn request_digest_layout() {
-        let (r, h, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
-        let input = RequestDigestInput { requester: &r, host: &h, subject: Some("s/i1"), instance_id: "s/i1", action_id: "run", parameters: &[9, 9], request_id: "r4", target: &t };
+        let (r, h, t) = (
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+        );
+        let input = RequestDigestInput {
+            requester: &r,
+            host: &h,
+            subject: Some("s/i1"),
+            instance_id: "s/i1",
+            action_id: "run",
+            parameters: &[9, 9],
+            request_id: "r4",
+            target: &t,
+        };
         let mut want = b"identitycrypto.request-digest.v1\0".to_vec();
-        want.extend(key_bytes(r.genesis())); want.extend(key_bytes(h.genesis())); want.extend([1, 0, 0, 0, 4]); want.extend(b"s/i1");
-        want.extend([0, 0, 0, 4]); want.extend(b"s/i1"); want.extend([0, 0, 0, 3]); want.extend(b"run");
-        want.extend([0, 0, 0, 2, 9, 9]); want.extend([0, 0, 0, 2, b'r', b'4']); want.extend(key_bytes(t.genesis()));
+        want.extend(key_bytes(r.genesis()));
+        want.extend(key_bytes(h.genesis()));
+        want.extend([1, 0, 0, 0, 4]);
+        want.extend(b"s/i1");
+        want.extend([0, 0, 0, 4]);
+        want.extend(b"s/i1");
+        want.extend([0, 0, 0, 3]);
+        want.extend(b"run");
+        want.extend([0, 0, 0, 2, 9, 9]);
+        want.extend([0, 0, 0, 2, b'r', b'4']);
+        want.extend(key_bytes(t.genesis()));
         assert_eq!(request_digest_transcript(&input).unwrap(), want);
-        use sha2::{Digest, Sha256}; assert_eq!(request_digest(&input).unwrap().as_slice(), Sha256::digest(&want).as_slice());
-        let no_subject = RequestDigestInput { subject: None, parameters: &[], ..input };
-        assert_eq!(request_digest_transcript(&no_subject).unwrap()[KEY_BYTES_OFFSET_AFTER_TWO_PRINCIPALS], 0);
+        use sha2::{Digest, Sha256};
+        assert_eq!(
+            request_digest(&input).unwrap().as_slice(),
+            Sha256::digest(&want).as_slice()
+        );
+        let no_subject = RequestDigestInput {
+            subject: None,
+            parameters: &[],
+            ..input
+        };
+        assert_eq!(
+            request_digest_transcript(&no_subject).unwrap()[KEY_BYTES_OFFSET_AFTER_TWO_PRINCIPALS],
+            0
+        );
     }
 
     const KEY_BYTES_OFFSET_AFTER_TWO_PRINCIPALS: usize = REQUEST_DIGEST_TAG.len() + 1 + 70 + 70;
 
     #[test]
     fn request_digest_checks() {
-        let (r, h, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
-        let base = RequestDigestInput { requester: &r, host: &h, subject: None, instance_id: "s/i1", action_id: "run", parameters: &[], request_id: "r4", target: &t };
-        let empty = |field: &'static str| -> Result<Vec<u8>> { Err(Error::InvalidField { field, reason: "empty" }) };
-        assert_eq!(request_digest_transcript(&RequestDigestInput { subject: Some(""), ..base }), empty("subject"));
-        assert_eq!(request_digest_transcript(&RequestDigestInput { instance_id: "", ..base }), empty("instance_id"));
-        assert_eq!(request_digest_transcript(&RequestDigestInput { action_id: "", ..base }), empty("action_id"));
-        assert_eq!(request_digest_transcript(&RequestDigestInput { request_id: "", ..base }), empty("request_id"));
-        assert!(request_digest_transcript(&base).is_ok(), "empty parameters are allowed");
+        let (r, h, t) = (
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+        );
+        let base = RequestDigestInput {
+            requester: &r,
+            host: &h,
+            subject: None,
+            instance_id: "s/i1",
+            action_id: "run",
+            parameters: &[],
+            request_id: "r4",
+            target: &t,
+        };
+        let empty = |field: &'static str| -> Result<Vec<u8>> {
+            Err(Error::InvalidField {
+                field,
+                reason: "empty",
+            })
+        };
+        assert_eq!(
+            request_digest_transcript(&RequestDigestInput {
+                subject: Some(""),
+                ..base
+            }),
+            empty("subject")
+        );
+        assert_eq!(
+            request_digest_transcript(&RequestDigestInput {
+                instance_id: "",
+                ..base
+            }),
+            empty("instance_id")
+        );
+        assert_eq!(
+            request_digest_transcript(&RequestDigestInput {
+                action_id: "",
+                ..base
+            }),
+            empty("action_id")
+        );
+        assert_eq!(
+            request_digest_transcript(&RequestDigestInput {
+                request_id: "",
+                ..base
+            }),
+            empty("request_id")
+        );
+        assert!(
+            request_digest_transcript(&base).is_ok(),
+            "empty parameters are allowed"
+        );
     }
 
     #[test]
     fn client_request_digest_layout() {
         use sha2::{Digest, Sha256};
-        let (r, h, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
-        let bare = ClientRequestDigestInput { requester: &r, host: None, resource: None, message_kind: "edit_arrangement", body: &[9, 9], request_id: "r4", target: &t };
-        let mut want = b"identitycrypto.client-request-digest.v1\0".to_vec();
-        want.extend(key_bytes(r.genesis())); want.push(0); want.push(0);
-        want.extend([0, 0, 0, 16]); want.extend(b"edit_arrangement");
-        want.extend([0, 0, 0, 2, 9, 9]); want.extend([0, 0, 0, 2, b'r', b'4']); want.extend(key_bytes(t.genesis()));
-        assert_eq!(client_request_digest_transcript(&bare).unwrap(), want);
-        assert_eq!(client_request_digest(&bare).unwrap().as_slice(), Sha256::digest(&want).as_slice());
-
-        let full = ClientRequestDigestInput { host: Some(&h), resource: Some(("instance", "i1")), ..bare };
+        let (r, h, t) = (
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+        );
+        let bare = ClientRequestDigestInput {
+            requester: &r,
+            host: None,
+            resource: None,
+            message_kind: "edit_arrangement",
+            body: &[9, 9],
+            request_id: "r4",
+            target: &t,
+        };
         let mut want = b"identitycrypto.client-request-digest.v1\0".to_vec();
         want.extend(key_bytes(r.genesis()));
-        want.push(1); want.extend(key_bytes(h.genesis()));
-        want.push(1); want.extend([0, 0, 0, 8]); want.extend(b"instance"); want.extend([0, 0, 0, 2]); want.extend(b"i1");
-        want.extend([0, 0, 0, 16]); want.extend(b"edit_arrangement");
-        want.extend([0, 0, 0, 2, 9, 9]); want.extend([0, 0, 0, 2, b'r', b'4']); want.extend(key_bytes(t.genesis()));
+        want.push(0);
+        want.push(0);
+        want.extend([0, 0, 0, 16]);
+        want.extend(b"edit_arrangement");
+        want.extend([0, 0, 0, 2, 9, 9]);
+        want.extend([0, 0, 0, 2, b'r', b'4']);
+        want.extend(key_bytes(t.genesis()));
+        assert_eq!(client_request_digest_transcript(&bare).unwrap(), want);
+        assert_eq!(
+            client_request_digest(&bare).unwrap().as_slice(),
+            Sha256::digest(&want).as_slice()
+        );
+
+        let full = ClientRequestDigestInput {
+            host: Some(&h),
+            resource: Some(("instance", "i1")),
+            ..bare
+        };
+        let mut want = b"identitycrypto.client-request-digest.v1\0".to_vec();
+        want.extend(key_bytes(r.genesis()));
+        want.push(1);
+        want.extend(key_bytes(h.genesis()));
+        want.push(1);
+        want.extend([0, 0, 0, 8]);
+        want.extend(b"instance");
+        want.extend([0, 0, 0, 2]);
+        want.extend(b"i1");
+        want.extend([0, 0, 0, 16]);
+        want.extend(b"edit_arrangement");
+        want.extend([0, 0, 0, 2, 9, 9]);
+        want.extend([0, 0, 0, 2, b'r', b'4']);
+        want.extend(key_bytes(t.genesis()));
         assert_eq!(client_request_digest_transcript(&full).unwrap(), want);
-        assert_eq!(client_request_digest(&full).unwrap().as_slice(), Sha256::digest(&want).as_slice());
+        assert_eq!(
+            client_request_digest(&full).unwrap().as_slice(),
+            Sha256::digest(&want).as_slice()
+        );
     }
 
     #[test]
     fn client_request_digest_rejects_empty_fields() {
-        let (r, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
-        let base = ClientRequestDigestInput { requester: &r, host: None, resource: Some(("instance", "i1")), message_kind: "start_instance", body: &[], request_id: "r4", target: &t };
-        let empty = |field: &'static str| -> Result<Vec<u8>> { Err(Error::InvalidField { field, reason: "empty" }) };
+        let (r, t) = (
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+        );
+        let base = ClientRequestDigestInput {
+            requester: &r,
+            host: None,
+            resource: Some(("instance", "i1")),
+            message_kind: "start_instance",
+            body: &[],
+            request_id: "r4",
+            target: &t,
+        };
+        let empty = |field: &'static str| -> Result<Vec<u8>> {
+            Err(Error::InvalidField {
+                field,
+                reason: "empty",
+            })
+        };
         let tr = |i: ClientRequestDigestInput<'_>| client_request_digest_transcript(&i);
-        assert_eq!(tr(ClientRequestDigestInput { resource: Some(("", "i1")), ..base }), empty("resource_kind"));
-        assert_eq!(tr(ClientRequestDigestInput { resource: Some(("instance", "")), ..base }), empty("resource_id"));
-        assert_eq!(tr(ClientRequestDigestInput { message_kind: "", ..base }), empty("message_kind"));
-        assert_eq!(tr(ClientRequestDigestInput { request_id: "", ..base }), empty("request_id"));
+        assert_eq!(
+            tr(ClientRequestDigestInput {
+                resource: Some(("", "i1")),
+                ..base
+            }),
+            empty("resource_kind")
+        );
+        assert_eq!(
+            tr(ClientRequestDigestInput {
+                resource: Some(("instance", "")),
+                ..base
+            }),
+            empty("resource_id")
+        );
+        assert_eq!(
+            tr(ClientRequestDigestInput {
+                message_kind: "",
+                ..base
+            }),
+            empty("message_kind")
+        );
+        assert_eq!(
+            tr(ClientRequestDigestInput {
+                request_id: "",
+                ..base
+            }),
+            empty("request_id")
+        );
         // Order when several are empty: resource_kind, resource_id, message_kind, request_id.
-        assert_eq!(tr(ClientRequestDigestInput { resource: Some(("", "")), message_kind: "", request_id: "", ..base }), empty("resource_kind"));
-        assert_eq!(tr(ClientRequestDigestInput { resource: Some(("instance", "")), message_kind: "", request_id: "", ..base }), empty("resource_id"));
-        assert_eq!(tr(ClientRequestDigestInput { message_kind: "", request_id: "", ..base }), empty("message_kind"));
+        assert_eq!(
+            tr(ClientRequestDigestInput {
+                resource: Some(("", "")),
+                message_kind: "",
+                request_id: "",
+                ..base
+            }),
+            empty("resource_kind")
+        );
+        assert_eq!(
+            tr(ClientRequestDigestInput {
+                resource: Some(("instance", "")),
+                message_kind: "",
+                request_id: "",
+                ..base
+            }),
+            empty("resource_id")
+        );
+        assert_eq!(
+            tr(ClientRequestDigestInput {
+                message_kind: "",
+                request_id: "",
+                ..base
+            }),
+            empty("message_kind")
+        );
         // A resource is only checked when present; an empty body is allowed.
-        assert!(tr(ClientRequestDigestInput { resource: None, ..base }).is_ok());
+        assert!(tr(ClientRequestDigestInput {
+            resource: None,
+            ..base
+        })
+        .is_ok());
         assert!(tr(base).is_ok(), "empty body is allowed");
     }
 
     #[test]
     fn client_request_digest_is_sensitive_to_every_field() {
-        let (r, r2) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
-        let (h, h2) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
-        let (t, t2) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
-        let base = ClientRequestDigestInput { requester: &r, host: Some(&h), resource: Some(("instance", "i1")), message_kind: "start_instance", body: &[1, 2, 3], request_id: "r4", target: &t };
+        let (r, r2) = (
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+        );
+        let (h, h2) = (
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+        );
+        let (t, t2) = (
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+        );
+        let base = ClientRequestDigestInput {
+            requester: &r,
+            host: Some(&h),
+            resource: Some(("instance", "i1")),
+            message_kind: "start_instance",
+            body: &[1, 2, 3],
+            request_id: "r4",
+            target: &t,
+        };
         let d = |i: ClientRequestDigestInput<'_>| client_request_digest(&i).unwrap();
         let want = d(base);
         let flips = [
-            ("requester", d(ClientRequestDigestInput { requester: &r2, ..base })),
-            ("host absent", d(ClientRequestDigestInput { host: None, ..base })),
-            ("host", d(ClientRequestDigestInput { host: Some(&h2), ..base })),
-            ("resource absent", d(ClientRequestDigestInput { resource: None, ..base })),
-            ("resource kind", d(ClientRequestDigestInput { resource: Some(("arrangement", "i1")), ..base })),
-            ("resource id", d(ClientRequestDigestInput { resource: Some(("instance", "i2")), ..base })),
-            ("message kind", d(ClientRequestDigestInput { message_kind: "stop_instance", ..base })),
-            ("body", d(ClientRequestDigestInput { body: &[1, 2, 4], ..base })),
-            ("body empty", d(ClientRequestDigestInput { body: &[], ..base })),
-            ("request id", d(ClientRequestDigestInput { request_id: "r5", ..base })),
-            ("target", d(ClientRequestDigestInput { target: &t2, ..base })),
+            (
+                "requester",
+                d(ClientRequestDigestInput {
+                    requester: &r2,
+                    ..base
+                }),
+            ),
+            (
+                "host absent",
+                d(ClientRequestDigestInput { host: None, ..base }),
+            ),
+            (
+                "host",
+                d(ClientRequestDigestInput {
+                    host: Some(&h2),
+                    ..base
+                }),
+            ),
+            (
+                "resource absent",
+                d(ClientRequestDigestInput {
+                    resource: None,
+                    ..base
+                }),
+            ),
+            (
+                "resource kind",
+                d(ClientRequestDigestInput {
+                    resource: Some(("arrangement", "i1")),
+                    ..base
+                }),
+            ),
+            (
+                "resource id",
+                d(ClientRequestDigestInput {
+                    resource: Some(("instance", "i2")),
+                    ..base
+                }),
+            ),
+            (
+                "message kind",
+                d(ClientRequestDigestInput {
+                    message_kind: "stop_instance",
+                    ..base
+                }),
+            ),
+            (
+                "body",
+                d(ClientRequestDigestInput {
+                    body: &[1, 2, 4],
+                    ..base
+                }),
+            ),
+            (
+                "body empty",
+                d(ClientRequestDigestInput { body: &[], ..base }),
+            ),
+            (
+                "request id",
+                d(ClientRequestDigestInput {
+                    request_id: "r5",
+                    ..base
+                }),
+            ),
+            (
+                "target",
+                d(ClientRequestDigestInput {
+                    target: &t2,
+                    ..base
+                }),
+            ),
         ];
-        for (name, got) in &flips { assert_ne!(*got, want, "flipping {name} left the digest unchanged"); }
+        for (name, got) in &flips {
+            assert_ne!(*got, want, "flipping {name} left the digest unchanged");
+        }
         let one_byte = d(ClientRequestDigestInput { body: &[0], ..base });
         let empty = d(ClientRequestDigestInput { body: &[], ..base });
-        assert_ne!(one_byte, empty, "an empty body differs from a one-byte body");
+        assert_ne!(
+            one_byte, empty,
+            "an empty body differs from a one-byte body"
+        );
         // Moving bytes between adjacent variable-length fields must not collide.
-        let a = d(ClientRequestDigestInput { resource: Some(("ab", "c")), ..base });
-        let b = d(ClientRequestDigestInput { resource: Some(("a", "bc")), ..base });
+        let a = d(ClientRequestDigestInput {
+            resource: Some(("ab", "c")),
+            ..base
+        });
+        let b = d(ClientRequestDigestInput {
+            resource: Some(("a", "bc")),
+            ..base
+        });
         assert_ne!(a, b);
     }
 
     #[test]
     fn the_two_digest_forms_never_collide() {
         use sha2::{Digest, Sha256};
-        let (r, h, t) = (PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()), PrincipalId::from_genesis(k()));
-        let agent = RequestDigestInput { requester: &r, host: &h, subject: None, instance_id: "i1", action_id: "run", parameters: &[1], request_id: "r4", target: &t };
-        let client = ClientRequestDigestInput { requester: &r, host: Some(&h), resource: Some(("i1", "run")), message_kind: "run", body: &[1], request_id: "r4", target: &t };
-        assert_ne!(request_digest(&agent).unwrap(), client_request_digest(&client).unwrap());
-        let (a, c) = (request_digest_transcript(&agent).unwrap(), client_request_digest_transcript(&client).unwrap());
+        let (r, h, t) = (
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+            PrincipalId::from_genesis(k()),
+        );
+        let agent = RequestDigestInput {
+            requester: &r,
+            host: &h,
+            subject: None,
+            instance_id: "i1",
+            action_id: "run",
+            parameters: &[1],
+            request_id: "r4",
+            target: &t,
+        };
+        let client = ClientRequestDigestInput {
+            requester: &r,
+            host: Some(&h),
+            resource: Some(("i1", "run")),
+            message_kind: "run",
+            body: &[1],
+            request_id: "r4",
+            target: &t,
+        };
+        assert_ne!(
+            request_digest(&agent).unwrap(),
+            client_request_digest(&client).unwrap()
+        );
+        let (a, c) = (
+            request_digest_transcript(&agent).unwrap(),
+            client_request_digest_transcript(&client).unwrap(),
+        );
         let common = a.iter().zip(&c).take_while(|(x, y)| x == y).count();
-        assert!(common < REQUEST_DIGEST_TAG.len(), "the transcripts diverge inside the tag");
-        assert_eq!(Sha256::digest(&c).as_slice(), client_request_digest(&client).unwrap().as_slice());
+        assert!(
+            common < REQUEST_DIGEST_TAG.len(),
+            "the transcripts diverge inside the tag"
+        );
+        assert_eq!(
+            Sha256::digest(&c).as_slice(),
+            client_request_digest(&client).unwrap().as_slice()
+        );
     }
 
     #[test]
     fn hosted_session_layout() {
         let c = cert1();
         let mut want = b"identitycrypto.hosted-session.v1\0".to_vec();
-        want.extend_from_slice(&session_delegation_transcript(&c).unwrap()[SESSION_DELEGATION_TAG.len() + 1..]);
+        want.extend_from_slice(
+            &session_delegation_transcript(&c).unwrap()[SESSION_DELEGATION_TAG.len() + 1..],
+        );
         assert_eq!(hosted_session_transcript(&c).unwrap(), want);
     }
 
@@ -931,17 +1737,32 @@ mod tests {
     fn hosted_session_requires_mode_1() {
         assert_eq!(
             hosted_session_transcript(&cert0()),
-            Err(Error::InvalidField { field: "mode", reason: "must be 1 for a hosted session" })
+            Err(Error::InvalidField {
+                field: "mode",
+                reason: "must be 1 for a hosted session"
+            })
         );
     }
 
-    fn target(t: pb::target::Target) -> pb::Target { pb::Target { target: Some(t) } }
+    fn target(t: pb::target::Target) -> pb::Target {
+        pb::Target { target: Some(t) }
+    }
 
     fn delivery_base() -> pb::Delivery {
         pb::Delivery {
-            delivery_id: "d".into(), recipient_id: "r".into(), recipient_devices: vec![], sequence: 1,
-            attested_at: Some(crate::Timestamp { seconds: 2, nanos: 3 }), messages: vec![], via: vec![],
-            signer_device: Some(delegation(pb::KeyPurpose::Device)), signature: vec![], names: vec![],
+            delivery_id: "d".into(),
+            recipient_id: "r".into(),
+            recipient_devices: vec![],
+            sequence: 1,
+            attested_at: Some(crate::Timestamp {
+                seconds: 2,
+                nanos: 3,
+            }),
+            messages: vec![],
+            via: vec![],
+            signer_device: Some(delegation(pb::KeyPurpose::Device)),
+            signature: vec![],
+            names: vec![],
         }
     }
 
@@ -949,22 +1770,40 @@ mod tests {
     fn delivery_empty_layout() {
         let d = delivery_base();
         let sd = d.signer_device.as_ref().unwrap();
-        let key = |p: &Option<pb::PublicKey>| key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap());
+        let key = |p: &Option<pb::PublicKey>| {
+            key_bytes(&PublicKey::try_from(p.as_ref().unwrap()).unwrap())
+        };
         let mut want = b"identitycrypto.delivery.v2\0".to_vec();
-        want.extend(key(&sd.principal_genesis)); want.extend(key(&sd.delegated));
-        want.extend([0, 0, 0, 1, b'd']); want.extend([0, 0, 0, 1, b'r']); want.extend([0, 0, 0, 0]);
-        want.extend(1u64.to_be_bytes()); want.extend(2i64.to_be_bytes()); want.extend(3i32.to_be_bytes());
+        want.extend(key(&sd.principal_genesis));
+        want.extend(key(&sd.delegated));
+        want.extend([0, 0, 0, 1, b'd']);
+        want.extend([0, 0, 0, 1, b'r']);
+        want.extend([0, 0, 0, 0]);
+        want.extend(1u64.to_be_bytes());
+        want.extend(2i64.to_be_bytes());
+        want.extend(3i32.to_be_bytes());
         want.extend([0, 0, 0, 0]);
         want.extend([0, 0, 0, 0]); // names
         assert_eq!(delivery_transcript(&d).unwrap(), want);
     }
 
-    fn pid() -> String { PrincipalId::from_genesis(k()).to_string() }
+    fn pid() -> String {
+        PrincipalId::from_genesis(k()).to_string()
+    }
     fn sorted_pids() -> (String, String) {
         let (a, b) = (pid(), pid());
-        if a < b { (a, b) } else { (b, a) }
+        if a < b {
+            (a, b)
+        } else {
+            (b, a)
+        }
     }
-    fn name(id: &str, n: &str) -> pb::PrincipalName { pb::PrincipalName { principal_id: id.into(), name: n.into() } }
+    fn name(id: &str, n: &str) -> pb::PrincipalName {
+        pb::PrincipalName {
+            principal_id: id.into(),
+            name: n.into(),
+        }
+    }
 
     #[test]
     fn delivery_names_layout() {
@@ -976,17 +1815,31 @@ mod tests {
         let got = delivery_transcript(&d).unwrap();
         let prefix = empty.len() - 4;
         assert_eq!(&got[..prefix], &empty[..prefix]);
-        let var = |s: &str| { let mut v = (s.len() as u32).to_be_bytes().to_vec(); v.extend(s.as_bytes()); v };
+        let var = |s: &str| {
+            let mut v = (s.len() as u32).to_be_bytes().to_vec();
+            v.extend(s.as_bytes());
+            v
+        };
         let mut want = vec![0, 0, 0, 2];
-        for (i, n) in [(&a, "alice"), (&b, "bob")] { want.extend(var(i)); want.extend(var(n)); }
+        for (i, n) in [(&a, "alice"), (&b, "bob")] {
+            want.extend(var(i));
+            want.extend(var(n));
+        }
         assert_eq!(&got[prefix..], &want[..]);
     }
 
     #[test]
     fn delivery_names_must_be_sorted_and_unique() {
         let (lo, hi) = sorted_pids();
-        let not_sorted = Err(Error::InvalidField { field: "names", reason: "not sorted" });
-        let run = |names: Vec<pb::PrincipalName>| { let mut d = delivery_base(); d.names = names; delivery_transcript(&d) };
+        let not_sorted = Err(Error::InvalidField {
+            field: "names",
+            reason: "not sorted",
+        });
+        let run = |names: Vec<pb::PrincipalName>| {
+            let mut d = delivery_base();
+            d.names = names;
+            delivery_transcript(&d)
+        };
         assert!(run(vec![name(&lo, "x"), name(&hi, "y")]).is_ok());
         assert_eq!(run(vec![name(&hi, "y"), name(&lo, "x")]), not_sorted);
         assert_eq!(run(vec![name(&lo, "x"), name(&lo, "x")]), not_sorted);
@@ -996,13 +1849,26 @@ mod tests {
     fn delivery_name_must_be_non_empty() {
         let mut d = delivery_base();
         d.names = vec![name(&pid(), "")];
-        assert_eq!(delivery_transcript(&d), Err(Error::InvalidField { field: "names.name", reason: "empty" }));
+        assert_eq!(
+            delivery_transcript(&d),
+            Err(Error::InvalidField {
+                field: "names.name",
+                reason: "empty"
+            })
+        );
     }
 
     #[test]
     fn delivery_name_principal_must_be_canonical() {
-        let run = |id: String| { let mut d = delivery_base(); d.names = vec![name(&id, "x")]; delivery_transcript(&d) };
-        let bad = Err(Error::InvalidField { field: "names.principal_id", reason: "not canonical" });
+        let run = |id: String| {
+            let mut d = delivery_base();
+            d.names = vec![name(&id, "x")];
+            delivery_transcript(&d)
+        };
+        let bad = Err(Error::InvalidField {
+            field: "names.principal_id",
+            reason: "not canonical",
+        });
         assert_eq!(run(pid().to_uppercase().replacen("P256:", "p256:", 1)), bad);
         assert_eq!(run("p256:04".into()), bad);
         assert_eq!(run(String::new()), bad);
@@ -1015,16 +1881,24 @@ mod tests {
         let base = delivery_base();
         let mut d = base.clone();
         d.messages = vec![m.clone()];
-        d.via = vec![pb::Targets { targets: vec![target(T::RoomId("a".into())), target(T::RecipientId("p256:04".into()))] }];
+        d.via = vec![pb::Targets {
+            targets: vec![
+                target(T::RoomId("a".into())),
+                target(T::RecipientId("p256:04".into())),
+            ],
+        }];
         let empty = delivery_transcript(&base).unwrap();
         let prefix = empty.len() - 8;
         let got = delivery_transcript(&d).unwrap();
         assert_eq!(&got[..prefix], &empty[..prefix]);
         let st = signed_message_transcript(&m).unwrap();
         let mut want = vec![0, 0, 0, 1];
-        want.extend((st.len() as u32).to_be_bytes()); want.extend(&st);
-        want.extend((m.signature.len() as u32).to_be_bytes()); want.extend(&m.signature);
-        want.extend([0, 0, 0, 2, 1, 0, 0, 0, 1, b'a', 2, 0, 0, 0, 7]); want.extend(b"p256:04");
+        want.extend((st.len() as u32).to_be_bytes());
+        want.extend(&st);
+        want.extend((m.signature.len() as u32).to_be_bytes());
+        want.extend(&m.signature);
+        want.extend([0, 0, 0, 2, 1, 0, 0, 0, 1, b'a', 2, 0, 0, 0, 7]);
+        want.extend(b"p256:04");
         want.extend([0, 0, 0, 0]); // names
         assert_eq!(&got[prefix..], &want[..]);
     }
@@ -1032,35 +1906,120 @@ mod tests {
     #[test]
     fn delivery_checks() {
         use pb::target::Target as T;
-        let run = |f: &dyn Fn(&mut pb::Delivery)| { let mut d = delivery_base(); f(&mut d); delivery_transcript(&d) };
+        let run = |f: &dyn Fn(&mut pb::Delivery)| {
+            let mut d = delivery_base();
+            f(&mut d);
+            delivery_transcript(&d)
+        };
         let with_msg = |d: &mut pb::Delivery, t: pb::Target| {
             d.messages = vec![message()];
             d.via = vec![pb::Targets { targets: vec![t] }];
         };
-        assert_eq!(run(&|d| d.signer_device = None), Err(Error::MissingField("signer_device")));
-        assert_eq!(run(&|d| d.signer_device.as_mut().unwrap().principal_genesis = None), Err(Error::MissingField("signer_device.principal_genesis")));
-        assert_eq!(run(&|d| d.signer_device.as_mut().unwrap().delegated = None), Err(Error::MissingField("signer_device.delegated")));
-        let off_curve = pb::PublicKey { scheme: 3, key: vec![4; 65] };
+        assert_eq!(
+            run(&|d| d.signer_device = None),
+            Err(Error::MissingField("signer_device"))
+        );
+        assert_eq!(
+            run(&|d| d.signer_device.as_mut().unwrap().principal_genesis = None),
+            Err(Error::MissingField("signer_device.principal_genesis"))
+        );
+        assert_eq!(
+            run(&|d| d.signer_device.as_mut().unwrap().delegated = None),
+            Err(Error::MissingField("signer_device.delegated"))
+        );
+        let off_curve = pb::PublicKey {
+            scheme: 3,
+            key: vec![4; 65],
+        };
         let bad_key = PublicKey::try_from(&off_curve).map(|_| vec![]);
         assert!(bad_key.is_err());
-        assert_eq!(run(&|d| d.signer_device.as_mut().unwrap().delegated = Some(off_curve.clone())), bad_key);
-        assert_eq!(run(&|d| d.delivery_id.clear()), Err(Error::InvalidField { field: "delivery_id", reason: "empty" }));
-        assert_eq!(run(&|d| d.recipient_id.clear()), Err(Error::InvalidField { field: "recipient_id", reason: "empty" }));
-        assert_eq!(run(&|d| d.recipient_devices = vec![off_curve.clone()]), bad_key);
-        assert_eq!(run(&|d| d.attested_at = None), Err(Error::MissingField("attested_at")));
-        assert_eq!(run(&|d| d.attested_at = Some(crate::Timestamp { seconds: 0, nanos: 1_000_000_000 })), Err(Error::InvalidField { field: "attested_at.nanos", reason: "out of range" }));
-        assert_eq!(run(&|d| d.attested_at = Some(crate::Timestamp { seconds: 0, nanos: -1 })), Err(Error::InvalidField { field: "attested_at.nanos", reason: "out of range" }));
-        assert_eq!(run(&|d| d.messages = vec![message()]), Err(Error::InvalidField { field: "via", reason: "one entry per message" }));
-        assert_eq!(run(&|d| d.via = vec![pb::Targets::default()]), Err(Error::InvalidField { field: "via", reason: "one entry per message" }));
+        assert_eq!(
+            run(&|d| d.signer_device.as_mut().unwrap().delegated = Some(off_curve.clone())),
+            bad_key
+        );
+        assert_eq!(
+            run(&|d| d.delivery_id.clear()),
+            Err(Error::InvalidField {
+                field: "delivery_id",
+                reason: "empty"
+            })
+        );
+        assert_eq!(
+            run(&|d| d.recipient_id.clear()),
+            Err(Error::InvalidField {
+                field: "recipient_id",
+                reason: "empty"
+            })
+        );
+        assert_eq!(
+            run(&|d| d.recipient_devices = vec![off_curve.clone()]),
+            bad_key
+        );
+        assert_eq!(
+            run(&|d| d.attested_at = None),
+            Err(Error::MissingField("attested_at"))
+        );
+        assert_eq!(
+            run(&|d| d.attested_at = Some(crate::Timestamp {
+                seconds: 0,
+                nanos: 1_000_000_000
+            })),
+            Err(Error::InvalidField {
+                field: "attested_at.nanos",
+                reason: "out of range"
+            })
+        );
+        assert_eq!(
+            run(&|d| d.attested_at = Some(crate::Timestamp {
+                seconds: 0,
+                nanos: -1
+            })),
+            Err(Error::InvalidField {
+                field: "attested_at.nanos",
+                reason: "out of range"
+            })
+        );
+        assert_eq!(
+            run(&|d| d.messages = vec![message()]),
+            Err(Error::InvalidField {
+                field: "via",
+                reason: "one entry per message"
+            })
+        );
+        assert_eq!(
+            run(&|d| d.via = vec![pb::Targets::default()]),
+            Err(Error::InvalidField {
+                field: "via",
+                reason: "one entry per message"
+            })
+        );
         // A message is checked before its target: a message with no signer is
         // reported even when its target is also missing.
         assert_eq!(
-            run(&|d| { with_msg(d, pb::Target { target: None }); d.messages[0].signer = None; }),
+            run(&|d| {
+                with_msg(d, pb::Target { target: None });
+                d.messages[0].signer = None;
+            }),
             Err(Error::MissingField("signer"))
         );
-        assert_eq!(run(&|d| with_msg(d, pb::Target { target: None })), Err(Error::MissingField("via.target")));
-        assert_eq!(run(&|d| with_msg(d, target(T::RoomId(String::new())))), Err(Error::InvalidField { field: "via.target", reason: "empty" }));
-        assert_eq!(run(&|d| with_msg(d, target(T::RecipientId(String::new())))), Err(Error::InvalidField { field: "via.target", reason: "empty" }));
+        assert_eq!(
+            run(&|d| with_msg(d, pb::Target { target: None })),
+            Err(Error::MissingField("via.target"))
+        );
+        assert_eq!(
+            run(&|d| with_msg(d, target(T::RoomId(String::new())))),
+            Err(Error::InvalidField {
+                field: "via.target",
+                reason: "empty"
+            })
+        );
+        assert_eq!(
+            run(&|d| with_msg(d, target(T::RecipientId(String::new())))),
+            Err(Error::InvalidField {
+                field: "via.target",
+                reason: "empty"
+            })
+        );
         assert!(run(&|d| with_msg(d, target(T::RoomId("a".into())))).is_ok());
     }
 }

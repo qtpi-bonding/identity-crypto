@@ -1,26 +1,26 @@
 #[cfg(not(unix))]
 compile_error!("identity-keyfile writes 0600 key files and needs a unix target");
 
+pub mod document_loader;
 mod error;
 mod files;
 mod keys;
 mod layout;
 mod machine;
 pub mod private_fs;
-pub mod document_loader;
 
-pub use error::{EnrolmentCheck, KeyfileError, VerifyCheck};
 pub use document_loader::{
     Accepted, DocumentError, DocumentLoader, LoaderConfig, Reload, StateWrite, MAX_DOCUMENT_BYTES,
 };
+pub use error::{EnrolmentCheck, KeyfileError, VerifyCheck};
 pub use files::{
     read_delegation, read_duo, read_duo_file, read_history, read_principal_id, read_rotations,
     write_delegation, write_duo, write_history, write_principal_id, write_rotations, AGENT_ID_FILE,
     DELEGATION_FILE, DEVICE_FILE, HISTORY_FILE, LOCK_FILE, ROOT_FILE, ROTATIONS_FILE,
 };
+pub use keys::is_device_only;
 pub use keys::{device_keys_at, read_principal, DeviceKeys, DevicePublic, IdentityKeys};
 pub use layout::IdentityLayout;
-pub use keys::is_device_only;
 pub use machine::{
     enrolment_for, service_identity_dir, DirSource, Enrolment, EnrolmentIndex, MachineDir,
     ENROLMENTS_FILE, MACHINE_IDENTITY_DIR_ENV,

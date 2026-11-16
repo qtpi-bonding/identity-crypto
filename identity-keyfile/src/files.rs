@@ -210,9 +210,7 @@ fn open_lock_file(dir: &Path) -> Result<File, KeyfileError> {
         .open(&p)
         .map_err(|e| match e.kind() {
             ErrorKind::NotFound => KeyfileError::Missing(p.clone()),
-            _ if e.raw_os_error() == Some(libc::ELOOP) => {
-                KeyfileError::InsecureFile(p.clone())
-            }
+            _ if e.raw_os_error() == Some(libc::ELOOP) => KeyfileError::InsecureFile(p.clone()),
             _ => io(&p, e),
         })?;
     private_fs::check_private_file_handle(&file, &p)?;

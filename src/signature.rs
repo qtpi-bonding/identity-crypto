@@ -43,7 +43,11 @@ pub fn verify_p256(key: &PublicKey, message: &[u8], signature: &[u8]) -> Result<
         return Err(Error::EmptySignature);
     }
     if signature.len() != 64 {
-        return Err(Error::BadLength { field: "signature", expected: 64, actual: signature.len() });
+        return Err(Error::BadLength {
+            field: "signature",
+            expected: 64,
+            actual: signature.len(),
+        });
     }
     let verifier = jwk_duo::SigningKeyPair::import_public_key_raw(key.as_bytes())
         .map_err(|e| Error::InvalidKey(e.to_string()))?;
@@ -52,7 +56,10 @@ pub fn verify_p256(key: &PublicKey, message: &[u8], signature: &[u8]) -> Result<
     }
     let mut message_sha256 = [0u8; 32];
     message_sha256.copy_from_slice(&Sha256::digest(message));
-    Ok(VerifiedSignature { key: key.clone(), message_sha256 })
+    Ok(VerifiedSignature {
+        key: key.clone(),
+        message_sha256,
+    })
 }
 
 #[cfg(test)]
@@ -61,8 +68,9 @@ mod tests {
     use crate::jwk_duo::SigningKeyPair;
 
     const N: [u8; 32] = [
-        0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
-        0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
+        0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9, 0xca, 0xc2, 0xfc, 0x63,
+        0x25, 0x51,
     ];
 
     /// n − s, big-endian, for the high-S twin.
@@ -71,7 +79,12 @@ mod tests {
         let mut borrow = 0i16;
         for i in (0..32).rev() {
             let mut d = N[i] as i16 - s[i] as i16 - borrow;
-            borrow = if d < 0 { d += 256; 1 } else { 0 };
+            borrow = if d < 0 {
+                d += 256;
+                1
+            } else {
+                0
+            };
             out[i] = d as u8;
         }
         out
@@ -94,20 +107,36 @@ mod tests {
     #[test]
     fn rejections() {
         let (k, sig) = signed(b"hello");
-        assert_eq!(verify_p256(&k, b"hellO", &sig).unwrap_err(), Error::BadSignature);
+        assert_eq!(
+            verify_p256(&k, b"hellO", &sig).unwrap_err(),
+            Error::BadSignature
+        );
         let (other, _) = signed(b"x");
-        assert_eq!(verify_p256(&other, b"hello", &sig).unwrap_err(), Error::BadSignature);
-        assert_eq!(verify_p256(&k, b"hello", &[]).unwrap_err(), Error::EmptySignature);
+        assert_eq!(
+            verify_p256(&other, b"hello", &sig).unwrap_err(),
+            Error::BadSignature
+        );
+        assert_eq!(
+            verify_p256(&k, b"hello", &[]).unwrap_err(),
+            Error::EmptySignature
+        );
         for len in [63usize, 65] {
             let mut s = sig.to_vec();
             s.resize(len, 0);
             assert_eq!(
                 verify_p256(&k, b"hello", &s).unwrap_err(),
-                Error::BadLength { field: "signature", expected: 64, actual: len }
+                Error::BadLength {
+                    field: "signature",
+                    expected: 64,
+                    actual: len
+                }
             );
         }
         let der = SigningKeyPair::signature_to_der(&sig).unwrap();
-        assert!(matches!(verify_p256(&k, b"hello", &der), Err(Error::BadLength { .. })));
+        assert!(matches!(
+            verify_p256(&k, b"hello", &der),
+            Err(Error::BadLength { .. })
+        ));
     }
 
     #[test]
@@ -141,7 +170,10 @@ mod tests {
         s_is_n[32..].copy_from_slice(&N);
         let ones = [0xffu8; 64];
         for bad in [zero_r, zero_s, s_is_n, ones] {
-            assert_eq!(verify_p256(&k, b"hello", &bad).unwrap_err(), Error::BadSignature);
+            assert_eq!(
+                verify_p256(&k, b"hello", &bad).unwrap_err(),
+                Error::BadSignature
+            );
         }
     }
 }

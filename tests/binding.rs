@@ -14,13 +14,21 @@ fn pk() -> Option<pb::PublicKey> {
 
 type Mutation<T> = (&'static str, Box<dyn Fn(&mut T)>);
 
-fn assert_binds<T: Clone>(name: &str, base: T, f: impl Fn(&T) -> Result<Vec<u8>>, mutations: Vec<Mutation<T>>) {
+fn assert_binds<T: Clone>(
+    name: &str,
+    base: T,
+    f: impl Fn(&T) -> Result<Vec<u8>>,
+    mutations: Vec<Mutation<T>>,
+) {
     let baseline = f(&base).unwrap_or_else(|e| panic!("{name} baseline: {e}"));
     for (field, mutate) in mutations {
         let mut changed = base.clone();
         mutate(&mut changed);
         let out = f(&changed).unwrap_or_else(|e| panic!("{name}.{field}: {e}"));
-        assert_ne!(out, baseline, "{name}: changing {field} must change the transcript");
+        assert_ne!(
+            out, baseline,
+            "{name}: changing {field} must change the transcript"
+        );
     }
 }
 
@@ -32,7 +40,11 @@ fn cert(mode: u32) -> pb::DelegationCert {
         device,
         session: pk(),
         host_genesis: if mode == 1 { pk() } else { None },
-        subject: if mode == 1 { Some("aaaaaaaaaaaaaaaa/i1".into()) } else { None },
+        subject: if mode == 1 {
+            Some("aaaaaaaaaaaaaaaa/i1".into())
+        } else {
+            None
+        },
         not_before_unix_seconds: 1,
         not_after_unix_seconds: 2,
         signature: vec![1; 64],
@@ -63,7 +75,10 @@ fn principal_rename_binds_every_field() {
         |(n, p, name)| principal_rename_transcript(n, p, name),
         vec![
             ("nonce", Box::new(|b| b.0.push(2))),
-            ("principal", Box::new(|b| b.1 = PrincipalId::from_genesis(k()))),
+            (
+                "principal",
+                Box::new(|b| b.1 = PrincipalId::from_genesis(k())),
+            ),
             ("new_name", Box::new(|b| b.2.push('x'))),
         ],
     );
@@ -73,8 +88,13 @@ fn principal_rename_binds_every_field() {
 fn key_delegation_binds_every_field() {
     let root = pk();
     let base = pb::KeyDelegation {
-        principal_genesis: root.clone(), signing_root: root, purpose: pb::KeyPurpose::Device as i32,
-        delegated: pk(), delegated_encryption: pk(), issued_at_unix_seconds: 1, not_after_unix_seconds: 2,
+        principal_genesis: root.clone(),
+        signing_root: root,
+        purpose: pb::KeyPurpose::Device as i32,
+        delegated: pk(),
+        delegated_encryption: pk(),
+        issued_at_unix_seconds: 1,
+        not_after_unix_seconds: 2,
         signature: vec![],
     };
     assert_binds(
@@ -82,14 +102,23 @@ fn key_delegation_binds_every_field() {
         base,
         key_delegation_transcript,
         vec![
-            ("principal_genesis", Box::new(|d| d.principal_genesis = pk())),
+            (
+                "principal_genesis",
+                Box::new(|d| d.principal_genesis = pk()),
+            ),
             ("signing_root", Box::new(|d| d.signing_root = pk())),
-            ("purpose", Box::new(|d| {
-                d.purpose = pb::KeyPurpose::Approval as i32;
-                d.delegated_encryption = None;
-            })),
+            (
+                "purpose",
+                Box::new(|d| {
+                    d.purpose = pb::KeyPurpose::Approval as i32;
+                    d.delegated_encryption = None;
+                }),
+            ),
             ("delegated", Box::new(|d| d.delegated = pk())),
-            ("delegated_encryption", Box::new(|d| d.delegated_encryption = pk())),
+            (
+                "delegated_encryption",
+                Box::new(|d| d.delegated_encryption = pk()),
+            ),
             ("issued_at", Box::new(|d| d.issued_at_unix_seconds += 1)),
             ("not_after", Box::new(|d| d.not_after_unix_seconds += 1)),
         ],
@@ -99,28 +128,42 @@ fn key_delegation_binds_every_field() {
 #[test]
 fn key_revocation_and_rotation_bind_every_field() {
     let base = pb::KeyRevocation {
-        principal_genesis: pk(), revoked: pk(), revoked_by: pk(), revoked_at_unix_seconds: 1, signature: vec![],
+        principal_genesis: pk(),
+        revoked: pk(),
+        revoked_by: pk(),
+        revoked_at_unix_seconds: 1,
+        signature: vec![],
     };
     assert_binds(
         "key_revocation",
         base,
         key_revocation_transcript,
         vec![
-            ("principal_genesis", Box::new(|r| r.principal_genesis = pk())),
+            (
+                "principal_genesis",
+                Box::new(|r| r.principal_genesis = pk()),
+            ),
             ("revoked", Box::new(|r| r.revoked = pk())),
             ("revoked_by", Box::new(|r| r.revoked_by = pk())),
             ("revoked_at", Box::new(|r| r.revoked_at_unix_seconds += 1)),
         ],
     );
     let base = pb::RootRotation {
-        principal_genesis: pk(), old_root: pk(), new_root: pk(), issued_at_unix_seconds: 1, signature: vec![],
+        principal_genesis: pk(),
+        old_root: pk(),
+        new_root: pk(),
+        issued_at_unix_seconds: 1,
+        signature: vec![],
     };
     assert_binds(
         "root_rotation",
         base,
         root_rotation_transcript,
         vec![
-            ("principal_genesis", Box::new(|r| r.principal_genesis = pk())),
+            (
+                "principal_genesis",
+                Box::new(|r| r.principal_genesis = pk()),
+            ),
             ("old_root", Box::new(|r| r.old_root = pk())),
             ("new_root", Box::new(|r| r.new_root = pk())),
             ("issued_at", Box::new(|r| r.issued_at_unix_seconds += 1)),
@@ -135,14 +178,23 @@ fn session_delegation_binds_every_field() {
         cert(1),
         session_delegation_transcript,
         vec![
-            ("mode", Box::new(|c| {
-                c.mode = 0;
-                c.host_genesis = None;
-                c.subject = None;
-            })),
-            ("principal_genesis", Box::new(|c| c.principal_genesis = pk())),
+            (
+                "mode",
+                Box::new(|c| {
+                    c.mode = 0;
+                    c.host_genesis = None;
+                    c.subject = None;
+                }),
+            ),
+            (
+                "principal_genesis",
+                Box::new(|c| c.principal_genesis = pk()),
+            ),
             ("host_genesis", Box::new(|c| c.host_genesis = pk())),
-            ("subject", Box::new(|c| c.subject.as_mut().unwrap().push('x'))),
+            (
+                "subject",
+                Box::new(|c| c.subject.as_mut().unwrap().push('x')),
+            ),
             ("device", Box::new(|c| c.device = pk())),
             ("session", Box::new(|c| c.session = pk())),
             ("not_before", Box::new(|c| c.not_before_unix_seconds += 1)),
@@ -155,13 +207,23 @@ fn session_delegation_binds_every_field() {
 fn signed_message_binds_every_field_and_present_empty_differs_from_absent() {
     let base = pb::SignedMessage {
         signer: Some(pb::SignerChain {
-            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session: Some(cert(0)) })),
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: None,
+                session: Some(cert(0)),
+            })),
         }),
-        audience: "a".into(), nonce: vec![1; 16], issued_at_unix_seconds: 1, in_reply_to_nonce: None,
-        body_type: "t".into(), body: vec![], signature: vec![],
+        audience: "a".into(),
+        nonce: vec![1; 16],
+        issued_at_unix_seconds: 1,
+        in_reply_to_nonce: None,
+        body_type: "t".into(),
+        body: vec![],
+        signature: vec![],
     };
     let set_session = |m: &mut pb::SignedMessage, f: &dyn Fn(&mut pb::DelegationCert)| {
-        if let Some(pb::signer_chain::Chain::SelfRooted(s)) = m.signer.as_mut().and_then(|s| s.chain.as_mut()) {
+        if let Some(pb::signer_chain::Chain::SelfRooted(s)) =
+            m.signer.as_mut().and_then(|s| s.chain.as_mut())
+        {
             f(s.session.as_mut().unwrap());
         }
     };
@@ -170,12 +232,21 @@ fn signed_message_binds_every_field_and_present_empty_differs_from_absent() {
         base.clone(),
         signed_message_transcript,
         vec![
-            ("principal", Box::new(move |m| set_session(m, &|c| c.principal_genesis = pk()))),
-            ("session", Box::new(move |m| set_session(m, &|c| c.session = pk()))),
+            (
+                "principal",
+                Box::new(move |m| set_session(m, &|c| c.principal_genesis = pk())),
+            ),
+            (
+                "session",
+                Box::new(move |m| set_session(m, &|c| c.session = pk())),
+            ),
             ("audience", Box::new(|m| m.audience.push('x'))),
             ("nonce", Box::new(|m| m.nonce[0] = 2)),
             ("issued_at", Box::new(|m| m.issued_at_unix_seconds += 1)),
-            ("in_reply_to_nonce", Box::new(|m| m.in_reply_to_nonce = Some(vec![0; 16]))),
+            (
+                "in_reply_to_nonce",
+                Box::new(|m| m.in_reply_to_nonce = Some(vec![0; 16])),
+            ),
             ("body_type", Box::new(|m| m.body_type.push('x'))),
             ("body", Box::new(|m| m.body.push(1))),
         ],
@@ -184,14 +255,24 @@ fn signed_message_binds_every_field_and_present_empty_differs_from_absent() {
     // the rest is identical.
     let mut replying = base.clone();
     replying.in_reply_to_nonce = Some(vec![0; 16]);
-    assert_ne!(signed_message_transcript(&base).unwrap(), signed_message_transcript(&replying).unwrap());
+    assert_ne!(
+        signed_message_transcript(&base).unwrap(),
+        signed_message_transcript(&replying).unwrap()
+    );
 }
 
 #[test]
 fn signed_document_approval_and_peer_revocation_bind_every_field() {
     let base = pb::SignedDocument {
-        signer_genesis: pk(), signing: pk(), document_type: "t".into(), version: 1, issued_at_unix_seconds: 1,
-        expires_at_unix_seconds: 2, body: vec![1], signature: vec![], signer_rotations: vec![],
+        signer_genesis: pk(),
+        signing: pk(),
+        document_type: "t".into(),
+        version: 1,
+        issued_at_unix_seconds: 1,
+        expires_at_unix_seconds: 2,
+        body: vec![1],
+        signature: vec![],
+        signer_rotations: vec![],
     };
     assert_binds(
         "signed_document",
@@ -208,15 +289,25 @@ fn signed_document_approval_and_peer_revocation_bind_every_field() {
         ],
     );
     let base = pb::Approval {
-        principal_genesis: pk(), approval_key: pk(), device: pk(), audience: "a".into(), request_id: "r".into(),
-        request_digest: vec![0; 32], accept: true, issued_at_unix_seconds: 1, signature: vec![],
+        principal_genesis: pk(),
+        approval_key: pk(),
+        device: pk(),
+        audience: "a".into(),
+        request_id: "r".into(),
+        request_digest: vec![0; 32],
+        accept: true,
+        issued_at_unix_seconds: 1,
+        signature: vec![],
     };
     assert_binds(
         "approval",
         base,
         approval_transcript,
         vec![
-            ("principal_genesis", Box::new(|a| a.principal_genesis = pk())),
+            (
+                "principal_genesis",
+                Box::new(|a| a.principal_genesis = pk()),
+            ),
             ("approval_key", Box::new(|a| a.approval_key = pk())),
             ("device", Box::new(|a| a.device = pk())),
             ("audience", Box::new(|a| a.audience.push('x'))),
@@ -227,8 +318,13 @@ fn signed_document_approval_and_peer_revocation_bind_every_field() {
         ],
     );
     let base = pb::PeerRevocation {
-        revoker_genesis: pk(), approval_key: pk(), target_genesis: pk(), revoked: None,
-        issued_at_unix_seconds: 1, signature: vec![], document_id: vec![7; 32],
+        revoker_genesis: pk(),
+        approval_key: pk(),
+        target_genesis: pk(),
+        revoked: None,
+        issued_at_unix_seconds: 1,
+        signature: vec![],
+        document_id: vec![7; 32],
     };
     assert_binds(
         "peer_revocation",
@@ -249,22 +345,80 @@ fn signed_document_approval_and_peer_revocation_bind_every_field() {
 fn request_digest_binds_every_field() {
     let ids: Vec<PrincipalId> = (0..6).map(|_| PrincipalId::from_genesis(k())).collect();
     let base = RequestDigestInput {
-        requester: &ids[0], host: &ids[1], subject: Some("s/i1"), instance_id: "s/i1",
-        action_id: "run", parameters: &[1], request_id: "r4", target: &ids[2],
+        requester: &ids[0],
+        host: &ids[1],
+        subject: Some("s/i1"),
+        instance_id: "s/i1",
+        action_id: "run",
+        parameters: &[1],
+        request_id: "r4",
+        target: &ids[2],
     };
     let baseline = request_digest_transcript(&base).unwrap();
     let changed = [
-        ("requester", RequestDigestInput { requester: &ids[3], ..base }),
-        ("host", RequestDigestInput { host: &ids[4], ..base }),
-        ("subject", RequestDigestInput { subject: None, ..base }),
-        ("instance_id", RequestDigestInput { instance_id: "s/i2", ..base }),
-        ("action_id", RequestDigestInput { action_id: "stop", ..base }),
-        ("parameters", RequestDigestInput { parameters: &[2], ..base }),
-        ("request_id", RequestDigestInput { request_id: "r5", ..base }),
-        ("target", RequestDigestInput { target: &ids[5], ..base }),
+        (
+            "requester",
+            RequestDigestInput {
+                requester: &ids[3],
+                ..base
+            },
+        ),
+        (
+            "host",
+            RequestDigestInput {
+                host: &ids[4],
+                ..base
+            },
+        ),
+        (
+            "subject",
+            RequestDigestInput {
+                subject: None,
+                ..base
+            },
+        ),
+        (
+            "instance_id",
+            RequestDigestInput {
+                instance_id: "s/i2",
+                ..base
+            },
+        ),
+        (
+            "action_id",
+            RequestDigestInput {
+                action_id: "stop",
+                ..base
+            },
+        ),
+        (
+            "parameters",
+            RequestDigestInput {
+                parameters: &[2],
+                ..base
+            },
+        ),
+        (
+            "request_id",
+            RequestDigestInput {
+                request_id: "r5",
+                ..base
+            },
+        ),
+        (
+            "target",
+            RequestDigestInput {
+                target: &ids[5],
+                ..base
+            },
+        ),
     ];
     for (field, input) in changed {
-        assert_ne!(request_digest_transcript(&input).unwrap(), baseline, "request_digest: {field}");
+        assert_ne!(
+            request_digest_transcript(&input).unwrap(),
+            baseline,
+            "request_digest: {field}"
+        );
     }
 }
 
@@ -289,9 +443,15 @@ fn hosted_session_binds_every_field() {
         cert(1),
         hosted_session_transcript,
         vec![
-            ("principal_genesis", Box::new(|c| c.principal_genesis = pk())),
+            (
+                "principal_genesis",
+                Box::new(|c| c.principal_genesis = pk()),
+            ),
             ("host_genesis", Box::new(|c| c.host_genesis = pk())),
-            ("subject", Box::new(|c| c.subject.as_mut().unwrap().push('x'))),
+            (
+                "subject",
+                Box::new(|c| c.subject.as_mut().unwrap().push('x')),
+            ),
             ("device", Box::new(|c| c.device = pk())),
             ("session", Box::new(|c| c.session = pk())),
             ("not_before", Box::new(|c| c.not_before_unix_seconds += 1)),
@@ -303,30 +463,56 @@ fn hosted_session_binds_every_field() {
 fn signed(body: u8) -> pb::SignedMessage {
     pb::SignedMessage {
         signer: Some(pb::SignerChain {
-            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session: Some(cert(0)) })),
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: None,
+                session: Some(cert(0)),
+            })),
         }),
-        audience: "a".into(), nonce: vec![1; 16], issued_at_unix_seconds: 1, in_reply_to_nonce: None,
-        body_type: "t".into(), body: vec![body], signature: vec![9; 64],
+        audience: "a".into(),
+        nonce: vec![1; 16],
+        issued_at_unix_seconds: 1,
+        in_reply_to_nonce: None,
+        body_type: "t".into(),
+        body: vec![body],
+        signature: vec![9; 64],
     }
 }
 
 fn room(s: &str) -> pb::Target {
-    pb::Target { target: Some(pb::target::Target::RoomId(s.into())) }
+    pb::Target {
+        target: Some(pb::target::Target::RoomId(s.into())),
+    }
 }
 fn recipient(s: &str) -> pb::Target {
-    pb::Target { target: Some(pb::target::Target::RecipientId(s.into())) }
+    pb::Target {
+        target: Some(pb::target::Target::RecipientId(s.into())),
+    }
 }
 
 fn delivery() -> pb::Delivery {
     pb::Delivery {
-        delivery_id: "d-1".into(), recipient_id: "p256:aa".into(), recipient_devices: vec![pb::PublicKey::from(&k())],
-        sequence: 7, attested_at: Some(identity_crypto::Timestamp { seconds: 100, nanos: 5 }),
-        messages: vec![signed(1)], via: vec![pb::Targets { targets: vec![room("design")] }],
+        delivery_id: "d-1".into(),
+        recipient_id: "p256:aa".into(),
+        recipient_devices: vec![pb::PublicKey::from(&k())],
+        sequence: 7,
+        attested_at: Some(identity_crypto::Timestamp {
+            seconds: 100,
+            nanos: 5,
+        }),
+        messages: vec![signed(1)],
+        via: vec![pb::Targets {
+            targets: vec![room("design")],
+        }],
         signer_device: Some(pb::KeyDelegation {
-            principal_genesis: pk(), delegated: pk(), ..Default::default()
+            principal_genesis: pk(),
+            delegated: pk(),
+            ..Default::default()
         }),
         signature: vec![],
-        names: vec![pb::PrincipalName { principal_id: PrincipalId::from_genesis(k()).to_string(), name: "alice".into() }],
+        names: vec![pb::PrincipalName {
+            principal_id: PrincipalId::from_genesis(k()).to_string(),
+            name: "alice".into(),
+        }],
     }
 }
 
@@ -337,21 +523,48 @@ fn delivery_binds_every_field() {
         delivery(),
         delivery_transcript,
         vec![
-            ("signer_device.principal_genesis", Box::new(|d| d.signer_device.as_mut().unwrap().principal_genesis = pk())),
-            ("signer_device.delegated", Box::new(|d| d.signer_device.as_mut().unwrap().delegated = pk())),
+            (
+                "signer_device.principal_genesis",
+                Box::new(|d| d.signer_device.as_mut().unwrap().principal_genesis = pk()),
+            ),
+            (
+                "signer_device.delegated",
+                Box::new(|d| d.signer_device.as_mut().unwrap().delegated = pk()),
+            ),
             ("delivery_id", Box::new(|d| d.delivery_id.push('x'))),
             ("recipient_id", Box::new(|d| d.recipient_id.push('x'))),
-            ("recipient_devices", Box::new(|d| d.recipient_devices.push(pb::PublicKey::from(&k())))),
+            (
+                "recipient_devices",
+                Box::new(|d| d.recipient_devices.push(pb::PublicKey::from(&k()))),
+            ),
             ("sequence", Box::new(|d| d.sequence += 1)),
-            ("attested_at.seconds", Box::new(|d| d.attested_at.as_mut().unwrap().seconds += 1)),
-            ("attested_at.nanos", Box::new(|d| d.attested_at.as_mut().unwrap().nanos += 1)),
+            (
+                "attested_at.seconds",
+                Box::new(|d| d.attested_at.as_mut().unwrap().seconds += 1),
+            ),
+            (
+                "attested_at.nanos",
+                Box::new(|d| d.attested_at.as_mut().unwrap().nanos += 1),
+            ),
             ("messages[0].body", Box::new(|d| d.messages[0].body.push(2))),
-            ("messages[0].signature", Box::new(|d| d.messages[0].signature[0] ^= 1)),
-            ("via[0] room to recipient", Box::new(|d| d.via[0].targets[0] = recipient("design"))),
+            (
+                "messages[0].signature",
+                Box::new(|d| d.messages[0].signature[0] ^= 1),
+            ),
+            (
+                "via[0] room to recipient",
+                Box::new(|d| d.via[0].targets[0] = recipient("design")),
+            ),
             ("names[0].name", Box::new(|d| d.names[0].name.push('x'))),
-            ("names[0].principal_id", Box::new(|d| d.names[0].principal_id = PrincipalId::from_genesis(k()).to_string())),
+            (
+                "names[0].principal_id",
+                Box::new(|d| d.names[0].principal_id = PrincipalId::from_genesis(k()).to_string()),
+            ),
             ("names cleared", Box::new(|d| d.names.clear())),
-            ("via[0] push", Box::new(|d| d.via[0].targets.push(room("other")))),
+            (
+                "via[0] push",
+                Box::new(|d| d.via[0].targets.push(room("other"))),
+            ),
         ],
     );
 }
@@ -362,8 +575,12 @@ fn delivery_entry_boundaries_do_not_collide() {
         let mut d = delivery();
         d.messages = vec![signed(1), signed(2)];
         d.via = vec![
-            pb::Targets { targets: vec![room(first)] },
-            pb::Targets { targets: vec![room(second)] },
+            pb::Targets {
+                targets: vec![room(first)],
+            },
+            pb::Targets {
+                targets: vec![room(second)],
+            },
         ];
         delivery_transcript(&d).unwrap()
     };

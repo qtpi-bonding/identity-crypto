@@ -182,11 +182,7 @@ mod tests {
         // Return to the genesis root: a return to a retired root.
         let mut back = fleet.registry();
         back.entries[1].rotations.clear();
-        back.entries[1]
-            .current_root
-            .as_mut()
-            .unwrap()
-            .signing = pk(&fleet.daemon.genesis());
+        back.entries[1].current_root.as_mut().unwrap().signing = pk(&fleet.daemon.genesis());
         let resolver = resolver_for(&fleet.owner, back).unwrap();
         assert!(matches!(
             resolver.check_successor(&second),
@@ -211,15 +207,12 @@ mod tests {
             issued_at_unix_seconds: T0,
             signature: vec![],
         };
-        fork.signature = fleet.daemon.root_at(0).sign(
-            &crate::transcripts::root_rotation_transcript(&fork).unwrap(),
-        );
+        fork.signature = fleet
+            .daemon
+            .root_at(0)
+            .sign(&crate::transcripts::root_rotation_transcript(&fork).unwrap());
         let mut registry = fleet.registry();
-        registry.entries[1]
-            .current_root
-            .as_mut()
-            .unwrap()
-            .signing = fork.new_root.clone();
+        registry.entries[1].current_root.as_mut().unwrap().signing = fork.new_root.clone();
         registry.entries[1].rotations = vec![fork];
         let resolver = resolver_for(&fleet.owner, registry).unwrap();
         assert!(matches!(
@@ -285,7 +278,9 @@ mod tests {
     fn service_kind_round_trips_through_accepted_chains() {
         let mut fleet = Fleet::new();
         let service = Principal::new();
-        fleet.extra.push(entry(&service, pb::PrincipalKind::Service));
+        fleet
+            .extra
+            .push(entry(&service, pb::PrincipalKind::Service));
         let accepted = fleet
             .resolver()
             .check_successor(&AcceptedChains::empty())

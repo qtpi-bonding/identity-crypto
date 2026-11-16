@@ -13,7 +13,11 @@ pub trait Signer: Send + Sync {
     fn public_key(&self) -> PublicKey;
     fn sign(&self, message: &[u8]) -> std::result::Result<Signature, SignerError>;
     /// `reason` is user-facing text a prompting backend may show; the default ignores it.
-    fn sign_for(&self, message: &[u8], reason: &str) -> std::result::Result<Signature, SignerError> {
+    fn sign_for(
+        &self,
+        message: &[u8],
+        reason: &str,
+    ) -> std::result::Result<Signature, SignerError> {
         let _ = reason;
         self.sign(message)
     }
@@ -55,7 +59,10 @@ pub enum SignerError {
     Backend(String),
 }
 
-fn sign_with_pair(pair: &jwk_duo::SigningKeyPair, message: &[u8]) -> std::result::Result<Signature, SignerError> {
+fn sign_with_pair(
+    pair: &jwk_duo::SigningKeyPair,
+    message: &[u8],
+) -> std::result::Result<Signature, SignerError> {
     if !pair.has_private_key() {
         return Err(SignerError::Unavailable);
     }
@@ -93,7 +100,11 @@ impl<S: Signer + ?Sized> Signer for &S {
         (**self).sign(message)
     }
 
-    fn sign_for(&self, message: &[u8], reason: &str) -> std::result::Result<Signature, SignerError> {
+    fn sign_for(
+        &self,
+        message: &[u8],
+        reason: &str,
+    ) -> std::result::Result<Signature, SignerError> {
         (**self).sign_for(message, reason)
     }
 }
@@ -107,7 +118,11 @@ impl<S: Signer + ?Sized> Signer for Box<S> {
         (**self).sign(message)
     }
 
-    fn sign_for(&self, message: &[u8], reason: &str) -> std::result::Result<Signature, SignerError> {
+    fn sign_for(
+        &self,
+        message: &[u8],
+        reason: &str,
+    ) -> std::result::Result<Signature, SignerError> {
         (**self).sign_for(message, reason)
     }
 }
@@ -121,13 +136,21 @@ impl<S: Signer + ?Sized> Signer for Arc<S> {
         (**self).sign(message)
     }
 
-    fn sign_for(&self, message: &[u8], reason: &str) -> std::result::Result<Signature, SignerError> {
+    fn sign_for(
+        &self,
+        message: &[u8],
+        reason: &str,
+    ) -> std::result::Result<Signature, SignerError> {
         (**self).sign_for(message, reason)
     }
 }
 
 /// Verifies `signature` over `message` under `key`, by the key's own scheme.
-pub fn verify_signature(key: &PublicKey, message: &[u8], signature: &Signature) -> Result<VerifiedSignature> {
+pub fn verify_signature(
+    key: &PublicKey,
+    message: &[u8],
+    signature: &Signature,
+) -> Result<VerifiedSignature> {
     match key.scheme() {
         crate::pb::KeyScheme::EcdsaP256 => verify_p256(key, message, signature.as_bytes()),
         _ => Err(Error::UnsupportedScheme(key.scheme() as i32)),
@@ -135,7 +158,10 @@ pub fn verify_signature(key: &PublicKey, message: &[u8], signature: &Signature) 
 }
 
 /// The one signing helper every builder uses: maps `SignerError` to `Error::Signer`.
-pub(crate) fn sign_transcript<S: Signer + ?Sized>(signer: &S, transcript: &[u8]) -> Result<Vec<u8>> {
+pub(crate) fn sign_transcript<S: Signer + ?Sized>(
+    signer: &S,
+    transcript: &[u8],
+) -> Result<Vec<u8>> {
     signer
         .sign(transcript)
         .map(Signature::into_bytes)

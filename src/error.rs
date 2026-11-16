@@ -55,7 +55,10 @@ pub enum Error {
     #[error("signing key is not the current root")]
     NotCurrentRoot,
     #[error("invalid registry: {field}: {reason}")]
-    InvalidRegistry { field: &'static str, reason: &'static str },
+    InvalidRegistry {
+        field: &'static str,
+        reason: &'static str,
+    },
     #[error("unknown principal")]
     UnknownPrincipal,
     #[error("wrong principal kind")]
@@ -96,8 +99,15 @@ mod tests {
 
     #[test]
     fn messages_name_the_field() {
-        let e = Error::BadLength { field: "nonce", expected: 16, actual: 15 };
+        let e = Error::BadLength {
+            field: "nonce",
+            expected: 16,
+            actual: 15,
+        };
         assert_eq!(e.to_string(), "nonce must be 16 bytes, got 15");
-        assert_eq!(Error::MissingField("signer.chain").to_string(), "missing field signer.chain");
+        assert_eq!(
+            Error::MissingField("signer.chain").to_string(),
+            "missing field signer.chain"
+        );
     }
 }

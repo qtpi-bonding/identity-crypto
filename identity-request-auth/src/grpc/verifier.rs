@@ -1,8 +1,8 @@
+use super::devices::TrustedDevices;
 use crate::{
     check_request, claimed_genesis, precheck_request, AuthError, ClockTolerance, LookupError,
     NonceCache, NonceCaps, TrustedDeviceSet, VerifiedCaller,
 };
-use super::devices::TrustedDevices;
 use identity_crypto::{pb, Timestamp};
 use std::sync::Mutex;
 

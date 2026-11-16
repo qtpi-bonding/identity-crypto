@@ -193,11 +193,15 @@ fn adopt_root_refuses_owner_principal_when_already_adopted() {
     // Still loads with no refusal, or with a different principal.
     let other = principal_id(&generate());
     assert_eq!(
-        IdentityKeys::adopt_root(&dir, NOW, TTL, None).unwrap().principal_id,
+        IdentityKeys::adopt_root(&dir, NOW, TTL, None)
+            .unwrap()
+            .principal_id,
         id
     );
     assert_eq!(
-        IdentityKeys::adopt_root(&dir, NOW, TTL, Some(&other)).unwrap().principal_id,
+        IdentityKeys::adopt_root(&dir, NOW, TTL, Some(&other))
+            .unwrap()
+            .principal_id,
         id
     );
 
@@ -210,7 +214,9 @@ fn adopt_root_refuses_owner_principal_when_already_adopted() {
         Err(KeyfileError::OwnerRoot)
     ));
     assert_eq!(
-        IdentityKeys::adopt_root(&dir2, NOW, TTL, Some(&other)).unwrap().principal_id,
+        IdentityKeys::adopt_root(&dir2, NOW, TTL, Some(&other))
+            .unwrap()
+            .principal_id,
         id2
     );
 }

@@ -12,7 +12,9 @@ fn load(name: &str) -> Value {
 }
 
 fn s(v: &Value) -> String {
-    v.as_str().unwrap_or_else(|| panic!("expected string, got {v}")).to_string()
+    v.as_str()
+        .unwrap_or_else(|| panic!("expected string, got {v}"))
+        .to_string()
 }
 fn int<T: std::str::FromStr>(v: &Value) -> T
 where
@@ -24,7 +26,10 @@ fn bytes(v: &Value) -> Vec<u8> {
     hex::decode(s(v)).unwrap()
 }
 fn key(v: &Value) -> Option<pb::PublicKey> {
-    (!v.is_null()).then(|| pb::PublicKey { scheme: int(&v["scheme"]), key: bytes(&v["key"]) })
+    (!v.is_null()).then(|| pb::PublicKey {
+        scheme: int(&v["scheme"]),
+        key: bytes(&v["key"]),
+    })
 }
 fn opt_str(v: &Value) -> Option<String> {
     (!v.is_null()).then(|| s(v))
@@ -46,24 +51,34 @@ fn cert(v: &Value) -> Option<pb::DelegationCert> {
 fn chain_of(i: &Value, session: Option<pb::DelegationCert>) -> Option<pb::signer_chain::Chain> {
     match i["chain"].as_str() {
         None => None,
-        Some("self_rooted") => Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session })),
-        Some("host_vouched") => {
-            Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched { host_device: None, session }))
-        }
-        Some("daemon_hosted") => {
-            Some(pb::signer_chain::Chain::DaemonHosted(pb::DaemonHosted { session, ..Default::default() }))
-        }
+        Some("self_rooted") => Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+            device: None,
+            session,
+        })),
+        Some("host_vouched") => Some(pb::signer_chain::Chain::HostVouched(pb::HostVouched {
+            host_device: None,
+            session,
+        })),
+        Some("daemon_hosted") => Some(pb::signer_chain::Chain::DaemonHosted(pb::DaemonHosted {
+            session,
+            ..Default::default()
+        })),
         Some(other) => panic!("unknown chain {other}"),
     }
 }
 
-fn signed_message(i: &Value, chain: Option<pb::signer_chain::Chain>, signature: Vec<u8>) -> pb::SignedMessage {
+fn signed_message(
+    i: &Value,
+    chain: Option<pb::signer_chain::Chain>,
+    signature: Vec<u8>,
+) -> pb::SignedMessage {
     pb::SignedMessage {
         signer: Some(pb::SignerChain { chain }),
         audience: s(&i["audience"]),
         nonce: bytes(&i["nonce"]),
         issued_at_unix_seconds: int(&i["issued_at"]),
-        in_reply_to_nonce: (!i["in_reply_to_nonce"].is_null()).then(|| bytes(&i["in_reply_to_nonce"])),
+        in_reply_to_nonce: (!i["in_reply_to_nonce"].is_null())
+            .then(|| bytes(&i["in_reply_to_nonce"])),
         body_type: s(&i["body_type"]),
         body: bytes(&i["body"]),
         signature,
@@ -77,7 +92,9 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
             key_challenge_transcript(&s(&i["audience"]), &bytes(&i["nonce"]), &new)
         }
         "principal_rename" => {
-            let p = PrincipalId::from_genesis(PublicKey::try_from(&key(&i["principal_genesis"]).unwrap())?);
+            let p = PrincipalId::from_genesis(PublicKey::try_from(
+                &key(&i["principal_genesis"]).unwrap(),
+            )?);
             principal_rename_transcript(&bytes(&i["nonce"]), &p, &s(&i["new_name"]))
         }
         "key_delegation" => key_delegation_transcript(&pb::KeyDelegation {
@@ -113,7 +130,12 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
         "delivery" => delivery_transcript(&pb::Delivery {
             delivery_id: s(&i["delivery_id"]),
             recipient_id: s(&i["recipient_id"]),
-            recipient_devices: i["recipient_devices"].as_array().unwrap().iter().map(|k| key(k).unwrap()).collect(),
+            recipient_devices: i["recipient_devices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|k| key(k).unwrap())
+                .collect(),
             sequence: int(&i["sequence"]),
             attested_at: (!i["attested_at"].is_null()).then(|| identity_crypto::Timestamp {
                 seconds: int(&i["attested_at"]["seconds"]),
@@ -159,7 +181,10 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
                 .as_array()
                 .unwrap()
                 .iter()
-                .map(|n| pb::PrincipalName { principal_id: s(&n["principal_id"]), name: s(&n["name"]) })
+                .map(|n| pb::PrincipalName {
+                    principal_id: s(&n["principal_id"]),
+                    name: s(&n["name"]),
+                })
                 .collect(),
         }),
         "signed_document" => signed_document_transcript(&pb::SignedDocument {
@@ -194,28 +219,53 @@ fn run(function: &str, i: &Value) -> Result<Vec<u8>> {
             document_id: bytes(&i["document_id"]),
         }),
         "request_digest" => {
-            let pid = |f: &str| PublicKey::try_from(&key(&i[f]).unwrap()).map(PrincipalId::from_genesis);
-            let (requester, host, target) = (pid("requester_genesis")?, pid("host_genesis")?, pid("target_genesis")?);
+            let pid =
+                |f: &str| PublicKey::try_from(&key(&i[f]).unwrap()).map(PrincipalId::from_genesis);
+            let (requester, host, target) = (
+                pid("requester_genesis")?,
+                pid("host_genesis")?,
+                pid("target_genesis")?,
+            );
             let subject = opt_str(&i["subject"]);
-            let (instance_id, action_id, request_id) = (s(&i["instance_id"]), s(&i["action_id"]), s(&i["request_id"]));
+            let (instance_id, action_id, request_id) = (
+                s(&i["instance_id"]),
+                s(&i["action_id"]),
+                s(&i["request_id"]),
+            );
             let parameters = bytes(&i["parameters"]);
             request_digest_transcript(&RequestDigestInput {
-                requester: &requester, host: &host, subject: subject.as_deref(), instance_id: &instance_id,
-                action_id: &action_id, parameters: &parameters, request_id: &request_id, target: &target,
+                requester: &requester,
+                host: &host,
+                subject: subject.as_deref(),
+                instance_id: &instance_id,
+                action_id: &action_id,
+                parameters: &parameters,
+                request_id: &request_id,
+                target: &target,
             })
         }
         "client_request_digest" => {
-            let pid = |f: &str| PublicKey::try_from(&key(&i[f]).unwrap()).map(PrincipalId::from_genesis);
+            let pid =
+                |f: &str| PublicKey::try_from(&key(&i[f]).unwrap()).map(PrincipalId::from_genesis);
             let requester = pid("requester_genesis")?;
-            let host = if i["host_genesis"].is_null() { None } else { Some(pid("host_genesis")?) };
+            let host = if i["host_genesis"].is_null() {
+                None
+            } else {
+                Some(pid("host_genesis")?)
+            };
             let target = pid("target_genesis")?;
-            let resource = (!i["resource"].is_null()).then(|| (s(&i["resource"]["kind"]), s(&i["resource"]["id"])));
+            let resource = (!i["resource"].is_null())
+                .then(|| (s(&i["resource"]["kind"]), s(&i["resource"]["id"])));
             let (message_kind, request_id) = (s(&i["message_kind"]), s(&i["request_id"]));
             let body = bytes(&i["body"]);
             client_request_digest_transcript(&ClientRequestDigestInput {
-                requester: &requester, host: host.as_ref(),
+                requester: &requester,
+                host: host.as_ref(),
                 resource: resource.as_ref().map(|(k, id)| (k.as_str(), id.as_str())),
-                message_kind: &message_kind, body: &body, request_id: &request_id, target: &target,
+                message_kind: &message_kind,
+                body: &body,
+                request_id: &request_id,
+                target: &target,
             })
         }
         other => panic!("unknown function {other}"),
@@ -248,13 +298,21 @@ fn transcripts_match_the_independent_generator() {
         let name = s(&case["name"]);
         let got = run(&s(&case["function"]), &case["input"]);
         if let Some(want) = case.get("expected_hex") {
-            assert_eq!(hex::encode(got.unwrap_or_else(|e| panic!("{name}: {e}"))), s(want), "{name}");
+            assert_eq!(
+                hex::encode(got.unwrap_or_else(|e| panic!("{name}: {e}"))),
+                s(want),
+                "{name}"
+            );
         } else {
             let err = got.expect_err(&name);
             let want = &case["error"];
             let (v, f) = variant(&err);
             assert_eq!(v, s(&want["variant"]), "{name}: {err}");
-            assert_eq!(f.map(str::to_string), opt_str(&want["field"]), "{name}: {err}");
+            assert_eq!(
+                f.map(str::to_string),
+                opt_str(&want["field"]),
+                "{name}: {err}"
+            );
         }
         checked += 1;
     }
@@ -268,9 +326,15 @@ fn principals_match_the_independent_generator() {
         let genesis = PublicKey::p256(&bytes(&v["genesis_hex"])).unwrap();
         let id = PrincipalId::from_genesis(genesis);
         assert_eq!(id.to_string(), s(&v["principal_id"]));
-        assert_eq!(PrincipalId::parse_canonical(&s(&v["principal_id"])).unwrap(), id);
+        assert_eq!(
+            PrincipalId::parse_canonical(&s(&v["principal_id"])).unwrap(),
+            id
+        );
         assert_eq!(id.short_id().to_string(), s(&v["short_id"]));
-        assert_eq!(ShortId::parse_canonical(&s(&v["short_id"])).unwrap(), id.short_id());
+        assert_eq!(
+            ShortId::parse_canonical(&s(&v["short_id"])).unwrap(),
+            id.short_id()
+        );
     }
     for v in p["invalid"].as_array().unwrap() {
         let input = s(&v["input"]);
@@ -296,12 +360,16 @@ fn signatures_from_an_independent_signer_verify_in_both_s_forms() {
         let k = PublicKey::p256(&bytes(&case["key_hex"])).unwrap();
         let msg = bytes(&case["message_hex"]);
         for field in ["signature_hex", "high_s_hex"] {
-            let v = verify_p256(&k, &msg, &bytes(&case[field])).unwrap_or_else(|e| panic!("{name} {field}: {e}"));
+            let v = verify_p256(&k, &msg, &bytes(&case[field]))
+                .unwrap_or_else(|e| panic!("{name} {field}: {e}"));
             assert!(v.covers(&msg));
         }
         let mut tampered = msg.clone();
         tampered[0] ^= 1;
-        assert_eq!(verify_p256(&k, &tampered, &bytes(&case["signature_hex"])).unwrap_err(), Error::BadSignature);
+        assert_eq!(
+            verify_p256(&k, &tampered, &bytes(&case["signature_hex"])).unwrap_err(),
+            Error::BadSignature
+        );
     }
 }
 
@@ -343,21 +411,40 @@ fn message_vector() {
         let cert = cert(&case["cert"]).unwrap();
         assert_eq!(cert.session, Some(pb::PublicKey::from(&session)), "{name}");
         let cert_transcript = session_delegation_transcript(&cert).unwrap();
-        assert_eq!(hex::encode(&cert_transcript), s(&case["cert_transcript_hex"]), "{name}: cert");
-        verify_p256(&device, &cert_transcript, &cert.signature).unwrap_or_else(|e| panic!("{name}: cert: {e}"));
+        assert_eq!(
+            hex::encode(&cert_transcript),
+            s(&case["cert_transcript_hex"]),
+            "{name}: cert"
+        );
+        verify_p256(&device, &cert_transcript, &cert.signature)
+            .unwrap_or_else(|e| panic!("{name}: cert: {e}"));
 
         // The message: the Python transcript and signature, verified by Rust under the session key.
         let m_in = &case["message"];
-        let message = signed_message(m_in, chain_of(m_in, Some(cert.clone())), bytes(&case["signature_hex"]));
+        let message = signed_message(
+            m_in,
+            chain_of(m_in, Some(cert.clone())),
+            bytes(&case["signature_hex"]),
+        );
         let transcript = signed_message_transcript(&message).unwrap();
-        assert_eq!(hex::encode(&transcript), s(&case["transcript_hex"]), "{name}: message");
-        verify_p256(&session, &transcript, &message.signature).unwrap_or_else(|e| panic!("{name}: message: {e}"));
+        assert_eq!(
+            hex::encode(&transcript),
+            s(&case["transcript_hex"]),
+            "{name}: message"
+        );
+        verify_p256(&session, &transcript, &message.signature)
+            .unwrap_or_else(|e| panic!("{name}: message: {e}"));
 
         // A daemon-hosted message also carries the agent device's signature over hosted-session.v1.
         if m_in["chain"] == "daemon_hosted" {
-            let agent_device = PublicKey::try_from(&key(&case["agent_device_key"]).unwrap()).unwrap();
+            let agent_device =
+                PublicKey::try_from(&key(&case["agent_device_key"]).unwrap()).unwrap();
             let hosted = hosted_session_transcript(&cert).unwrap();
-            assert_eq!(hex::encode(&hosted), s(&case["hosted_transcript_hex"]), "{name}: hosted session");
+            assert_eq!(
+                hex::encode(&hosted),
+                s(&case["hosted_transcript_hex"]),
+                "{name}: hosted session"
+            );
             verify_p256(&agent_device, &hosted, &bytes(&case["agent_signature_hex"]))
                 .unwrap_or_else(|e| panic!("{name}: agent signature: {e}"));
         }

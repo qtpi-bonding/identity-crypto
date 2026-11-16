@@ -30,14 +30,16 @@ mod devices;
 mod expiry;
 mod verifier;
 
+pub use client::{endpoint_defaults, CONNECT_TIMEOUT, KEEPALIVE_INTERVAL, KEEPALIVE_TIMEOUT};
 #[cfg(feature = "client")]
 pub use client::{AudienceSource, ChannelError, DiscoverAudience, SignedChannel};
-pub use client::{endpoint_defaults, CONNECT_TIMEOUT, KEEPALIVE_INTERVAL, KEEPALIVE_TIMEOUT};
 pub use devices::TrustedDevices;
 pub use verifier::Verifier;
 
 use crate::MAX_BODY_BYTES;
-use crate::{audience_for, seal_request, split_path, AuthError, Clock, RequestSigner, VerifiedCaller};
+use crate::{
+    audience_for, seal_request, split_path, AuthError, Clock, RequestSigner, VerifiedCaller,
+};
 use expiry::ExpiringBody;
 use http::{Request, Response};
 use http_body_util::{BodyExt, Full, LengthLimitError, Limited};
@@ -259,14 +261,19 @@ where
             let framed = match buffer(body, config.max_body).await {
                 Ok(framed) => framed,
                 Err(AuthError::Malformed(_)) => {
-                    return Ok(default_reject(AuthError::UnsignableRequest("request body")).into_http())
+                    return Ok(
+                        default_reject(AuthError::UnsignableRequest("request body")).into_http()
+                    )
                 }
                 Err(e) => return Ok(default_reject(e).into_http()),
             };
             let message = match unframe(&framed) {
                 Ok(message) => message,
                 Err(_) => {
-                    return Ok(default_reject(AuthError::UnsignableRequest("gRPC frame header")).into_http())
+                    return Ok(
+                        default_reject(AuthError::UnsignableRequest("gRPC frame header"))
+                            .into_http(),
+                    )
                 }
             };
             let audience = audience_for(service, method, &config.server_id);

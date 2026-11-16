@@ -134,7 +134,10 @@ fn service_identity_dir_override_beats_index_beats_default() {
 
     // Default: nothing enrolled, nothing created.
     let (dir, source) = service_identity_dir(None, &machine, key).unwrap();
-    assert_eq!(dir, machine.path().join("services").join("structmux%2F3b6a"));
+    assert_eq!(
+        dir,
+        machine.path().join("services").join("structmux%2F3b6a")
+    );
     assert_eq!(source, DirSource::Default);
     let (dir, _) = service_identity_dir(None, &machine, "a:b/c").unwrap();
     assert_eq!(dir, machine.path().join("services").join("a%3Ab%2Fc"));
@@ -308,7 +311,11 @@ fn index_entry_checks() {
     fs::rename(&linked, &moved).unwrap();
     symlink(&moved, &linked).unwrap();
     let index = EnrolmentIndex::read(&machine).unwrap();
-    mismatch(index.checked("linked"), "linked", EnrolmentCheck::DirInsecure);
+    mismatch(
+        index.checked("linked"),
+        "linked",
+        EnrolmentCheck::DirInsecure,
+    );
 
     // Missing directory.
     let gone = parent.path().join("gone");
@@ -324,7 +331,11 @@ fn index_entry_checks() {
     enrol("swapped", &swapped);
     write_principal_id(&swapped, &owner()).unwrap();
     let index = EnrolmentIndex::read(&machine).unwrap();
-    mismatch(index.checked("swapped"), "swapped", EnrolmentCheck::PrincipalId);
+    mismatch(
+        index.checked("swapped"),
+        "swapped",
+        EnrolmentCheck::PrincipalId,
+    );
 
     // Device rotated after enrolment.
     let rotated = parent.path().join("rotated");
@@ -332,7 +343,11 @@ fn index_entry_checks() {
     enrol("rotated", &rotated);
     IdentityKeys::rotate_device(&rotated, NOW + DAY, TTL).unwrap();
     let index = EnrolmentIndex::read(&machine).unwrap();
-    mismatch(index.checked("rotated"), "rotated", EnrolmentCheck::DeviceKeyId);
+    mismatch(
+        index.checked("rotated"),
+        "rotated",
+        EnrolmentCheck::DeviceKeyId,
+    );
 }
 
 #[test]
@@ -364,7 +379,17 @@ fn index_key_grammar() {
         );
     }
     // service_identity_dir applies the same grammar, with the same error.
-    for k in ["", ".", "..", "a/b/..", "a/../b", "Grorg", "/x", "a b", too_long.as_str()] {
+    for k in [
+        "",
+        ".",
+        "..",
+        "a/b/..",
+        "a/../b",
+        "Grorg",
+        "/x",
+        "a b",
+        too_long.as_str(),
+    ] {
         assert!(
             matches!(
                 service_identity_dir(None, &machine, k),

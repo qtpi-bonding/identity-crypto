@@ -47,10 +47,7 @@ impl AuthorityChain {
         }
     }
 
-    pub fn from_rotations(
-        genesis: PublicKey,
-        rotations: &[pb::RootRotation],
-    ) -> Result<Self> {
+    pub fn from_rotations(genesis: PublicKey, rotations: &[pb::RootRotation]) -> Result<Self> {
         Ok(Self {
             roots: rotation_roots(&genesis, rotations)?,
             rotations: rotations.to_vec(),
@@ -74,8 +71,7 @@ impl AuthorityChain {
     }
 
     pub fn is_prefix_of(&self, other: &AuthorityChain) -> bool {
-        self.roots.len() <= other.roots.len()
-            && self.roots[..] == other.roots[..self.roots.len()]
+        self.roots.len() <= other.roots.len() && self.roots[..] == other.roots[..self.roots.len()]
     }
 }
 
@@ -177,17 +173,22 @@ pub fn verify_signed_document(
 mod tests {
     use super::*;
     use crate::testkit::*;
-    use prost::Message;
     use crate::testkit::{resign_document, sign_test_document as sign_document};
+    use prost::Message;
 
-    fn accept(p: &Principal) -> AuthorityChain { AuthorityChain::genesis(p.genesis()) }
+    fn accept(p: &Principal) -> AuthorityChain {
+        AuthorityChain::genesis(p.genesis())
+    }
 
     #[test]
     fn accepts_a_document_from_the_genesis_root() {
         let p = Principal::new();
         let doc = sign_document(&p, 3, vec![9]);
         let v = verify_signed_document(&doc, DOC_TYPE, &accept(&p)).unwrap();
-        assert_eq!((v.version(), v.body(), v.document_type()), (3, &[9u8][..], DOC_TYPE));
+        assert_eq!(
+            (v.version(), v.body(), v.document_type()),
+            (3, &[9u8][..], DOC_TYPE)
+        );
         assert_eq!(v.authority(), p.id());
         assert_eq!(v.authority_chain().head(), &p.genesis());
     }
@@ -197,23 +198,43 @@ mod tests {
         let mut p = Principal::new();
         let accepted_at_genesis = accept(&p);
         p.rotate(T0);
-        let v = verify_signed_document(&sign_document(&p, 2, vec![]), DOC_TYPE, &accepted_at_genesis).unwrap();
+        let v = verify_signed_document(
+            &sign_document(&p, 2, vec![]),
+            DOC_TYPE,
+            &accepted_at_genesis,
+        )
+        .unwrap();
         let accepted_now = v.authority_chain().clone();
         assert_eq!(accepted_now.head(), &p.root().public());
-        assert!(verify_signed_document(&sign_document(&p, 3, vec![]), DOC_TYPE, &accepted_now).is_ok());
+        assert!(
+            verify_signed_document(&sign_document(&p, 3, vec![]), DOC_TYPE, &accepted_now).is_ok()
+        );
         let mut stale = sign_document(&p, 4, vec![]);
         stale.signer_rotations.clear();
         stale.signing = pk(&p.genesis());
-        stale.signature = p.root_at(0).sign(&crate::transcripts::signed_document_transcript(&stale).unwrap());
-        assert_eq!(verify_signed_document(&stale, DOC_TYPE, &accepted_now).unwrap_err(), Error::StaleRoot);
+        stale.signature = p
+            .root_at(0)
+            .sign(&crate::transcripts::signed_document_transcript(&stale).unwrap());
+        assert_eq!(
+            verify_signed_document(&stale, DOC_TYPE, &accepted_now).unwrap_err(),
+            Error::StaleRoot
+        );
         let mut fork = pb::RootRotation {
-            principal_genesis: pk(&p.genesis()), old_root: pk(&p.genesis()),
-            new_root: pk(&TestKey::new().public()), issued_at_unix_seconds: T0, signature: vec![],
+            principal_genesis: pk(&p.genesis()),
+            old_root: pk(&p.genesis()),
+            new_root: pk(&TestKey::new().public()),
+            issued_at_unix_seconds: T0,
+            signature: vec![],
         };
-        fork.signature = p.root_at(0).sign(&crate::transcripts::root_rotation_transcript(&fork).unwrap());
+        fork.signature = p
+            .root_at(0)
+            .sign(&crate::transcripts::root_rotation_transcript(&fork).unwrap());
         let mut forked = sign_document(&p, 5, vec![]);
         forked.signer_rotations = vec![fork];
-        assert!(matches!(verify_signed_document(&forked, DOC_TYPE, &accepted_now), Err(Error::RootFork { .. })));
+        assert!(matches!(
+            verify_signed_document(&forked, DOC_TYPE, &accepted_now),
+            Err(Error::RootFork { .. })
+        ));
     }
 
     #[test]
@@ -221,17 +242,43 @@ mod tests {
         let p = Principal::new();
         let a = accept(&p);
         let base = sign_document(&p, 1, vec![]);
-        let mut empty = base.clone(); empty.signature.clear();
-        assert_eq!(verify_signed_document(&empty, DOC_TYPE, &a).unwrap_err(), Error::EmptySignature);
-        let mut never = base.clone(); never.expires_at_unix_seconds = 0; resign_document(&p, &mut never);
-        assert!(matches!(verify_signed_document(&never, DOC_TYPE, &a), Err(Error::InvalidField { field: "expires_at_unix_seconds", .. })));
-        assert_eq!(verify_signed_document(&base, "other", &a).unwrap_err(), Error::WrongDocumentType);
+        let mut empty = base.clone();
+        empty.signature.clear();
+        assert_eq!(
+            verify_signed_document(&empty, DOC_TYPE, &a).unwrap_err(),
+            Error::EmptySignature
+        );
+        let mut never = base.clone();
+        never.expires_at_unix_seconds = 0;
+        resign_document(&p, &mut never);
+        assert!(matches!(
+            verify_signed_document(&never, DOC_TYPE, &a),
+            Err(Error::InvalidField {
+                field: "expires_at_unix_seconds",
+                ..
+            })
+        ));
+        assert_eq!(
+            verify_signed_document(&base, "other", &a).unwrap_err(),
+            Error::WrongDocumentType
+        );
         let stranger = Principal::new();
-        assert_eq!(verify_signed_document(&sign_document(&stranger, 1, vec![]), DOC_TYPE, &a).unwrap_err(), Error::NotAuthority);
-        let mut wrong_signing = base.clone(); wrong_signing.signing = pk(&TestKey::new().public());
-        assert_eq!(verify_signed_document(&wrong_signing, DOC_TYPE, &a).unwrap_err(), Error::NotCurrentRoot);
-        let mut tampered = base.clone(); tampered.version = 2;
-        assert_eq!(verify_signed_document(&tampered, DOC_TYPE, &a).unwrap_err(), Error::BadSignature);
+        assert_eq!(
+            verify_signed_document(&sign_document(&stranger, 1, vec![]), DOC_TYPE, &a).unwrap_err(),
+            Error::NotAuthority
+        );
+        let mut wrong_signing = base.clone();
+        wrong_signing.signing = pk(&TestKey::new().public());
+        assert_eq!(
+            verify_signed_document(&wrong_signing, DOC_TYPE, &a).unwrap_err(),
+            Error::NotCurrentRoot
+        );
+        let mut tampered = base.clone();
+        tampered.version = 2;
+        assert_eq!(
+            verify_signed_document(&tampered, DOC_TYPE, &a).unwrap_err(),
+            Error::BadSignature
+        );
         assert!(verify_signed_document(&base, DOC_TYPE, &a).is_ok());
     }
 
@@ -243,18 +290,39 @@ mod tests {
         let g = p.genesis();
         assert_eq!(rotation_roots(&g, &p.rotations).unwrap().len(), 3);
         let mut bad_sig = p.rotations.clone();
-        bad_sig[1].signature = p.root_at(0).sign(&crate::transcripts::root_rotation_transcript(&bad_sig[1]).unwrap());
-        assert_eq!(rotation_roots(&g, &bad_sig).unwrap_err(), Error::BadSignature);
+        bad_sig[1].signature = p
+            .root_at(0)
+            .sign(&crate::transcripts::root_rotation_transcript(&bad_sig[1]).unwrap());
+        assert_eq!(
+            rotation_roots(&g, &bad_sig).unwrap_err(),
+            Error::BadSignature
+        );
         let swapped = vec![p.rotations[1].clone(), p.rotations[0].clone()];
-        assert_eq!(rotation_roots(&g, &swapped).unwrap_err(), Error::ChainMismatch("rotation old_root"));
-        let q = { let mut q = Principal::new(); q.rotate(T0); q };
-        assert_eq!(rotation_roots(&g, &q.rotations).unwrap_err(), Error::ChainMismatch("rotation principal"));
-        let mut back = pb::RootRotation {
-            principal_genesis: pk(&g), old_root: pk(&p.root().public()), new_root: pk(&g),
-            issued_at_unix_seconds: T0 + 2, signature: vec![],
+        assert_eq!(
+            rotation_roots(&g, &swapped).unwrap_err(),
+            Error::ChainMismatch("rotation old_root")
+        );
+        let q = {
+            let mut q = Principal::new();
+            q.rotate(T0);
+            q
         };
-        back.signature = p.root().sign(&crate::transcripts::root_rotation_transcript(&back).unwrap());
-        let mut cyc = p.rotations.clone(); cyc.push(back);
+        assert_eq!(
+            rotation_roots(&g, &q.rotations).unwrap_err(),
+            Error::ChainMismatch("rotation principal")
+        );
+        let mut back = pb::RootRotation {
+            principal_genesis: pk(&g),
+            old_root: pk(&p.root().public()),
+            new_root: pk(&g),
+            issued_at_unix_seconds: T0 + 2,
+            signature: vec![],
+        };
+        back.signature = p
+            .root()
+            .sign(&crate::transcripts::root_rotation_transcript(&back).unwrap());
+        let mut cyc = p.rotations.clone();
+        cyc.push(back);
         assert_eq!(rotation_roots(&g, &cyc).unwrap_err(), Error::RotationCycle);
     }
 

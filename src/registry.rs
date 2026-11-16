@@ -29,13 +29,25 @@ pub struct VerifiedBinding {
 }
 
 impl VerifiedBinding {
-    pub fn device_delegation(&self) -> &pb::KeyDelegation { &self.device }
-    pub fn device_key(&self) -> &PublicKey { &self.device_key }
-    pub fn device_not_after(&self) -> i64 { self.device.not_after_unix_seconds }
-    pub fn approval_delegation(&self) -> Option<&pb::KeyDelegation> { self.approval.as_ref().map(|(d, _)| d) }
-    pub fn approval_key(&self) -> Option<&PublicKey> { self.approval.as_ref().map(|(_, k)| k) }
+    pub fn device_delegation(&self) -> &pb::KeyDelegation {
+        &self.device
+    }
+    pub fn device_key(&self) -> &PublicKey {
+        &self.device_key
+    }
+    pub fn device_not_after(&self) -> i64 {
+        self.device.not_after_unix_seconds
+    }
+    pub fn approval_delegation(&self) -> Option<&pb::KeyDelegation> {
+        self.approval.as_ref().map(|(d, _)| d)
+    }
+    pub fn approval_key(&self) -> Option<&PublicKey> {
+        self.approval.as_ref().map(|(_, k)| k)
+    }
     /// `None` = hostless.
-    pub fn host(&self) -> Option<&PrincipalId> { self.host.as_ref() }
+    pub fn host(&self) -> Option<&PrincipalId> {
+        self.host.as_ref()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -54,18 +66,38 @@ pub struct VerifiedEntry {
 }
 
 impl VerifiedEntry {
-    pub fn id(&self) -> &PrincipalId { &self.id }
-    pub fn kind(&self) -> PrincipalKind { self.kind }
-    pub fn name(&self) -> Option<&str> { self.name.as_deref() }
-    pub fn is_self_rooted(&self) -> bool { self.current_root.is_some() }
-    pub fn current_root(&self) -> Option<&PublicKeyDuo> { self.current_root.as_ref() }
+    pub fn id(&self) -> &PrincipalId {
+        &self.id
+    }
+    pub fn kind(&self) -> PrincipalKind {
+        self.kind
+    }
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+    pub fn is_self_rooted(&self) -> bool {
+        self.current_root.is_some()
+    }
+    pub fn current_root(&self) -> Option<&PublicKeyDuo> {
+        self.current_root.as_ref()
+    }
     /// Genesis through current root; empty for a host-vouched agent.
-    pub fn roots(&self) -> &[PublicKey] { &self.roots }
-    pub fn rotations(&self) -> &[pb::RootRotation] { &self.rotations }
-    pub fn bindings(&self) -> &[VerifiedBinding] { &self.bindings }
-    pub fn allowed_hosts(&self) -> &[AllowedHost] { &self.allowed_hosts }
+    pub fn roots(&self) -> &[PublicKey] {
+        &self.roots
+    }
+    pub fn rotations(&self) -> &[pb::RootRotation] {
+        &self.rotations
+    }
+    pub fn bindings(&self) -> &[VerifiedBinding] {
+        &self.bindings
+    }
+    pub fn allowed_hosts(&self) -> &[AllowedHost] {
+        &self.allowed_hosts
+    }
     /// A DAEMON's standing grant to host self-rooted agents that name no host.
-    pub fn hosts_held_agents(&self) -> bool { self.hosts_held_agents }
+    pub fn hosts_held_agents(&self) -> bool {
+        self.hosts_held_agents
+    }
 }
 
 pub(crate) struct CheckedRegistry {
@@ -94,7 +126,13 @@ impl KeySet {
     }
 }
 
-fn check_delegation(d: &pb::KeyDelegation, entry: &PrincipalId, root: &PublicKey, purpose: pb::KeyPurpose, field: &'static str) -> Result<PublicKey> {
+fn check_delegation(
+    d: &pb::KeyDelegation,
+    entry: &PrincipalId,
+    root: &PublicKey,
+    purpose: pb::KeyPurpose,
+    field: &'static str,
+) -> Result<PublicKey> {
     if key(&d.principal_genesis).as_ref() != Some(entry.genesis()) {
         return Err(bad(field, "principal_genesis is not this entry"));
     }
@@ -108,7 +146,8 @@ fn check_delegation(d: &pb::KeyDelegation, entry: &PrincipalId, root: &PublicKey
         return Err(bad(field, "not_after is 0; write i64::MAX for no expiry"));
     }
     let transcript = key_delegation_transcript(d).map_err(|_| bad(field, "malformed"))?;
-    verify_p256(root, &transcript, &d.signature).map_err(|_| bad(field, "signature does not verify"))?;
+    verify_p256(root, &transcript, &d.signature)
+        .map_err(|_| bad(field, "signature does not verify"))?;
     key(&d.delegated).ok_or_else(|| bad(field, "delegated missing"))
 }
 
@@ -116,14 +155,18 @@ fn is_16_hex(s: &str) -> bool {
     s.len() == 16 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain) -> Result<CheckedRegistry> {
+pub(crate) fn check_registry(
+    reg: &pb::PrincipalRegistry,
+    chain: &AuthorityChain,
+) -> Result<CheckedRegistry> {
     let authority = chain.principal();
 
     // Ids, kinds, short ids. An unknown non-zero kind is skipped (spec 2.2).
     let mut short_ids = HashSet::new();
     let mut parsed = Vec::with_capacity(reg.entries.len());
     for e in &reg.entries {
-        let id = PrincipalId::parse_canonical(&e.principal_id).map_err(|_| bad("entries.principal_id", "not canonical"))?;
+        let id = PrincipalId::parse_canonical(&e.principal_id)
+            .map_err(|_| bad("entries.principal_id", "not canonical"))?;
         if !short_ids.insert(id.short_id()) {
             return Err(bad("entries.principal_id", "short id repeated"));
         }
@@ -153,7 +196,8 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
         }
     }
 
-    let daemons: HashSet<&PrincipalId> = parsed.iter()
+    let daemons: HashSet<&PrincipalId> = parsed
+        .iter()
         .filter(|(_, _, k)| *k == Some(PrincipalKind::Daemon))
         .map(|(_, id, _)| id)
         .collect();
@@ -172,7 +216,10 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
                 return Err(bad("entries", "the authority's entry is not HUMAN"));
             }
             if e.frozen {
-                return Err(bad("entries.frozen", "the authority cannot freeze itself in its own document"));
+                return Err(bad(
+                    "entries.frozen",
+                    "the authority cannot freeze itself in its own document",
+                ));
             }
             authority_seen = true;
         }
@@ -186,33 +233,62 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
             return Err(bad("entries.hosts_held_agents", "only for DAEMON"));
         }
         match kind {
-            PrincipalKind::Human if !e.allowed_hosts.is_empty() => return Err(bad("entries.allowed_hosts", "only for AGENT")),
-            PrincipalKind::Daemon if !e.devices.is_empty() => return Err(bad("entries.devices", "only for HUMAN")),
-            PrincipalKind::Daemon if !e.allowed_hosts.is_empty() => return Err(bad("entries.allowed_hosts", "only for AGENT")),
-            PrincipalKind::Service if !e.devices.is_empty() => return Err(bad("entries.devices", "only for HUMAN")),
-            PrincipalKind::Service if !e.allowed_hosts.is_empty() => return Err(bad("entries.allowed_hosts", "only for AGENT")),
-            PrincipalKind::Agent if !e.devices.is_empty() => return Err(bad("entries.devices", "only for HUMAN")),
+            PrincipalKind::Human if !e.allowed_hosts.is_empty() => {
+                return Err(bad("entries.allowed_hosts", "only for AGENT"))
+            }
+            PrincipalKind::Daemon if !e.devices.is_empty() => {
+                return Err(bad("entries.devices", "only for HUMAN"))
+            }
+            PrincipalKind::Daemon if !e.allowed_hosts.is_empty() => {
+                return Err(bad("entries.allowed_hosts", "only for AGENT"))
+            }
+            PrincipalKind::Service if !e.devices.is_empty() => {
+                return Err(bad("entries.devices", "only for HUMAN"))
+            }
+            PrincipalKind::Service if !e.allowed_hosts.is_empty() => {
+                return Err(bad("entries.allowed_hosts", "only for AGENT"))
+            }
+            PrincipalKind::Agent if !e.devices.is_empty() => {
+                return Err(bad("entries.devices", "only for HUMAN"))
+            }
             PrincipalKind::Agent if !self_rooted && e.allowed_hosts.is_empty() => {
-                return Err(bad("entries.allowed_hosts", "a host-vouched AGENT needs at least one"))
+                return Err(bad(
+                    "entries.allowed_hosts",
+                    "a host-vouched AGENT needs at least one",
+                ))
             }
             _ => {}
         }
 
         // Roots.
         let (roots, current_root) = if self_rooted {
-            let duo = e.current_root.as_ref()
+            let duo = e
+                .current_root
+                .as_ref()
                 .ok_or_else(|| bad("entries.current_root", "missing"))
-                .and_then(|d| PublicKeyDuo::try_from(d).map_err(|_| bad("entries.current_root", "invalid, or its halves are equal")))?;
+                .and_then(|d| {
+                    PublicKeyDuo::try_from(d).map_err(|_| {
+                        bad("entries.current_root", "invalid, or its halves are equal")
+                    })
+                })?;
             let roots = if is_authority {
                 if !e.rotations.is_empty() {
                     return Err(bad("entries.rotations", "must be empty for the authority"));
                 }
                 chain.roots().to_vec()
             } else {
-                rotation_roots(id.genesis(), &e.rotations).map_err(|_| bad("entries.rotations", "not a valid chain from the genesis key"))?
+                rotation_roots(id.genesis(), &e.rotations).map_err(|_| {
+                    bad(
+                        "entries.rotations",
+                        "not a valid chain from the genesis key",
+                    )
+                })?
             };
             if Some(duo.signing()) != roots.last() {
-                return Err(bad("entries.current_root", "is not the end of the root chain"));
+                return Err(bad(
+                    "entries.current_root",
+                    "is not the end of the root chain",
+                ));
             }
             for r in &roots {
                 keys.add(r)?;
@@ -221,7 +297,10 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
             (roots, Some(duo))
         } else {
             if !e.rotations.is_empty() || !e.revocations.is_empty() {
-                return Err(bad("entries.rotations", "rotations and revocations are only for self-rooted entries"));
+                return Err(bad(
+                    "entries.rotations",
+                    "rotations and revocations are only for self-rooted entries",
+                ));
             }
             keys.add(id.genesis())?;
             (vec![], None)
@@ -233,15 +312,26 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
         let mut bindings = Vec::with_capacity(e.devices.len());
         for b in &e.devices {
             let root = current.expect("HUMAN entries are self-rooted");
-            let d = b.device.as_ref().ok_or_else(|| bad("devices.device", "missing"))?;
-            let device_key = check_delegation(d, id, root, pb::KeyPurpose::Device, "devices.device")?;
-            let device_enc = key(&d.delegated_encryption).expect("a DEVICE transcript requires the encryption half");
+            let d = b
+                .device
+                .as_ref()
+                .ok_or_else(|| bad("devices.device", "missing"))?;
+            let device_key =
+                check_delegation(d, id, root, pb::KeyPurpose::Device, "devices.device")?;
+            let device_enc = key(&d.delegated_encryption)
+                .expect("a DEVICE transcript requires the encryption half");
             keys.add(&device_key)?;
             keys.add(&device_enc)?;
             own.extend([device_key.clone(), device_enc]);
             let approval = match &b.approval {
                 Some(a) => {
-                    let k = check_delegation(a, id, root, pb::KeyPurpose::Approval, "devices.approval")?;
+                    let k = check_delegation(
+                        a,
+                        id,
+                        root,
+                        pb::KeyPurpose::Approval,
+                        "devices.approval",
+                    )?;
                     keys.add(&k)?;
                     own.push(k.clone());
                     Some((a.clone(), k))
@@ -251,14 +341,20 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
             let host = match &b.host_daemon_id {
                 None => None,
                 Some(h) => {
-                    let h = PrincipalId::parse_canonical(h).map_err(|_| bad("devices.host_daemon_id", "not canonical"))?;
+                    let h = PrincipalId::parse_canonical(h)
+                        .map_err(|_| bad("devices.host_daemon_id", "not canonical"))?;
                     if !daemons.contains(&h) {
                         return Err(bad("devices.host_daemon_id", "names no DAEMON entry"));
                     }
                     Some(h)
                 }
             };
-            bindings.push(VerifiedBinding { device: d.clone(), device_key, approval, host });
+            bindings.push(VerifiedBinding {
+                device: d.clone(),
+                device_key,
+                approval,
+                host,
+            });
         }
 
         // Revocations: scoped to this entry; signed by any root of its chain
@@ -271,35 +367,68 @@ pub(crate) fn check_registry(reg: &pb::PrincipalRegistry, chain: &AuthorityChain
             let revoked = key(&r.revoked).ok_or_else(|| bad("revocations.revoked", "missing"))?;
             let by = key(&r.revoked_by).ok_or_else(|| bad("revocations.revoked_by", "missing"))?;
             if Some(&revoked) == current {
-                return Err(bad("revocations.revoked", "revokes the current root; set frozen instead"));
+                return Err(bad(
+                    "revocations.revoked",
+                    "revokes the current root; set frozen instead",
+                ));
             }
             if !(roots.contains(&by) || by == revoked) {
-                return Err(bad("revocations.revoked_by", "not a root of this entry or the revoked key"));
+                return Err(bad(
+                    "revocations.revoked_by",
+                    "not a root of this entry or the revoked key",
+                ));
             }
             if kind == PrincipalKind::Human && !own.contains(&revoked) {
                 return Err(bad("revocations.revoked", "not one of this entry's keys"));
             }
-            let transcript = key_revocation_transcript(r).map_err(|_| bad("revocations", "malformed"))?;
-            verify_p256(&by, &transcript, &r.signature).map_err(|_| bad("revocations", "signature does not verify"))?;
+            let transcript =
+                key_revocation_transcript(r).map_err(|_| bad("revocations", "malformed"))?;
+            verify_p256(&by, &transcript, &r.signature)
+                .map_err(|_| bad("revocations", "signature does not verify"))?;
             revocations.push((revoked, r.revoked_at_unix_seconds));
         }
 
-        let allowed_hosts = e.allowed_hosts.iter().map(|h| {
-            if h == "*" {
-                Ok(AllowedHost::Any)
-            } else {
-                PrincipalId::parse_canonical(h).map(AllowedHost::Daemon).map_err(|_| bad("entries.allowed_hosts", "not \"*\" or a canonical principal id"))
-            }
-        }).collect::<Result<Vec<_>>>()?;
+        let allowed_hosts = e
+            .allowed_hosts
+            .iter()
+            .map(|h| {
+                if h == "*" {
+                    Ok(AllowedHost::Any)
+                } else {
+                    PrincipalId::parse_canonical(h)
+                        .map(AllowedHost::Daemon)
+                        .map_err(|_| {
+                            bad(
+                                "entries.allowed_hosts",
+                                "not \"*\" or a canonical principal id",
+                            )
+                        })
+                }
+            })
+            .collect::<Result<Vec<_>>>()?;
 
-        entries.insert(id.clone(), VerifiedEntry {
-            id: id.clone(), kind, name: e.name.clone(), frozen: e.frozen, current_root,
-            roots, rotations: e.rotations.clone(), revocations, bindings, allowed_hosts,
-            hosts_held_agents: e.hosts_held_agents,
-        });
+        entries.insert(
+            id.clone(),
+            VerifiedEntry {
+                id: id.clone(),
+                kind,
+                name: e.name.clone(),
+                frozen: e.frozen,
+                current_root,
+                roots,
+                rotations: e.rotations.clone(),
+                revocations,
+                bindings,
+                allowed_hosts,
+                hosts_held_agents: e.hosts_held_agents,
+            },
+        );
     }
     if !authority_seen {
         return Err(bad("entries", "no HUMAN entry for the authority"));
     }
-    Ok(CheckedRegistry { entries, allow_peer_revocation: reg.allow_peer_revocation })
+    Ok(CheckedRegistry {
+        entries,
+        allow_peer_revocation: reg.allow_peer_revocation,
+    })
 }

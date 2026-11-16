@@ -2,10 +2,13 @@
 //! Each function checks only what its input carries; history was checked
 //! when the resolver was built.
 
-use crate::registry::{AllowedHost, VerifiedEntry};
 use crate::authority::rotation_roots;
-use crate::transcripts::{hosted_session_transcript, key_delegation_transcript, session_delegation_transcript, signed_message_transcript};
+use crate::registry::{AllowedHost, VerifiedEntry};
 use crate::transcripts::{approval_transcript, peer_revocation_transcript};
+use crate::transcripts::{
+    hosted_session_transcript, key_delegation_transcript, session_delegation_transcript,
+    signed_message_transcript,
+};
 use crate::VerifiedPeerRevocation;
 use crate::{pb, verify_p256, Error, PrincipalId, PrincipalKind, PublicKey, Resolver, Result};
 
@@ -23,14 +26,20 @@ pub const DEFAULT_RENEW_MARGIN_SECONDS: i64 = 7 * 86_400;
 pub struct AcceptedAt(i64);
 
 impl AcceptedAt {
-    pub fn from_receiver_record(unix_seconds: i64) -> Self { Self(unix_seconds) }
-    pub fn unix_seconds(&self) -> i64 { self.0 }
+    pub fn from_receiver_record(unix_seconds: i64) -> Self {
+        Self(unix_seconds)
+    }
+    pub fn unix_seconds(&self) -> i64 {
+        self.0
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum When {
     /// Also checks the ±30 s window on a message's own `issued_at`.
-    Live { now: i64 },
+    Live {
+        now: i64,
+    },
     Accepted(AcceptedAt),
 }
 
@@ -74,13 +83,27 @@ pub struct VerifiedChain {
 }
 
 impl VerifiedChain {
-    pub fn principal(&self) -> &PrincipalId { &self.principal }
-    pub fn kind(&self) -> PrincipalKind { self.kind }
-    pub fn host(&self) -> &Host { &self.host }
-    pub fn subject(&self) -> Option<&str> { self.subject.as_deref() }
-    pub fn device(&self) -> &PublicKey { &self.device }
-    pub fn session_key(&self) -> &PublicKey { &self.session_key }
-    pub fn session_not_after(&self) -> i64 { self.session_not_after }
+    pub fn principal(&self) -> &PrincipalId {
+        &self.principal
+    }
+    pub fn kind(&self) -> PrincipalKind {
+        self.kind
+    }
+    pub fn host(&self) -> &Host {
+        &self.host
+    }
+    pub fn subject(&self) -> Option<&str> {
+        self.subject.as_deref()
+    }
+    pub fn device(&self) -> &PublicKey {
+        &self.device
+    }
+    pub fn session_key(&self) -> &PublicKey {
+        &self.session_key
+    }
+    pub fn session_not_after(&self) -> i64 {
+        self.session_not_after
+    }
 }
 
 pub(crate) fn key(k: &Option<pb::PublicKey>, field: &'static str) -> Result<PublicKey> {
@@ -89,7 +112,12 @@ pub(crate) fn key(k: &Option<pb::PublicKey>, field: &'static str) -> Result<Publ
 
 /// Steps 2–4: the device delegation is the entry's, from its current root,
 /// and current at `at`. Returns the device key.
-fn device_current(d: &pb::KeyDelegation, entry: &VerifiedEntry, r: &Resolver, at: i64) -> Result<PublicKey> {
+fn device_current(
+    d: &pb::KeyDelegation,
+    entry: &VerifiedEntry,
+    r: &Resolver,
+    at: i64,
+) -> Result<PublicKey> {
     let principal = entry.id();
     if &key(&d.principal_genesis, "device.principal_genesis")? != principal.genesis() {
         return Err(Error::ChainMismatch("device.principal_genesis"));
@@ -114,7 +142,9 @@ fn device_current(d: &pb::KeyDelegation, entry: &VerifiedEntry, r: &Resolver, at
             check_expiry_set(d, "device.not_after_unix_seconds")?;
             let b = r.binding(principal, &device).ok_or(Error::NotBound)?;
             if b.device_delegation() != d {
-                return Err(Error::ChainMismatch("device delegation differs from the bound one"));
+                return Err(Error::ChainMismatch(
+                    "device delegation differs from the bound one",
+                ));
             }
             if at > d.not_after_unix_seconds {
                 return Err(Error::Expired("device delegation"));
@@ -135,7 +165,12 @@ fn device_current(d: &pb::KeyDelegation, entry: &VerifiedEntry, r: &Resolver, at
 /// The agent device of an unregistered agent: its delegation is checked
 /// against the root chain the chain itself carries (genesis plus
 /// `rotations`), with the unlisted-delegation window rules.
-fn carried_device(d: &pb::KeyDelegation, agent: &PrincipalId, rotations: &[pb::RootRotation], at: i64) -> Result<PublicKey> {
+fn carried_device(
+    d: &pb::KeyDelegation,
+    agent: &PrincipalId,
+    rotations: &[pb::RootRotation],
+    at: i64,
+) -> Result<PublicKey> {
     let roots = rotation_roots(agent.genesis(), rotations)?;
     let root = key(&d.signing_root, "agent_device.signing_root")?;
     if Some(&root) != roots.last() {
@@ -146,14 +181,22 @@ fn carried_device(d: &pb::KeyDelegation, agent: &PrincipalId, rotations: &[pb::R
     }
     verify_p256(&root, &key_delegation_transcript(d)?, &d.signature)?;
     let device = key(&d.delegated, "agent_device.delegated")?;
-    check_unlisted_window(d, at, "agent_device.not_after_unix_seconds", "agent device delegation")?;
+    check_unlisted_window(
+        d,
+        at,
+        "agent_device.not_after_unix_seconds",
+        "agent device delegation",
+    )?;
     Ok(device)
 }
 
 /// A delegation with `not_after == 0` has no expiry, which no verifier accepts.
 fn check_expiry_set(d: &pb::KeyDelegation, field: &'static str) -> Result<()> {
     if d.not_after_unix_seconds == 0 {
-        return Err(Error::InvalidField { field, reason: "0 is not an expiry" });
+        return Err(Error::InvalidField {
+            field,
+            reason: "0 is not an expiry",
+        });
     }
     Ok(())
 }
@@ -162,7 +205,12 @@ fn check_expiry_set(d: &pb::KeyDelegation, field: &'static str) -> Result<()> {
 /// self-rooted and carried agents, trusted deliverers): an expiry is set, the
 /// span is capped, and `at` is inside it. `field` and `what` name the
 /// delegation in errors. The one place the rule lives.
-pub(crate) fn check_unlisted_window(d: &pb::KeyDelegation, at: i64, field: &'static str, what: &'static str) -> Result<()> {
+pub(crate) fn check_unlisted_window(
+    d: &pb::KeyDelegation,
+    at: i64,
+    field: &'static str,
+    what: &'static str,
+) -> Result<()> {
     check_expiry_set(d, field)?;
     check_unlisted_span(field, d.issued_at_unix_seconds, d.not_after_unix_seconds)?;
     if d.issued_at_unix_seconds > at.saturating_add(SKEW_SECONDS) {
@@ -178,7 +226,11 @@ pub(crate) fn check_unlisted_window(d: &pb::KeyDelegation, at: i64, field: &'sta
 /// from `principal`'s genesis root (a deliverer is trusted by principal id,
 /// which is its root key; a root rotation means updating the trust list) and
 /// current at `at`. Returns the device key.
-pub fn verify_root_device_delegation(d: &pb::KeyDelegation, principal: &PrincipalId, at: i64) -> Result<PublicKey> {
+pub fn verify_root_device_delegation(
+    d: &pb::KeyDelegation,
+    principal: &PrincipalId,
+    at: i64,
+) -> Result<PublicKey> {
     if &key(&d.principal_genesis, "device.principal_genesis")? != principal.genesis() {
         return Err(Error::ChainMismatch("device.principal_genesis"));
     }
@@ -189,7 +241,11 @@ pub fn verify_root_device_delegation(d: &pb::KeyDelegation, principal: &Principa
         return Err(Error::ChainMismatch("device.purpose"));
     }
     check_unlisted_window(d, at, "device.not_after_unix_seconds", "device delegation")?;
-    verify_p256(principal.genesis(), &key_delegation_transcript(d)?, &d.signature)?;
+    verify_p256(
+        principal.genesis(),
+        &key_delegation_transcript(d)?,
+        &d.signature,
+    )?;
     key(&d.delegated, "device.delegated")
 }
 
@@ -199,7 +255,10 @@ pub fn verify_root_device_delegation(d: &pb::KeyDelegation, principal: &Principa
 pub(crate) fn check_session_span(not_before: i64, not_after: i64) -> Result<()> {
     let span = i128::from(not_after) - i128::from(not_before);
     if span <= 0 || span > i128::from(MAX_SESSION_SECONDS) {
-        return Err(Error::InvalidField { field: "session.not_after_unix_seconds", reason: "must be within 24 hours after not_before" });
+        return Err(Error::InvalidField {
+            field: "session.not_after_unix_seconds",
+            reason: "must be within 24 hours after not_before",
+        });
     }
     Ok(())
 }
@@ -211,14 +270,20 @@ pub(crate) fn check_session_span(not_before: i64, not_after: i64) -> Result<()> 
 pub(crate) fn check_unlisted_span(field: &'static str, issued: i64, not_after: i64) -> Result<()> {
     let span = i128::from(not_after) - i128::from(issued);
     if span <= 0 || span > i128::from(MAX_DELEGATION_SECONDS) {
-        return Err(Error::InvalidField { field, reason: "must be within 31 days after issued_at" });
+        return Err(Error::InvalidField {
+            field,
+            reason: "must be within 31 days after issued_at",
+        });
     }
     Ok(())
 }
 
 /// The session cert names `device` and is signed by it. Returns the session
 /// key. The signature rule `check_cert` and `verify_carried_message` share.
-pub(crate) fn check_cert_signature(c: &pb::DelegationCert, device: &PublicKey) -> Result<PublicKey> {
+pub(crate) fn check_cert_signature(
+    c: &pb::DelegationCert,
+    device: &PublicKey,
+) -> Result<PublicKey> {
     if &key(&c.device, "session.device")? != device {
         return Err(Error::ChainMismatch("session.device"));
     }
@@ -227,7 +292,11 @@ pub(crate) fn check_cert_signature(c: &pb::DelegationCert, device: &PublicKey) -
 }
 
 /// Step 5: the session cert under `device`. Returns `(session key, not_after)`.
-pub(crate) fn check_cert(c: &pb::DelegationCert, device: &PublicKey, at: i64) -> Result<(PublicKey, i64)> {
+pub(crate) fn check_cert(
+    c: &pb::DelegationCert,
+    device: &PublicKey,
+    at: i64,
+) -> Result<(PublicKey, i64)> {
     let session = check_cert_signature(c, device)?;
     let (nb, na) = (c.not_before_unix_seconds, c.not_after_unix_seconds);
     check_session_span(nb, na)?;
@@ -245,9 +314,18 @@ pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Resul
     let at = when.at();
     match signer.chain.as_ref().ok_or(Error::MissingField("chain"))? {
         Chain::SelfRooted(s) => {
-            let d = s.device.as_ref().ok_or(Error::MissingField("self_rooted.device"))?;
-            let cert = s.session.as_ref().ok_or(Error::MissingField("self_rooted.session"))?;
-            let principal = PrincipalId::from_genesis(key(&cert.principal_genesis, "session.principal_genesis")?);
+            let d = s
+                .device
+                .as_ref()
+                .ok_or(Error::MissingField("self_rooted.device"))?;
+            let cert = s
+                .session
+                .as_ref()
+                .ok_or(Error::MissingField("self_rooted.session"))?;
+            let principal = PrincipalId::from_genesis(key(
+                &cert.principal_genesis,
+                "session.principal_genesis",
+            )?);
             let entry = r.entry(&principal).ok_or(Error::UnknownPrincipal)?;
             if !entry.is_self_rooted() {
                 return Err(Error::WrongKind);
@@ -260,7 +338,8 @@ pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Resul
             }
             let device = device_current(d, entry, r, at)?;
             let host = match entry.kind() {
-                PrincipalKind::Human => match r.binding(&principal, &device).and_then(|b| b.host()) {
+                PrincipalKind::Human => match r.binding(&principal, &device).and_then(|b| b.host())
+                {
                     Some(h) => Host::Daemon(h.clone()),
                     None => Host::Hostless,
                 },
@@ -269,16 +348,36 @@ pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Resul
                 PrincipalKind::Service => Host::Hostless,
             };
             let (session_key, session_not_after) = check_cert(cert, &device, at)?;
-            Ok(VerifiedChain { principal, kind: entry.kind(), host, subject: None, device, session_key, session_not_after })
+            Ok(VerifiedChain {
+                principal,
+                kind: entry.kind(),
+                host,
+                subject: None,
+                device,
+                session_key,
+                session_not_after,
+            })
         }
         Chain::DaemonHosted(h) => {
-            let host_device = h.host_device.as_ref().ok_or(Error::MissingField("daemon_hosted.host_device"))?;
-            let agent_device = h.agent_device.as_ref().ok_or(Error::MissingField("daemon_hosted.agent_device"))?;
-            let cert = h.session.as_ref().ok_or(Error::MissingField("daemon_hosted.session"))?;
+            let host_device = h
+                .host_device
+                .as_ref()
+                .ok_or(Error::MissingField("daemon_hosted.host_device"))?;
+            let agent_device = h
+                .agent_device
+                .as_ref()
+                .ok_or(Error::MissingField("daemon_hosted.agent_device"))?;
+            let cert = h
+                .session
+                .as_ref()
+                .ok_or(Error::MissingField("daemon_hosted.session"))?;
             if h.agent_signature.is_empty() {
                 return Err(Error::MissingField("daemon_hosted.agent_signature"));
             }
-            let daemon = PrincipalId::from_genesis(key(&host_device.principal_genesis, "host_device.principal_genesis")?);
+            let daemon = PrincipalId::from_genesis(key(
+                &host_device.principal_genesis,
+                "host_device.principal_genesis",
+            )?);
             let daemon_entry = r.entry(&daemon).ok_or(Error::UnknownPrincipal)?;
             if daemon_entry.kind() != PrincipalKind::Daemon {
                 return Err(Error::WrongKind);
@@ -292,13 +391,20 @@ pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Resul
             if &key(&cert.host_genesis, "session.host_genesis")? != daemon.genesis() {
                 return Err(Error::ChainMismatch("session.host_genesis"));
             }
-            let subject = cert.subject.clone().ok_or(Error::MissingField("session.subject"))?;
+            let subject = cert
+                .subject
+                .clone()
+                .ok_or(Error::MissingField("session.subject"))?;
             if !subject.starts_with(&format!("{}/", daemon.short_id())) {
                 return Err(Error::NotVouched);
             }
             let cert_genesis = key(&cert.principal_genesis, "session.principal_genesis")?;
             let agent = PrincipalId::from_genesis(cert_genesis.clone());
-            if key(&agent_device.principal_genesis, "agent_device.principal_genesis")? != cert_genesis {
+            if key(
+                &agent_device.principal_genesis,
+                "agent_device.principal_genesis",
+            )? != cert_genesis
+            {
                 return Err(Error::ChainMismatch("agent_device.principal_genesis"));
             }
             let agent_device_key = match r.entry(&agent) {
@@ -331,16 +437,34 @@ pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Resul
             };
             let daemon_device = device_current(host_device, daemon_entry, r, at)?;
             let (session_key, session_not_after) = check_cert(cert, &daemon_device, at)?;
-            verify_p256(&agent_device_key, &hosted_session_transcript(cert)?, &h.agent_signature)?;
+            verify_p256(
+                &agent_device_key,
+                &hosted_session_transcript(cert)?,
+                &h.agent_signature,
+            )?;
             Ok(VerifiedChain {
-                principal: agent, kind: PrincipalKind::Agent, host: Host::Daemon(daemon), subject: Some(subject),
-                device: daemon_device, session_key, session_not_after,
+                principal: agent,
+                kind: PrincipalKind::Agent,
+                host: Host::Daemon(daemon),
+                subject: Some(subject),
+                device: daemon_device,
+                session_key,
+                session_not_after,
             })
         }
         Chain::HostVouched(h) => {
-            let d = h.host_device.as_ref().ok_or(Error::MissingField("host_vouched.host_device"))?;
-            let cert = h.session.as_ref().ok_or(Error::MissingField("host_vouched.session"))?;
-            let daemon = PrincipalId::from_genesis(key(&d.principal_genesis, "host_device.principal_genesis")?);
+            let d = h
+                .host_device
+                .as_ref()
+                .ok_or(Error::MissingField("host_vouched.host_device"))?;
+            let cert = h
+                .session
+                .as_ref()
+                .ok_or(Error::MissingField("host_vouched.session"))?;
+            let daemon = PrincipalId::from_genesis(key(
+                &d.principal_genesis,
+                "host_device.principal_genesis",
+            )?);
             let daemon_entry = r.entry(&daemon).ok_or(Error::UnknownPrincipal)?;
             if daemon_entry.kind() != PrincipalKind::Daemon {
                 return Err(Error::WrongKind);
@@ -354,11 +478,17 @@ pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Resul
             if &key(&cert.host_genesis, "session.host_genesis")? != daemon.genesis() {
                 return Err(Error::ChainMismatch("session.host_genesis"));
             }
-            let subject = cert.subject.clone().ok_or(Error::MissingField("session.subject"))?;
+            let subject = cert
+                .subject
+                .clone()
+                .ok_or(Error::MissingField("session.subject"))?;
             if !subject.starts_with(&format!("{}/", daemon.short_id())) {
                 return Err(Error::NotVouched);
             }
-            let agent = PrincipalId::from_genesis(key(&cert.principal_genesis, "session.principal_genesis")?);
+            let agent = PrincipalId::from_genesis(key(
+                &cert.principal_genesis,
+                "session.principal_genesis",
+            )?);
             let agent_entry = r.entry(&agent).ok_or(Error::UnknownPrincipal)?;
             if agent_entry.kind() != PrincipalKind::Agent || agent_entry.is_self_rooted() {
                 return Err(Error::WrongKind);
@@ -376,8 +506,13 @@ pub fn verify_chain(signer: &pb::SignerChain, r: &Resolver, when: When) -> Resul
             let device = device_current(d, daemon_entry, r, at)?;
             let (session_key, session_not_after) = check_cert(cert, &device, at)?;
             Ok(VerifiedChain {
-                principal: agent, kind: PrincipalKind::Agent, host: Host::Daemon(daemon), subject: Some(subject),
-                device, session_key, session_not_after,
+                principal: agent,
+                kind: PrincipalKind::Agent,
+                host: Host::Daemon(daemon),
+                subject: Some(subject),
+                device,
+                session_key,
+                session_not_after,
             })
         }
     }
@@ -394,13 +529,25 @@ pub struct VerifiedMessage {
 }
 
 impl VerifiedMessage {
-    pub fn chain(&self) -> &VerifiedChain { &self.chain }
+    pub fn chain(&self) -> &VerifiedChain {
+        &self.chain
+    }
     /// Replay checking is the caller's: it needs state.
-    pub fn nonce(&self) -> &[u8] { &self.nonce }
-    pub fn issued_at(&self) -> i64 { self.issued_at }
-    pub fn in_reply_to_nonce(&self) -> Option<&[u8]> { self.in_reply_to_nonce.as_deref() }
-    pub fn body_type(&self) -> &str { &self.body_type }
-    pub fn body(&self) -> &[u8] { &self.body }
+    pub fn nonce(&self) -> &[u8] {
+        &self.nonce
+    }
+    pub fn issued_at(&self) -> i64 {
+        self.issued_at
+    }
+    pub fn in_reply_to_nonce(&self) -> Option<&[u8]> {
+        self.in_reply_to_nonce.as_deref()
+    }
+    pub fn body_type(&self) -> &str {
+        &self.body_type
+    }
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
 }
 
 /// The steps every signed-message verifier runs once it has a session key:
@@ -415,19 +562,36 @@ fn check_message_under_session(
     if msg.audience != expected_audience {
         return Err(Error::WrongAudience);
     }
-    verify_p256(session_key, &signed_message_transcript(msg)?, &msg.signature)?;
+    verify_p256(
+        session_key,
+        &signed_message_transcript(msg)?,
+        &msg.signature,
+    )?;
     when.check_skew(msg.issued_at_unix_seconds)
 }
 
-pub fn verify_signed_message(msg: &pb::SignedMessage, expected_audience: &str, r: &Resolver, when: When) -> Result<VerifiedMessage> {
+pub fn verify_signed_message(
+    msg: &pb::SignedMessage,
+    expected_audience: &str,
+    r: &Resolver,
+    when: When,
+) -> Result<VerifiedMessage> {
     if msg.signature.is_empty() {
         return Err(Error::EmptySignature);
     }
-    let chain = verify_chain(msg.signer.as_ref().ok_or(Error::MissingField("signer"))?, r, when)?;
+    let chain = verify_chain(
+        msg.signer.as_ref().ok_or(Error::MissingField("signer"))?,
+        r,
+        when,
+    )?;
     check_message_under_session(msg, expected_audience, chain.session_key(), when)?;
     Ok(VerifiedMessage {
-        chain, nonce: msg.nonce.clone(), issued_at: msg.issued_at_unix_seconds,
-        in_reply_to_nonce: msg.in_reply_to_nonce.clone(), body_type: msg.body_type.clone(), body: msg.body.clone(),
+        chain,
+        nonce: msg.nonce.clone(),
+        issued_at: msg.issued_at_unix_seconds,
+        in_reply_to_nonce: msg.in_reply_to_nonce.clone(),
+        body_type: msg.body_type.clone(),
+        body: msg.body.clone(),
     })
 }
 
@@ -449,12 +613,24 @@ pub struct CarriedMessage {
 }
 
 impl CarriedMessage {
-    pub fn author(&self) -> &PrincipalId { &self.author }
-    pub fn session_key(&self) -> &PublicKey { &self.session_key }
-    pub fn nonce(&self) -> &[u8] { &self.nonce }
-    pub fn issued_at(&self) -> i64 { self.issued_at }
-    pub fn body_type(&self) -> &str { &self.body_type }
-    pub fn body(&self) -> &[u8] { &self.body }
+    pub fn author(&self) -> &PrincipalId {
+        &self.author
+    }
+    pub fn session_key(&self) -> &PublicKey {
+        &self.session_key
+    }
+    pub fn nonce(&self) -> &[u8] {
+        &self.nonce
+    }
+    pub fn issued_at(&self) -> i64 {
+        self.issued_at
+    }
+    pub fn body_type(&self) -> &str {
+        &self.body_type
+    }
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
 }
 
 /// A delegation signed by its own `signing_root`; returns the delegated key.
@@ -468,7 +644,10 @@ fn check_delegation_signature(d: &pb::KeyDelegation, field: &'static str) -> Res
 /// signature links to the next, and the cert, delegations and message agree
 /// on who and what. Whether the signer is trusted is the caller's (the
 /// Delivery signature); whether it was current is the receiver's record.
-pub fn verify_carried_message(msg: &pb::SignedMessage, expected_audience: &str) -> Result<CarriedMessage> {
+pub fn verify_carried_message(
+    msg: &pb::SignedMessage,
+    expected_audience: &str,
+) -> Result<CarriedMessage> {
     use pb::signer_chain::Chain;
     if msg.signature.is_empty() {
         return Err(Error::EmptySignature);
@@ -476,9 +655,17 @@ pub fn verify_carried_message(msg: &pb::SignedMessage, expected_audience: &str) 
     let signer = msg.signer.as_ref().ok_or(Error::MissingField("signer"))?;
     let (cert, session_key) = match signer.chain.as_ref().ok_or(Error::MissingField("chain"))? {
         Chain::SelfRooted(s) => {
-            let d = s.device.as_ref().ok_or(Error::MissingField("self_rooted.device"))?;
-            let cert = s.session.as_ref().ok_or(Error::MissingField("self_rooted.session"))?;
-            if key(&d.principal_genesis, "device.principal_genesis")? != key(&cert.principal_genesis, "session.principal_genesis")? {
+            let d = s
+                .device
+                .as_ref()
+                .ok_or(Error::MissingField("self_rooted.device"))?;
+            let cert = s
+                .session
+                .as_ref()
+                .ok_or(Error::MissingField("self_rooted.session"))?;
+            if key(&d.principal_genesis, "device.principal_genesis")?
+                != key(&cert.principal_genesis, "session.principal_genesis")?
+            {
                 return Err(Error::ChainMismatch("device.principal_genesis"));
             }
             let device = check_delegation_signature(d, "device.signing_root")?;
@@ -489,31 +676,59 @@ pub fn verify_carried_message(msg: &pb::SignedMessage, expected_audience: &str) 
             (cert, session_key)
         }
         Chain::HostVouched(h) => {
-            let d = h.host_device.as_ref().ok_or(Error::MissingField("host_vouched.host_device"))?;
-            let cert = h.session.as_ref().ok_or(Error::MissingField("host_vouched.session"))?;
+            let d = h
+                .host_device
+                .as_ref()
+                .ok_or(Error::MissingField("host_vouched.host_device"))?;
+            let cert = h
+                .session
+                .as_ref()
+                .ok_or(Error::MissingField("host_vouched.session"))?;
             let device = check_host_device(d, cert)?;
             (cert, check_cert_signature(cert, &device)?)
         }
         Chain::DaemonHosted(h) => {
-            let d = h.host_device.as_ref().ok_or(Error::MissingField("daemon_hosted.host_device"))?;
-            let a = h.agent_device.as_ref().ok_or(Error::MissingField("daemon_hosted.agent_device"))?;
-            let cert = h.session.as_ref().ok_or(Error::MissingField("daemon_hosted.session"))?;
+            let d = h
+                .host_device
+                .as_ref()
+                .ok_or(Error::MissingField("daemon_hosted.host_device"))?;
+            let a = h
+                .agent_device
+                .as_ref()
+                .ok_or(Error::MissingField("daemon_hosted.agent_device"))?;
+            let cert = h
+                .session
+                .as_ref()
+                .ok_or(Error::MissingField("daemon_hosted.session"))?;
             let device = check_host_device(d, cert)?;
-            if key(&a.principal_genesis, "agent_device.principal_genesis")? != key(&cert.principal_genesis, "session.principal_genesis")? {
+            if key(&a.principal_genesis, "agent_device.principal_genesis")?
+                != key(&cert.principal_genesis, "session.principal_genesis")?
+            {
                 return Err(Error::ChainMismatch("agent_device.principal_genesis"));
             }
             let agent_device = check_delegation_signature(a, "agent_device.signing_root")?;
             let session_key = check_cert_signature(cert, &device)?;
-            verify_p256(&agent_device, &hosted_session_transcript(cert)?, &h.agent_signature)?;
+            verify_p256(
+                &agent_device,
+                &hosted_session_transcript(cert)?,
+                &h.agent_signature,
+            )?;
             (cert, session_key)
         }
     };
     if msg.audience != expected_audience {
         return Err(Error::WrongAudience);
     }
-    verify_p256(&session_key, &signed_message_transcript(msg)?, &msg.signature)?;
+    verify_p256(
+        &session_key,
+        &signed_message_transcript(msg)?,
+        &msg.signature,
+    )?;
     Ok(CarriedMessage {
-        author: PrincipalId::from_genesis(key(&cert.principal_genesis, "session.principal_genesis")?),
+        author: PrincipalId::from_genesis(key(
+            &cert.principal_genesis,
+            "session.principal_genesis",
+        )?),
         session_key,
         nonce: msg.nonce.clone(),
         issued_at: msg.issued_at_unix_seconds,
@@ -525,7 +740,9 @@ pub fn verify_carried_message(msg: &pb::SignedMessage, expected_audience: &str) 
 /// The host-device half shared by the HostVouched and DaemonHosted arms:
 /// the cert is the host's mode-1 cert and the delegation is the host's own.
 fn check_host_device(d: &pb::KeyDelegation, cert: &pb::DelegationCert) -> Result<PublicKey> {
-    if key(&cert.host_genesis, "session.host_genesis")? != key(&d.principal_genesis, "host_device.principal_genesis")? {
+    if key(&cert.host_genesis, "session.host_genesis")?
+        != key(&d.principal_genesis, "host_device.principal_genesis")?
+    {
         return Err(Error::ChainMismatch("session.host_genesis"));
     }
     let device = check_delegation_signature(d, "host_device.signing_root")?;
@@ -563,16 +780,34 @@ pub struct VerifiedTrustedMessage {
 }
 
 impl VerifiedTrustedMessage {
-    pub fn author_genesis(&self) -> &PublicKey { &self.author_genesis }
-    pub fn device(&self) -> &PublicKey { &self.device }
-    pub fn session_key(&self) -> &PublicKey { &self.session_key }
-    pub fn session_not_after(&self) -> i64 { self.session_not_after }
+    pub fn author_genesis(&self) -> &PublicKey {
+        &self.author_genesis
+    }
+    pub fn device(&self) -> &PublicKey {
+        &self.device
+    }
+    pub fn session_key(&self) -> &PublicKey {
+        &self.session_key
+    }
+    pub fn session_not_after(&self) -> i64 {
+        self.session_not_after
+    }
     /// Replay checking is the caller's: it needs state.
-    pub fn nonce(&self) -> &[u8] { &self.nonce }
-    pub fn issued_at(&self) -> i64 { self.issued_at }
-    pub fn in_reply_to_nonce(&self) -> Option<&[u8]> { self.in_reply_to_nonce.as_deref() }
-    pub fn body_type(&self) -> &str { &self.body_type }
-    pub fn body(&self) -> &[u8] { &self.body }
+    pub fn nonce(&self) -> &[u8] {
+        &self.nonce
+    }
+    pub fn issued_at(&self) -> i64 {
+        self.issued_at
+    }
+    pub fn in_reply_to_nonce(&self) -> Option<&[u8]> {
+        self.in_reply_to_nonce.as_deref()
+    }
+    pub fn body_type(&self) -> &str {
+        &self.body_type
+    }
+    pub fn body(&self) -> &[u8] {
+        &self.body
+    }
 }
 
 /// Verifier for callers that hold their own set of trusted DEVICE keys instead
@@ -606,9 +841,16 @@ pub fn verify_signed_message_trusted_devices(
         .as_ref()
         .ok_or(Error::MissingField("chain"))?;
     let cert = match chain {
-        pb::signer_chain::Chain::SelfRooted(s) => s.session.as_ref().ok_or(Error::MissingField("self_rooted.session"))?,
-        pb::signer_chain::Chain::HostVouched(_) => return Err(Error::ChainMismatch("signer.host_vouched")),
-        pb::signer_chain::Chain::DaemonHosted(_) => return Err(Error::ChainMismatch("signer.daemon_hosted")),
+        pb::signer_chain::Chain::SelfRooted(s) => s
+            .session
+            .as_ref()
+            .ok_or(Error::MissingField("self_rooted.session"))?,
+        pb::signer_chain::Chain::HostVouched(_) => {
+            return Err(Error::ChainMismatch("signer.host_vouched"))
+        }
+        pb::signer_chain::Chain::DaemonHosted(_) => {
+            return Err(Error::ChainMismatch("signer.daemon_hosted"))
+        }
     };
     if cert.mode != 0 {
         return Err(Error::ChainMismatch("session.mode"));
@@ -646,11 +888,21 @@ pub struct VerifiedApproval {
 }
 
 impl VerifiedApproval {
-    pub fn principal(&self) -> &PrincipalId { &self.principal }
-    pub fn approval_key(&self) -> &PublicKey { &self.approval_key }
-    pub fn request_id(&self) -> &str { &self.request_id }
-    pub fn accept(&self) -> bool { self.accept }
-    pub fn issued_at(&self) -> i64 { self.issued_at }
+    pub fn principal(&self) -> &PrincipalId {
+        &self.principal
+    }
+    pub fn approval_key(&self) -> &PublicKey {
+        &self.approval_key
+    }
+    pub fn request_id(&self) -> &str {
+        &self.request_id
+    }
+    pub fn accept(&self) -> bool {
+        self.accept
+    }
+    pub fn issued_at(&self) -> i64 {
+        self.issued_at
+    }
 }
 
 /// Verify a human's presence-key approval for the device and session shown.
@@ -686,7 +938,9 @@ pub fn verify_approval(
     if binding.approval_key() != Some(&approval_key) {
         return Err(Error::NotBound);
     }
-    let delegation = binding.approval_delegation().expect("approval key implies a delegation");
+    let delegation = binding
+        .approval_delegation()
+        .expect("approval key implies a delegation");
     if at > delegation.not_after_unix_seconds {
         return Err(Error::Expired("approval delegation"));
     }
@@ -734,18 +988,21 @@ pub fn verify_peer_revocation(
         return Err(Error::Frozen);
     }
     let approval_key = key(&rev.approval_key, "approval_key")?;
-    let entry = r.entry(&revoker).expect("the authority always has an entry");
+    let entry = r
+        .entry(&revoker)
+        .expect("the authority always has an entry");
     let binding = entry
         .bindings()
         .iter()
         .find(|b| b.approval_key() == Some(&approval_key))
         .ok_or(Error::NotBound)?;
-    let delegation = binding.approval_delegation().expect("approval key implies a delegation");
+    let delegation = binding
+        .approval_delegation()
+        .expect("approval key implies a delegation");
     if at > delegation.not_after_unix_seconds {
         return Err(Error::Expired("approval delegation"));
     }
-    if r.is_revoked(&revoker, &approval_key, at)
-        || r.is_revoked(&revoker, binding.device_key(), at)
+    if r.is_revoked(&revoker, &approval_key, at) || r.is_revoked(&revoker, binding.device_key(), at)
     {
         return Err(Error::KeyRevoked);
     }
@@ -755,7 +1012,11 @@ pub fn verify_peer_revocation(
     if revoked.is_some() && !target_entry.is_self_rooted() {
         return Err(Error::WrongKind);
     }
-    verify_p256(&approval_key, &peer_revocation_transcript(rev)?, &rev.signature)?;
+    verify_p256(
+        &approval_key,
+        &peer_revocation_transcript(rev)?,
+        &rev.signature,
+    )?;
     when.check_skew(rev.issued_at_unix_seconds)?;
     Ok(VerifiedPeerRevocation {
         target,
@@ -780,14 +1041,31 @@ mod tests {
         let r = f.resolver();
         let (_, c) = owner_chain(&f, T0, T0 + 3600);
         let v = verify_chain(&c, &r, LIVE).unwrap();
-        assert_eq!((v.principal(), v.kind(), v.host()), (&f.owner.id(), PrincipalKind::Human, &Host::Daemon(f.daemon.id())));
+        assert_eq!(
+            (v.principal(), v.kind(), v.host()),
+            (
+                &f.owner.id(),
+                PrincipalKind::Human,
+                &Host::Daemon(f.daemon.id())
+            )
+        );
         assert_eq!(v.device(), &f.laptop.public());
         let (_, c) = daemon_chain(&f.daemon, T0, T0 + 30 * DAY, T0, T0 + 3600);
         let v = verify_chain(&c, &r, LIVE).unwrap();
-        assert_eq!((v.kind(), v.host()), (PrincipalKind::Daemon, &Host::Daemon(f.daemon.id())));
+        assert_eq!(
+            (v.kind(), v.host()),
+            (PrincipalKind::Daemon, &Host::Daemon(f.daemon.id()))
+        );
         let (_, c) = agent_chain(&f, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
         let v = verify_chain(&c, &r, LIVE).unwrap();
-        assert_eq!((v.principal(), v.kind(), v.host()), (&f.agent_id(), PrincipalKind::Agent, &Host::Daemon(f.daemon.id())));
+        assert_eq!(
+            (v.principal(), v.kind(), v.host()),
+            (
+                &f.agent_id(),
+                PrincipalKind::Agent,
+                &Host::Daemon(f.daemon.id())
+            )
+        );
         assert_eq!(v.subject(), Some(subject_on(&f.daemon, "i5").as_str()));
     }
 
@@ -840,7 +1118,10 @@ mod tests {
                 session: Some(cert),
             })),
         };
-        assert_eq!(verify_chain(&chain, &f.resolver(), LIVE).unwrap_err(), Error::WrongKind);
+        assert_eq!(
+            verify_chain(&chain, &f.resolver(), LIVE).unwrap_err(),
+            Error::WrongKind
+        );
     }
 
     #[test]
@@ -848,14 +1129,8 @@ mod tests {
         let mut f = Fleet::new();
         let service = Principal::new();
         let (device, delegation) = service.delegate_device(T0, T0 + DAY);
-        let (session_signer, cert) = session_cert(
-            &device,
-            &service.genesis(),
-            None,
-            None,
-            T0,
-            T0 + 3600,
-        );
+        let (session_signer, cert) =
+            session_cert(&device, &service.genesis(), None, None, T0, T0 + 3600);
         f.extra.push(entry(&service, pb::PrincipalKind::Service));
         let chain = pb::SignerChain {
             chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
@@ -900,7 +1175,10 @@ mod tests {
         f.extra.push(entry(&agent, pb::PrincipalKind::Agent));
         let (_, c) = daemon_chain(&agent, T0, T0 + DAY, T0, T0 + 3600);
         let v = verify_chain(&c, &f.resolver(), LIVE).unwrap();
-        assert_eq!((v.kind(), v.host()), (PrincipalKind::Agent, &Host::Unhosted));
+        assert_eq!(
+            (v.kind(), v.host()),
+            (PrincipalKind::Agent, &Host::Unhosted)
+        );
     }
 
     #[test]
@@ -910,7 +1188,10 @@ mod tests {
         // unknown principal
         let stranger = Principal::new();
         let (_, c) = daemon_chain(&stranger, T0, T0 + DAY, T0, T0 + 3600);
-        assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::UnknownPrincipal);
+        assert_eq!(
+            verify_chain(&c, &r, LIVE).unwrap_err(),
+            Error::UnknownPrincipal
+        );
         // a host-vouched agent presenting a self-rooted chain
         let mut reg = f.registry();
         reg.entries[2].kind = pb::PrincipalKind::Agent as i32;
@@ -918,22 +1199,39 @@ mod tests {
         if let Some(pb::signer_chain::Chain::SelfRooted(s)) = c.chain.as_mut() {
             s.session.as_mut().unwrap().principal_genesis = pk(&f.agent.public());
         }
-        assert_eq!(verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(), Error::WrongKind);
+        assert_eq!(
+            verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(),
+            Error::WrongKind
+        );
         // frozen
         let mut reg = f.registry();
         reg.entries[1].frozen = true;
         let (_, c) = daemon_chain(&f.daemon, T0, T0 + DAY, T0, T0 + 3600);
-        assert_eq!(verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(), Error::Frozen);
+        assert_eq!(
+            verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(),
+            Error::Frozen
+        );
         // a device delegation signed by a root that is not current
         let mut rotated = Fleet::new();
         let old = rotated.daemon.root_at(0).public();
         rotated.daemon.rotate(T0);
         let (dev, mut deleg) = rotated.daemon.delegate_device(T0, T0 + DAY);
         deleg.signing_root = pk(&old);
-        deleg.signature = rotated.daemon.root_at(0).sign(&crate::transcripts::key_delegation_transcript(&deleg).unwrap());
+        deleg.signature = rotated
+            .daemon
+            .root_at(0)
+            .sign(&crate::transcripts::key_delegation_transcript(&deleg).unwrap());
         let (_, cert) = session_cert(&dev, &rotated.daemon.genesis(), None, None, T0, T0 + 3600);
-        let c = pb::SignerChain { chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: Some(deleg), session: Some(cert) })) };
-        assert_eq!(verify_chain(&c, &rotated.resolver(), LIVE).unwrap_err(), Error::ChainMismatch("device.signing_root"));
+        let c = pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: Some(deleg),
+                session: Some(cert),
+            })),
+        };
+        assert_eq!(
+            verify_chain(&c, &rotated.resolver(), LIVE).unwrap_err(),
+            Error::ChainMismatch("device.signing_root")
+        );
     }
 
     #[test]
@@ -943,15 +1241,28 @@ mod tests {
         // an unbound device key
         let (dev, deleg) = f.owner.delegate_device(T0, i64::MAX);
         let (_, cert) = session_cert(&dev, &f.owner.genesis(), None, None, T0, T0 + 3600);
-        let c = pb::SignerChain { chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: Some(deleg), session: Some(cert) })) };
+        let c = pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: Some(deleg),
+                session: Some(cert),
+            })),
+        };
         assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::NotBound);
         // the bound key, re-delegated with a different expiry
         let mut resigned = f.laptop_deleg.clone();
         resigned.not_after_unix_seconds = T0 + 10 * DAY;
         f.owner.sign_delegation(&mut resigned);
         let (_, cert) = session_cert(&f.laptop, &f.owner.genesis(), None, None, T0, T0 + 3600);
-        let c = pb::SignerChain { chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: Some(resigned), session: Some(cert) })) };
-        assert!(matches!(verify_chain(&c, &r, LIVE), Err(Error::ChainMismatch(_))));
+        let c = pb::SignerChain {
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: Some(resigned),
+                session: Some(cert),
+            })),
+        };
+        assert!(matches!(
+            verify_chain(&c, &r, LIVE),
+            Err(Error::ChainMismatch(_))
+        ));
     }
 
     #[test]
@@ -968,14 +1279,7 @@ mod tests {
         f.extra.push(e);
         let r = f.resolver();
         let chain = |d: pb::KeyDelegation| {
-            let (_, cert) = session_cert(
-                &alice_dev,
-                &alice.genesis(),
-                None,
-                None,
-                T0,
-                T0 + 3600,
-            );
+            let (_, cert) = session_cert(&alice_dev, &alice.genesis(), None, None, T0, T0 + 3600);
             pb::SignerChain {
                 chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
                     device: Some(d),
@@ -1003,11 +1307,13 @@ mod tests {
         f.owner.rotate(T0);
         let (laptop, d) = f.owner.delegate_device(T0, i64::MAX);
         let (presence, a) = f.owner.delegate_approval(T0, i64::MAX);
-        (f.laptop, f.laptop_deleg, f.presence, f.presence_deleg) =
-            (laptop, d, presence, a);
+        (f.laptop, f.laptop_deleg, f.presence, f.presence_deleg) = (laptop, d, presence, a);
         let r = f.resolver();
         let (_, c) = owner_chain(&f, T0, T0 + 3600);
-        assert_eq!(verify_chain(&c, &r, LIVE).unwrap().principal(), &f.owner.id());
+        assert_eq!(
+            verify_chain(&c, &r, LIVE).unwrap().principal(),
+            &f.owner.id()
+        );
     }
 
     #[test]
@@ -1016,14 +1322,7 @@ mod tests {
         let (dev, deleg) = f.daemon.delegate_device(T0, T0 + DAY);
         f.daemon_revocations = vec![f.daemon.revoke(&dev.public(), T0 + 100)];
         let r = f.resolver();
-        let (_, cert) = session_cert(
-            &dev,
-            &f.daemon.genesis(),
-            None,
-            None,
-            T0,
-            T0 + 3600,
-        );
+        let (_, cert) = session_cert(&dev, &f.daemon.genesis(), None, None, T0, T0 + 3600);
         let c = pb::SignerChain {
             chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
                 device: Some(deleg),
@@ -1043,7 +1342,10 @@ mod tests {
         let mut reg = f.registry();
         reg.entries[1].frozen = true;
         let (_, c) = owner_chain(&f, T0, T0 + 3600);
-        assert_eq!(verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(), Error::HostFrozen);
+        assert_eq!(
+            verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(),
+            Error::HostFrozen
+        );
     }
 
     #[test]
@@ -1053,7 +1355,10 @@ mod tests {
         let r = f.resolver();
         let (_, c) = owner_chain(&f, T0, T0 + 3600);
         assert!(verify_chain(&c, &r, accepted(T0 + 99)).is_ok());
-        assert_eq!(verify_chain(&c, &r, accepted(T0 + 100)).unwrap_err(), Error::KeyRevoked);
+        assert_eq!(
+            verify_chain(&c, &r, accepted(T0 + 100)).unwrap_err(),
+            Error::KeyRevoked
+        );
     }
 
     #[test]
@@ -1063,17 +1368,29 @@ mod tests {
         let now = T0 + 60;
         // dated 1 hour ahead: not yet valid; 10 s ahead: within skew
         let (_, c) = daemon_chain(&f.daemon, now + 3600, now + 3600 + DAY, now, now + 3600);
-        assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::NotYetValid("device delegation"));
+        assert_eq!(
+            verify_chain(&c, &r, LIVE).unwrap_err(),
+            Error::NotYetValid("device delegation")
+        );
         let (_, c) = daemon_chain(&f.daemon, now + 10, now + 10 + DAY, now, now + 3600);
         assert!(verify_chain(&c, &r, LIVE).is_ok());
         // 31 days passes, 31 days + 1 s fails
         let (_, c) = daemon_chain(&f.daemon, T0, T0 + 31 * DAY, T0, T0 + 3600);
         assert!(verify_chain(&c, &r, LIVE).is_ok());
         let (_, c) = daemon_chain(&f.daemon, T0, T0 + 31 * DAY + 1, T0, T0 + 3600);
-        assert!(matches!(verify_chain(&c, &r, LIVE), Err(Error::InvalidField { field: "device.not_after_unix_seconds", .. })));
+        assert!(matches!(
+            verify_chain(&c, &r, LIVE),
+            Err(Error::InvalidField {
+                field: "device.not_after_unix_seconds",
+                ..
+            })
+        ));
         // expired
         let (_, c) = daemon_chain(&f.daemon, T0 - 2 * DAY, T0 - DAY, T0, T0 + 3600);
-        assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::Expired("device delegation"));
+        assert_eq!(
+            verify_chain(&c, &r, LIVE).unwrap_err(),
+            Error::Expired("device delegation")
+        );
     }
 
     #[test]
@@ -1084,14 +1401,32 @@ mod tests {
         let (_, c) = owner_chain(&f, T0, T0 + 86_400);
         assert!(verify_chain(&c, &r, at(T0 + 10)).is_ok());
         let (_, c) = owner_chain(&f, T0, T0 + 86_401);
-        assert!(matches!(verify_chain(&c, &r, at(T0 + 10)), Err(Error::InvalidField { field: "session.not_after_unix_seconds", .. })));
+        assert!(matches!(
+            verify_chain(&c, &r, at(T0 + 10)),
+            Err(Error::InvalidField {
+                field: "session.not_after_unix_seconds",
+                ..
+            })
+        ));
         let (_, c) = owner_chain(&f, T0 + 10, T0 + 10);
-        assert!(matches!(verify_chain(&c, &r, at(T0 + 10)), Err(Error::InvalidField { .. })));
+        assert!(matches!(
+            verify_chain(&c, &r, at(T0 + 10)),
+            Err(Error::InvalidField { .. })
+        ));
         let (_, c) = owner_chain(&f, T0 + 100, T0 + 3600);
-        assert!(verify_chain(&c, &r, at(T0 + 75)).is_ok(), "within the not_before tolerance");
-        assert_eq!(verify_chain(&c, &r, at(T0 + 69)).unwrap_err(), Error::NotYetValid("session cert"));
+        assert!(
+            verify_chain(&c, &r, at(T0 + 75)).is_ok(),
+            "within the not_before tolerance"
+        );
+        assert_eq!(
+            verify_chain(&c, &r, at(T0 + 69)).unwrap_err(),
+            Error::NotYetValid("session cert")
+        );
         let (_, c) = owner_chain(&f, T0, T0 + 3600);
-        assert_eq!(verify_chain(&c, &r, at(T0 + 3601)).unwrap_err(), Error::Expired("session cert"));
+        assert_eq!(
+            verify_chain(&c, &r, at(T0 + 3601)).unwrap_err(),
+            Error::Expired("session cert")
+        );
     }
 
     #[test]
@@ -1101,7 +1436,10 @@ mod tests {
         let mut reg = f.registry();
         reg.entries[2].allowed_hosts = vec![Principal::new().id().to_string()];
         let (_, c) = agent_chain(&f, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
-        assert_eq!(verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(), Error::NotVouched);
+        assert_eq!(
+            verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(),
+            Error::NotVouched
+        );
         // "*" allows any daemon
         let mut reg = f.registry();
         reg.entries[2].allowed_hosts = vec!["*".into()];
@@ -1109,7 +1447,10 @@ mod tests {
         // frozen agent
         let mut reg = f.registry();
         reg.entries[2].frozen = true;
-        assert_eq!(verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(), Error::Frozen);
+        assert_eq!(
+            verify_chain(&c, &resolver_for(&f.owner, reg).unwrap(), LIVE).unwrap_err(),
+            Error::Frozen
+        );
     }
 
     #[test]
@@ -1123,7 +1464,14 @@ mod tests {
     }
 
     fn hosted(f: &Fleet, agent: &Principal) -> pb::SignerChain {
-        hosted_chain(&f.daemon, agent, &subject_on(&f.daemon, "i5"), T0, T0 + 3600).1
+        hosted_chain(
+            &f.daemon,
+            agent,
+            &subject_on(&f.daemon, "i5"),
+            T0,
+            T0 + 3600,
+        )
+        .1
     }
 
     fn with_agent(f: &mut Fleet, agent: &Principal, allowed: Vec<String>) {
@@ -1149,7 +1497,13 @@ mod tests {
             let agent = Principal::new();
             let allowed = allowed
                 .into_iter()
-                .map(|a| if a == "daemon" { f.daemon.id().to_string() } else { a.to_string() })
+                .map(|a| {
+                    if a == "daemon" {
+                        f.daemon.id().to_string()
+                    } else {
+                        a.to_string()
+                    }
+                })
                 .collect();
             with_agent(&mut f, &agent, allowed);
             let daemon_hosted = hosted(&f, &agent);
@@ -1163,7 +1517,10 @@ mod tests {
                 },
                 _ => panic!("not daemon-hosted"),
             };
-            assert_eq!(verify_chain(&forged, &f.resolver(), LIVE).unwrap_err(), Error::WrongKind);
+            assert_eq!(
+                verify_chain(&forged, &f.resolver(), LIVE).unwrap_err(),
+                Error::WrongKind
+            );
         }
     }
 
@@ -1176,7 +1533,12 @@ mod tests {
         let v = verify_chain(&c, &f.resolver(), LIVE).unwrap();
         assert_eq!(
             (v.principal(), v.kind(), v.host(), v.subject()),
-            (&agent.id(), PrincipalKind::Agent, &Host::Daemon(f.daemon.id()), Some(subject_on(&f.daemon, "i5").as_str()))
+            (
+                &agent.id(),
+                PrincipalKind::Agent,
+                &Host::Daemon(f.daemon.id()),
+                Some(subject_on(&f.daemon, "i5").as_str())
+            )
         );
     }
 
@@ -1184,7 +1546,10 @@ mod tests {
     fn ungranted_daemon_cannot_host_an_unregistered_agent() {
         let f = Fleet::new();
         let c = hosted(&f, &Principal::new());
-        assert_eq!(verify_chain(&c, &f.resolver(), LIVE).unwrap_err(), Error::UnknownPrincipal);
+        assert_eq!(
+            verify_chain(&c, &f.resolver(), LIVE).unwrap_err(),
+            Error::UnknownPrincipal
+        );
     }
 
     #[test]
@@ -1196,7 +1561,10 @@ mod tests {
         f.daemon_grant = true;
         assert!(verify_chain(&c, &f.resolver(), LIVE).is_ok());
         f.daemon_grant = false;
-        assert_eq!(verify_chain(&c, &f.resolver(), LIVE).unwrap_err(), Error::NotVouched);
+        assert_eq!(
+            verify_chain(&c, &f.resolver(), LIVE).unwrap_err(),
+            Error::NotVouched
+        );
     }
 
     #[test]
@@ -1210,7 +1578,10 @@ mod tests {
         f.extra.clear();
         f.daemon_grant = true;
         with_agent(&mut f, &agent, vec![Principal::new().id().to_string()]);
-        assert_eq!(verify_chain(&c, &f.resolver(), LIVE).unwrap_err(), Error::NotVouched);
+        assert_eq!(
+            verify_chain(&c, &f.resolver(), LIVE).unwrap_err(),
+            Error::NotVouched
+        );
     }
 
     #[test]
@@ -1223,7 +1594,12 @@ mod tests {
         let (host_dev, host_deleg) = f.daemon.delegate_device(T0, T0 + 30 * DAY);
         let (agent_dev, agent_deleg) = agent.delegate_device(T0, T0 + 30 * DAY);
         let (_, cert) = session_cert(
-            &host_dev, &agent.genesis(), Some(&f.daemon.genesis()), Some(&subject_on(&f.daemon, "i5")), T0, T0 + 3600,
+            &host_dev,
+            &agent.genesis(),
+            Some(&f.daemon.genesis()),
+            Some(&subject_on(&f.daemon, "i5")),
+            T0,
+            T0 + 3600,
         );
         let transcript = hosted_session_transcript(&cert).unwrap();
         let mut c = pb::SignerChain {
@@ -1237,7 +1613,10 @@ mod tests {
         };
         assert!(verify_chain(&c, &r, LIVE).is_ok());
         hosted_mut(&mut c).agent_signature.clear();
-        assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::MissingField("daemon_hosted.agent_signature"));
+        assert_eq!(
+            verify_chain(&c, &r, LIVE).unwrap_err(),
+            Error::MissingField("daemon_hosted.agent_signature")
+        );
         // the daemon device alone cannot mint a hosted session
         hosted_mut(&mut c).agent_signature = host_dev.sign(&transcript);
         assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::BadSignature);
@@ -1253,7 +1632,10 @@ mod tests {
         let mut c = hosted(&f, &agent);
         assert!(verify_chain(&c, &r, LIVE).is_ok());
         hosted_mut(&mut c).agent_rotations.clear();
-        assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::ChainMismatch("agent_device.signing_root"));
+        assert_eq!(
+            verify_chain(&c, &r, LIVE).unwrap_err(),
+            Error::ChainMismatch("agent_device.signing_root")
+        );
     }
 
     #[test]
@@ -1265,7 +1647,10 @@ mod tests {
         let r = f.resolver();
         agent.rotate(T0);
         let c = hosted(&f, &agent);
-        assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::ChainMismatch("device.signing_root"));
+        assert_eq!(
+            verify_chain(&c, &r, LIVE).unwrap_err(),
+            Error::ChainMismatch("device.signing_root")
+        );
     }
 
     #[test]
@@ -1282,11 +1667,21 @@ mod tests {
         // cert mode 0
         let mut c = hosted(&f, &agent);
         hosted_mut(&mut c).session.as_mut().unwrap().mode = 0;
-        assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::ChainMismatch("session.mode"));
+        assert_eq!(
+            verify_chain(&c, &r, LIVE).unwrap_err(),
+            Error::ChainMismatch("session.mode")
+        );
         // agent device of another principal
         let mut c = hosted(&f, &agent);
-        hosted_mut(&mut c).agent_device.as_mut().unwrap().principal_genesis = pk(&other.genesis());
-        assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::ChainMismatch("agent_device.principal_genesis"));
+        hosted_mut(&mut c)
+            .agent_device
+            .as_mut()
+            .unwrap()
+            .principal_genesis = pk(&other.genesis());
+        assert_eq!(
+            verify_chain(&c, &r, LIVE).unwrap_err(),
+            Error::ChainMismatch("agent_device.principal_genesis")
+        );
         // the host is a HUMAN
         let (_, c) = hosted_chain(&f.owner, &agent, &subject_on(&f.owner, "i5"), T0, T0 + 3600);
         assert_eq!(verify_chain(&c, &r, LIVE).unwrap_err(), Error::WrongKind);
@@ -1299,15 +1694,24 @@ mod tests {
         with_agent(&mut g, &agent, vec![]);
         g.extra[0].frozen = true;
         let c = hosted(&g, &agent);
-        assert_eq!(verify_chain(&c, &g.resolver(), LIVE).unwrap_err(), Error::Frozen);
+        assert_eq!(
+            verify_chain(&c, &g.resolver(), LIVE).unwrap_err(),
+            Error::Frozen
+        );
         // expired agent device delegation (the host device is also 30 days)
         let c = hosted(&f, &agent);
-        assert_eq!(verify_chain(&c, &r, accepted(T0 + 31 * DAY)).unwrap_err(), Error::Expired("agent device delegation"));
+        assert_eq!(
+            verify_chain(&c, &r, accepted(T0 + 31 * DAY)).unwrap_err(),
+            Error::Expired("agent device delegation")
+        );
         let mut g = Fleet::new();
         g.daemon_grant = true;
         with_agent(&mut g, &agent, vec![]);
         let c = hosted(&g, &agent);
-        assert_eq!(verify_chain(&c, &g.resolver(), accepted(T0 + 31 * DAY)).unwrap_err(), Error::Expired("device delegation"));
+        assert_eq!(
+            verify_chain(&c, &g.resolver(), accepted(T0 + 31 * DAY)).unwrap_err(),
+            Error::Expired("device delegation")
+        );
     }
 
     #[test]
@@ -1315,7 +1719,13 @@ mod tests {
         let mut f = Fleet::new();
         f.daemon_grant = true;
         let agent = Principal::new();
-        let (s, c) = hosted_chain(&f.daemon, &agent, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
+        let (s, c) = hosted_chain(
+            &f.daemon,
+            &agent,
+            &subject_on(&f.daemon, "i5"),
+            T0,
+            T0 + 3600,
+        );
         let m = signed_message(&s, c, AUD, T0 + 60);
         let v = verify_signed_message(&m, AUD, &f.resolver(), LIVE).unwrap();
         assert_eq!(v.chain().principal(), &agent.id());
@@ -1328,16 +1738,33 @@ mod tests {
         let (s, c) = owner_chain(&f, T0, T0 + 3600);
         let m = signed_message(&s, c, AUD, T0 + 60);
         let v = verify_signed_message(&m, AUD, &r, LIVE).unwrap();
-        assert_eq!((v.body(), v.nonce(), v.chain().principal()), (&[1u8, 2][..], &[7u8; 16][..], &f.owner.id()));
-        assert_eq!(verify_signed_message(&m, "structmux:other", &r, LIVE).unwrap_err(), Error::WrongAudience);
-        let mut tampered = m.clone(); tampered.body.push(3);
-        assert_eq!(verify_signed_message(&tampered, AUD, &r, LIVE).unwrap_err(), Error::BadSignature);
-        let mut empty = m.clone(); empty.signature.clear();
-        assert_eq!(verify_signed_message(&empty, AUD, &r, LIVE).unwrap_err(), Error::EmptySignature);
+        assert_eq!(
+            (v.body(), v.nonce(), v.chain().principal()),
+            (&[1u8, 2][..], &[7u8; 16][..], &f.owner.id())
+        );
+        assert_eq!(
+            verify_signed_message(&m, "structmux:other", &r, LIVE).unwrap_err(),
+            Error::WrongAudience
+        );
+        let mut tampered = m.clone();
+        tampered.body.push(3);
+        assert_eq!(
+            verify_signed_message(&tampered, AUD, &r, LIVE).unwrap_err(),
+            Error::BadSignature
+        );
+        let mut empty = m.clone();
+        empty.signature.clear();
+        assert_eq!(
+            verify_signed_message(&empty, AUD, &r, LIVE).unwrap_err(),
+            Error::EmptySignature
+        );
         // skew only when live
         let (s, c) = owner_chain(&f, T0, T0 + 3600);
         let late = signed_message(&s, c, AUD, T0 + 60 + 31);
-        assert_eq!(verify_signed_message(&late, AUD, &r, LIVE).unwrap_err(), Error::Skew);
+        assert_eq!(
+            verify_signed_message(&late, AUD, &r, LIVE).unwrap_err(),
+            Error::Skew
+        );
         assert!(verify_signed_message(&late, AUD, &r, accepted(T0 + 60)).is_ok());
     }
 
@@ -1363,19 +1790,62 @@ mod tests {
             T0 + 60,
         );
         let verified = verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap();
-        assert_eq!((verified.principal(), verified.request_id(), verified.accept()), (&f.owner.id(), "r1", true));
-        assert_eq!(verify_approval(&a, "structmux:other", "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::WrongAudience);
-        assert_eq!(verify_approval(&a, AUD, "r2", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::DigestMismatch);
-        assert_eq!(verify_approval(&a, AUD, "r1", &session, &[8; 32], &r, LIVE).unwrap_err(), Error::DigestMismatch);
-        let late = approval(&f.presence, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 100);
-        assert_eq!(verify_approval(&late, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::Skew);
-        assert!(verify_approval(&late, AUD, "r1", &session, &DIGEST, &r, accepted(T0 + 100)).is_ok());
+        assert_eq!(
+            (
+                verified.principal(),
+                verified.request_id(),
+                verified.accept()
+            ),
+            (&f.owner.id(), "r1", true)
+        );
+        assert_eq!(
+            verify_approval(&a, "structmux:other", "r1", &session, &DIGEST, &r, LIVE).unwrap_err(),
+            Error::WrongAudience
+        );
+        assert_eq!(
+            verify_approval(&a, AUD, "r2", &session, &DIGEST, &r, LIVE).unwrap_err(),
+            Error::DigestMismatch
+        );
+        assert_eq!(
+            verify_approval(&a, AUD, "r1", &session, &[8; 32], &r, LIVE).unwrap_err(),
+            Error::DigestMismatch
+        );
+        let late = approval(
+            &f.presence,
+            &f.owner.genesis(),
+            &f.laptop.public(),
+            AUD,
+            "r1",
+            DIGEST,
+            T0 + 100,
+        );
+        assert_eq!(
+            verify_approval(&late, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(),
+            Error::Skew
+        );
+        assert!(
+            verify_approval(&late, AUD, "r1", &session, &DIGEST, &r, accepted(T0 + 100)).is_ok()
+        );
         let stranger = TestKey::new();
-        let forged = approval(&stranger, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 60);
-        assert_eq!(verify_approval(&forged, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::NotBound);
+        let forged = approval(
+            &stranger,
+            &f.owner.genesis(),
+            &f.laptop.public(),
+            AUD,
+            "r1",
+            DIGEST,
+            T0 + 60,
+        );
+        assert_eq!(
+            verify_approval(&forged, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(),
+            Error::NotBound
+        );
         let mut empty = a.clone();
         empty.signature.clear();
-        assert_eq!(verify_approval(&empty, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::EmptySignature);
+        assert_eq!(
+            verify_approval(&empty, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(),
+            Error::EmptySignature
+        );
     }
 
     #[test]
@@ -1391,8 +1861,19 @@ mod tests {
         });
         let r = resolver_for(&f.owner, registry).unwrap();
         let session = laptop_session(&f, &r);
-        let a = approval(&phone_presence, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 60);
-        assert_eq!(verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::NotBound);
+        let a = approval(
+            &phone_presence,
+            &f.owner.genesis(),
+            &f.laptop.public(),
+            AUD,
+            "r1",
+            DIGEST,
+            T0 + 60,
+        );
+        assert_eq!(
+            verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(),
+            Error::NotBound
+        );
     }
 
     #[test]
@@ -1401,8 +1882,19 @@ mod tests {
         let r = f.resolver();
         let (_, chain) = daemon_chain(&f.daemon, T0, T0 + DAY, T0, T0 + 3600);
         let session = verify_chain(&chain, &r, LIVE).unwrap();
-        let a = approval(&f.presence, &f.daemon.genesis(), session.device(), AUD, "r1", DIGEST, T0 + 60);
-        assert_eq!(verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::WrongKind);
+        let a = approval(
+            &f.presence,
+            &f.daemon.genesis(),
+            session.device(),
+            AUD,
+            "r1",
+            DIGEST,
+            T0 + 60,
+        );
+        assert_eq!(
+            verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(),
+            Error::WrongKind
+        );
     }
 
     #[test]
@@ -1411,8 +1903,19 @@ mod tests {
         f.owner_revocations = vec![f.owner.revoke(&f.presence.public(), T0)];
         let r = f.resolver();
         let session = laptop_session(&f, &r);
-        let a = approval(&f.presence, &f.owner.genesis(), &f.laptop.public(), AUD, "r1", DIGEST, T0 + 60);
-        assert_eq!(verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(), Error::KeyRevoked);
+        let a = approval(
+            &f.presence,
+            &f.owner.genesis(),
+            &f.laptop.public(),
+            AUD,
+            "r1",
+            DIGEST,
+            T0 + 60,
+        );
+        assert_eq!(
+            verify_approval(&a, AUD, "r1", &session, &DIGEST, &r, LIVE).unwrap_err(),
+            Error::KeyRevoked
+        );
     }
 
     #[test]
@@ -1421,22 +1924,44 @@ mod tests {
         let r = f.resolver();
         let p = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
         let verified = verify_peer_revocation(&p, &r, LIVE).unwrap();
-        assert_eq!((verified.target(), verified.revoked(), verified.accepted_at()), (&f.daemon.id(), None, T0 + 60));
+        assert_eq!(
+            (
+                verified.target(),
+                verified.revoked(),
+                verified.accepted_at()
+            ),
+            (&f.daemon.id(), None, T0 + 60)
+        );
         let r2 = r.with_peer_revocation(verified).unwrap();
         let (_, chain) = daemon_chain(&f.daemon, T0, T0 + DAY, T0, T0 + 3600);
-        assert!(verify_chain(&chain, &r2, accepted(T0 + 59)).is_ok(), "history before the freeze stands");
-        assert_eq!(verify_chain(&chain, &r2, accepted(T0 + 60)).unwrap_err(), Error::Frozen);
+        assert!(
+            verify_chain(&chain, &r2, accepted(T0 + 59)).is_ok(),
+            "history before the freeze stands"
+        );
+        assert_eq!(
+            verify_chain(&chain, &r2, accepted(T0 + 60)).unwrap_err(),
+            Error::Frozen
+        );
     }
 
     #[test]
     fn peer_revoked_root_freezes_the_daemon() {
         let f = Fleet::new();
         let r = f.resolver();
-        let p = peer_revocation(&f, &r, &f.daemon.genesis(), Some(&f.daemon.root().public()), T0 + 60);
+        let p = peer_revocation(
+            &f,
+            &r,
+            &f.daemon.genesis(),
+            Some(&f.daemon.root().public()),
+            T0 + 60,
+        );
         let verified = verify_peer_revocation(&p, &r, LIVE).unwrap();
         let r2 = r.with_peer_revocation(verified).unwrap();
         let (_, chain) = daemon_chain(&f.daemon, T0 + 61, T0 + 61 + DAY, T0 + 61, T0 + 3600);
-        assert_eq!(verify_chain(&chain, &r2, accepted(T0 + 62)).unwrap_err(), Error::Frozen);
+        assert_eq!(
+            verify_chain(&chain, &r2, accepted(T0 + 62)).unwrap_err(),
+            Error::Frozen
+        );
     }
 
     #[test]
@@ -1453,36 +1978,76 @@ mod tests {
             DOC_TYPE,
         )
         .unwrap();
-        assert_eq!(verify_peer_revocation(&p, &r2, LIVE).unwrap_err(), Error::StalePeerRevocation);
-        assert_eq!(verify_peer_revocation(&p, &r2, accepted(T0 + 60)).unwrap_err(), Error::StalePeerRevocation);
+        assert_eq!(
+            verify_peer_revocation(&p, &r2, LIVE).unwrap_err(),
+            Error::StalePeerRevocation
+        );
+        assert_eq!(
+            verify_peer_revocation(&p, &r2, accepted(T0 + 60)).unwrap_err(),
+            Error::StalePeerRevocation
+        );
         let verified = verify_peer_revocation(&p, &r, LIVE).unwrap();
-        assert_eq!(r2.with_peer_revocation(verified).unwrap_err(), Error::StalePeerRevocation);
+        assert_eq!(
+            r2.with_peer_revocation(verified).unwrap_err(),
+            Error::StalePeerRevocation
+        );
 
         f.allow_peer_revocation = false;
         let disabled = f.resolver();
         let p = peer_revocation(&f, &disabled, &f.daemon.genesis(), None, T0 + 60);
-        assert_eq!(verify_peer_revocation(&p, &disabled, LIVE).unwrap_err(), Error::PeerRevocationDisabled);
+        assert_eq!(
+            verify_peer_revocation(&p, &disabled, LIVE).unwrap_err(),
+            Error::PeerRevocationDisabled
+        );
 
         f.allow_peer_revocation = true;
         let r = f.resolver();
         let p = peer_revocation(&f, &r, &TestKey::new().public(), None, T0 + 60);
-        assert_eq!(verify_peer_revocation(&p, &r, LIVE).unwrap_err(), Error::UnknownPrincipal);
-        let p = peer_revocation(&f, &r, &f.agent.public(), Some(&TestKey::new().public()), T0 + 60);
-        assert_eq!(verify_peer_revocation(&p, &r, LIVE).unwrap_err(), Error::WrongKind);
+        assert_eq!(
+            verify_peer_revocation(&p, &r, LIVE).unwrap_err(),
+            Error::UnknownPrincipal
+        );
+        let p = peer_revocation(
+            &f,
+            &r,
+            &f.agent.public(),
+            Some(&TestKey::new().public()),
+            T0 + 60,
+        );
+        assert_eq!(
+            verify_peer_revocation(&p, &r, LIVE).unwrap_err(),
+            Error::WrongKind
+        );
 
         let p = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 200);
-        assert_eq!(verify_peer_revocation(&p, &r, LIVE).unwrap_err(), Error::Skew);
-        assert_eq!(verify_peer_revocation(&p, &r, accepted(T0 + 500)).unwrap().accepted_at(), T0 + 500);
+        assert_eq!(
+            verify_peer_revocation(&p, &r, LIVE).unwrap_err(),
+            Error::Skew
+        );
+        assert_eq!(
+            verify_peer_revocation(&p, &r, accepted(T0 + 500))
+                .unwrap()
+                .accepted_at(),
+            T0 + 500
+        );
 
         let mut q = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
         let other = TestKey::new();
         q.approval_key = pk(&other.public());
         q.signature = other.sign(&crate::transcripts::peer_revocation_transcript(&q).unwrap());
-        assert_eq!(verify_peer_revocation(&q, &r, LIVE).unwrap_err(), Error::NotBound);
+        assert_eq!(
+            verify_peer_revocation(&q, &r, LIVE).unwrap_err(),
+            Error::NotBound
+        );
         let mut q = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
         q.revoker_genesis = pk(&f.daemon.genesis());
-        q.signature = f.presence.sign(&crate::transcripts::peer_revocation_transcript(&q).unwrap());
-        assert_eq!(verify_peer_revocation(&q, &r, LIVE).unwrap_err(), Error::NotAuthority);
+        q.signature = f
+            .presence
+            .sign(&crate::transcripts::peer_revocation_transcript(&q).unwrap());
+        assert_eq!(
+            verify_peer_revocation(&q, &r, LIVE).unwrap_err(),
+            Error::NotAuthority
+        );
     }
 
     #[test]
@@ -1517,9 +2082,14 @@ mod tests {
         let f = Fleet::new();
         let r = f.resolver();
         let p = peer_revocation(&f, &r, &f.daemon.genesis(), None, T0 + 60);
-        let r2 = r.with_peer_revocation(verify_peer_revocation(&p, &r, LIVE).unwrap()).unwrap();
+        let r2 = r
+            .with_peer_revocation(verify_peer_revocation(&p, &r, LIVE).unwrap())
+            .unwrap();
         let (_, chain) = owner_chain(&f, T0, T0 + 3600);
-        assert_eq!(verify_chain(&chain, &r2, accepted(T0 + 61)).unwrap_err(), Error::HostFrozen);
+        assert_eq!(
+            verify_chain(&chain, &r2, accepted(T0 + 61)).unwrap_err(),
+            Error::HostFrozen
+        );
     }
 
     #[test]
@@ -1527,14 +2097,19 @@ mod tests {
         let f = Fleet::new();
         let r = f.resolver();
         let p = peer_revocation(&f, &r, &f.owner.genesis(), None, T0 + 60);
-        let r2 = r.with_peer_revocation(verify_peer_revocation(&p, &r, LIVE).unwrap()).unwrap();
+        let r2 = r
+            .with_peer_revocation(verify_peer_revocation(&p, &r, LIVE).unwrap())
+            .unwrap();
         let again = peer_revocation(&f, &r2, &f.daemon.genesis(), None, T0 + 61);
-        assert_eq!(verify_peer_revocation(&again, &r2, When::Live { now: T0 + 61 }).unwrap_err(), Error::Frozen);
+        assert_eq!(
+            verify_peer_revocation(&again, &r2, When::Live { now: T0 + 61 }).unwrap_err(),
+            Error::Frozen
+        );
     }
 
     // ---- step-1 verifier with trusted device keys (no Resolver) ----
 
-    use crate::{mint_session, message_nonce, SessionCredential};
+    use crate::{message_nonce, mint_session, SessionCredential};
 
     const BODY_TYPE: &str = "type.googleapis.com/test.v1.Body";
     const SPAN: Error = Error::InvalidField {
@@ -1553,7 +2128,15 @@ mod tests {
     ) -> (SessionCredential, pb::SignedMessage) {
         let cred = mint_session(&f.laptop, &f.owner.genesis(), nb, na).unwrap();
         let msg = cred
-            .sign_message(device, AUD, message_nonce("m1"), issued, None, BODY_TYPE, b"hi")
+            .sign_message(
+                device,
+                AUD,
+                message_nonce("m1"),
+                issued,
+                None,
+                BODY_TYPE,
+                b"hi",
+            )
             .unwrap();
         (cred, msg)
     }
@@ -1564,12 +2147,23 @@ mod tests {
         devices: &[PublicKey],
         when: When,
     ) -> Result<VerifiedTrustedMessage> {
-        verify_signed_message_trusted_devices(msg, AUD, AuthorDevices { author_genesis: author, devices }, when)
+        verify_signed_message_trusted_devices(
+            msg,
+            AUD,
+            AuthorDevices {
+                author_genesis: author,
+                devices,
+            },
+            when,
+        )
     }
 
     fn self_rooted(cert: pb::DelegationCert) -> pb::SignerChain {
         pb::SignerChain {
-            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: None, session: Some(cert) })),
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: None,
+                session: Some(cert),
+            })),
         }
     }
 
@@ -1586,7 +2180,15 @@ mod tests {
         let owner = f.owner.genesis();
         let cred = mint_session(&f.laptop, &owner, T0, T0 + 3600).unwrap();
         let msg = cred
-            .sign_message(None, AUD, message_nonce("m1"), T0 + 60, Some(message_nonce("m0")), BODY_TYPE, b"hi")
+            .sign_message(
+                None,
+                AUD,
+                message_nonce("m1"),
+                T0 + 60,
+                Some(message_nonce("m0")),
+                BODY_TYPE,
+                b"hi",
+            )
             .unwrap();
         let v = trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap();
         assert_eq!(v.author_genesis(), &owner);
@@ -1620,7 +2222,17 @@ mod tests {
         let b = Principal::new();
         let (b_device, _) = b.delegate_device(T0, i64::MAX);
         let cred = mint_session(&f.laptop, &b.genesis(), T0, T0 + 3600).unwrap();
-        let msg = cred.sign_message(None, AUD, message_nonce("m1"), T0 + 60, None, BODY_TYPE, b"hi").unwrap();
+        let msg = cred
+            .sign_message(
+                None,
+                AUD,
+                message_nonce("m1"),
+                T0 + 60,
+                None,
+                BODY_TYPE,
+                b"hi",
+            )
+            .unwrap();
         assert_eq!(
             trusted(&msg, &b.genesis(), &[b_device.public()], LIVE).unwrap_err(),
             Error::NotBound
@@ -1656,7 +2268,10 @@ mod tests {
     fn empty_trusted_set_is_rejected() {
         let f = Fleet::new();
         let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
-        assert_eq!(trusted(&msg, &f.owner.genesis(), &[], LIVE).unwrap_err(), Error::NotBound);
+        assert_eq!(
+            trusted(&msg, &f.owner.genesis(), &[], LIVE).unwrap_err(),
+            Error::NotBound
+        );
     }
 
     #[test]
@@ -1667,9 +2282,15 @@ mod tests {
         cert.signature = vec![1; 64];
         let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
         // not trusted: the set check fires before the cert signature is looked at
-        assert_eq!(trusted(&msg, &owner, &[], LIVE).unwrap_err(), Error::NotBound);
+        assert_eq!(
+            trusted(&msg, &owner, &[], LIVE).unwrap_err(),
+            Error::NotBound
+        );
         // trusted: now the bad cert signature is what fails
-        assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), Error::BadSignature);
+        assert_eq!(
+            trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(),
+            Error::BadSignature
+        );
     }
 
     #[test]
@@ -1698,7 +2319,11 @@ mod tests {
         for (nb, na) in [(T0 + 60, T0 + 60), (T0 + 61, T0 + 60)] {
             let (session, cert) = session_cert(&f.laptop, &owner, None, None, nb, na);
             let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
-            assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), SPAN, "{nb}..{na}");
+            assert_eq!(
+                trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(),
+                SPAN,
+                "{nb}..{na}"
+            );
         }
     }
 
@@ -1709,7 +2334,11 @@ mod tests {
         for (nb, na) in [(T0, i64::MAX), (i64::MIN, i64::MAX), (i64::MAX, i64::MIN)] {
             let (session, cert) = session_cert(&f.laptop, &owner, None, None, nb, na);
             let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
-            assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), SPAN, "{nb}..{na}");
+            assert_eq!(
+                trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(),
+                SPAN,
+                "{nb}..{na}"
+            );
         }
     }
 
@@ -1724,12 +2353,19 @@ mod tests {
             m.signature = vec![0; len];
             assert_eq!(
                 trusted(&m, &owner, &devices, LIVE).unwrap_err(),
-                Error::BadLength { field: "signature", expected: 64, actual: len }
+                Error::BadLength {
+                    field: "signature",
+                    expected: 64,
+                    actual: len
+                }
             );
         }
         let mut empty = msg.clone();
         empty.signature.clear();
-        assert_eq!(trusted(&empty, &owner, &devices, LIVE).unwrap_err(), Error::EmptySignature);
+        assert_eq!(
+            trusted(&empty, &owner, &devices, LIVE).unwrap_err(),
+            Error::EmptySignature
+        );
     }
 
     #[test]
@@ -1741,18 +2377,31 @@ mod tests {
 
         let mut m = msg.clone();
         m.signer = None;
-        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("signer"));
+        assert_eq!(
+            trusted(&m, &owner, &devices, LIVE).unwrap_err(),
+            Error::MissingField("signer")
+        );
 
         let mut m = msg.clone();
         m.signer.as_mut().unwrap().chain = None;
-        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("chain"));
+        assert_eq!(
+            trusted(&m, &owner, &devices, LIVE).unwrap_err(),
+            Error::MissingField("chain")
+        );
 
         let mut m = msg.clone();
         self_rooted_mut(&mut m).session = None;
-        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("self_rooted.session"));
+        assert_eq!(
+            trusted(&m, &owner, &devices, LIVE).unwrap_err(),
+            Error::MissingField("self_rooted.session")
+        );
 
         let mut m = msg.clone();
-        self_rooted_mut(&mut m).session.as_mut().unwrap().principal_genesis = None;
+        self_rooted_mut(&mut m)
+            .session
+            .as_mut()
+            .unwrap()
+            .principal_genesis = None;
         assert_eq!(
             trusted(&m, &owner, &devices, LIVE).unwrap_err(),
             Error::MissingField("session.principal_genesis")
@@ -1760,18 +2409,28 @@ mod tests {
 
         let mut m = msg.clone();
         self_rooted_mut(&mut m).session.as_mut().unwrap().device = None;
-        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("session.device"));
+        assert_eq!(
+            trusted(&m, &owner, &devices, LIVE).unwrap_err(),
+            Error::MissingField("session.device")
+        );
 
         let mut m = msg.clone();
         self_rooted_mut(&mut m).session.as_mut().unwrap().session = None;
-        assert_eq!(trusted(&m, &owner, &devices, LIVE).unwrap_err(), Error::MissingField("session"));
+        assert_eq!(
+            trusted(&m, &owner, &devices, LIVE).unwrap_err(),
+            Error::MissingField("session")
+        );
     }
 
     #[test]
     fn duplicate_devices_in_the_slice_are_harmless() {
         let f = Fleet::new();
         let (_, msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
-        let devices = [f.laptop.public(), TestKey::new().public(), f.laptop.public()];
+        let devices = [
+            f.laptop.public(),
+            TestKey::new().public(),
+            f.laptop.public(),
+        ];
         assert!(trusted(&msg, &f.owner.genesis(), &devices, LIVE).is_ok());
     }
 
@@ -1784,7 +2443,12 @@ mod tests {
         let at = accepted(T0 + 60);
         let v = trusted(&msg, &f.owner.genesis(), &[f.laptop.public()], at).unwrap();
         assert_eq!(v.issued_at(), T0 - 10_000);
-        assert_eq!(verify_signed_message(&msg, AUD, &r, at).unwrap().issued_at(), T0 - 10_000);
+        assert_eq!(
+            verify_signed_message(&msg, AUD, &r, at)
+                .unwrap()
+                .issued_at(),
+            T0 - 10_000
+        );
     }
 
     #[test]
@@ -1801,7 +2465,10 @@ mod tests {
             let trusted_side = verify_signed_message_trusted_devices(
                 m,
                 aud,
-                AuthorDevices { author_genesis: &owner, devices: &devices },
+                AuthorDevices {
+                    author_genesis: &owner,
+                    devices: &devices,
+                },
                 when,
             )
             .map(|_| ());
@@ -1811,22 +2478,56 @@ mod tests {
         assert_eq!(both(&valid, AUD, LIVE), (Ok(()), Ok(())));
 
         let mut wrong_session = valid.clone();
-        wrong_session.signature =
-            TestKey::new().sign(&crate::transcripts::signed_message_transcript(&wrong_session).unwrap());
+        wrong_session.signature = TestKey::new()
+            .sign(&crate::transcripts::signed_message_transcript(&wrong_session).unwrap());
         let (_, skewed) = minted(&f, T0, T0 + 3600, T0 + 91, Some(f.laptop_deleg.clone()));
-        let (_, not_yet) = minted(&f, T0 + 100, T0 + 3600, T0 + 60, Some(f.laptop_deleg.clone()));
+        let (_, not_yet) = minted(
+            &f,
+            T0 + 100,
+            T0 + 3600,
+            T0 + 60,
+            Some(f.laptop_deleg.clone()),
+        );
         let (_, expired) = minted(&f, T0, T0 + 30, T0 + 60, Some(f.laptop_deleg.clone()));
         let cases: [(&str, &pb::SignedMessage, &str, When, Error); 5] = [
-            ("audience", &valid, "structmux:other", LIVE, Error::WrongAudience),
-            ("session key", &wrong_session, AUD, LIVE, Error::BadSignature),
+            (
+                "audience",
+                &valid,
+                "structmux:other",
+                LIVE,
+                Error::WrongAudience,
+            ),
+            (
+                "session key",
+                &wrong_session,
+                AUD,
+                LIVE,
+                Error::BadSignature,
+            ),
             ("skew", &skewed, AUD, LIVE, Error::Skew),
-            ("not_before", &not_yet, AUD, LIVE, Error::NotYetValid("session cert")),
-            ("not_after", &expired, AUD, LIVE, Error::Expired("session cert")),
+            (
+                "not_before",
+                &not_yet,
+                AUD,
+                LIVE,
+                Error::NotYetValid("session cert"),
+            ),
+            (
+                "not_after",
+                &expired,
+                AUD,
+                LIVE,
+                Error::Expired("session cert"),
+            ),
         ];
         for (name, msg, aud, when, want) in cases {
             let (full, trusted_side) = both(msg, aud, when);
             assert_eq!(full.unwrap_err(), want, "full verifier: {name}");
-            assert_eq!(trusted_side.unwrap_err(), want, "trusted-devices verifier: {name}");
+            assert_eq!(
+                trusted_side.unwrap_err(),
+                want,
+                "trusted-devices verifier: {name}"
+            );
         }
     }
 
@@ -1837,7 +2538,10 @@ mod tests {
         let (session, mut cert) = session_cert(&f.laptop, &owner, None, None, T0, T0 + 3600);
         cert.signature = TestKey::new().sign(&session_delegation_transcript(&cert).unwrap());
         let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
-        assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), Error::BadSignature);
+        assert_eq!(
+            trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(),
+            Error::BadSignature
+        );
     }
 
     #[test]
@@ -1866,7 +2570,10 @@ mod tests {
         let owner = f.owner.genesis();
         let (session, cert) = session_cert(&f.laptop, &owner, None, None, T0, T0 + 86_401);
         let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
-        assert_eq!(trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(), SPAN);
+        assert_eq!(
+            trusted(&msg, &owner, &[f.laptop.public()], LIVE).unwrap_err(),
+            SPAN
+        );
     }
 
     #[test]
@@ -1876,7 +2583,10 @@ mod tests {
         let r = verify_signed_message_trusted_devices(
             &msg,
             "structmux:other",
-            AuthorDevices { author_genesis: &f.owner.genesis(), devices: &[f.laptop.public()] },
+            AuthorDevices {
+                author_genesis: &f.owner.genesis(),
+                devices: &[f.laptop.public()],
+            },
             LIVE,
         );
         assert_eq!(r.unwrap_err(), Error::WrongAudience);
@@ -1897,7 +2607,8 @@ mod tests {
     fn message_signed_by_a_different_session_key_is_rejected() {
         let f = Fleet::new();
         let (_, mut msg) = minted(&f, T0, T0 + 3600, T0 + 60, None);
-        msg.signature = TestKey::new().sign(&crate::transcripts::signed_message_transcript(&msg).unwrap());
+        msg.signature =
+            TestKey::new().sign(&crate::transcripts::signed_message_transcript(&msg).unwrap());
         assert_eq!(
             trusted(&msg, &f.owner.genesis(), &[f.laptop.public()], LIVE).unwrap_err(),
             Error::BadSignature
@@ -1917,9 +2628,19 @@ mod tests {
         );
         // a mode-1 cert inside a self-rooted chain is refused on its mode
         let subject = subject_on(&f.daemon, "i5");
-        let (session, cert) = session_cert(&f.laptop, &owner, Some(&f.daemon.genesis()), Some(&subject), T0, T0 + 3600);
+        let (session, cert) = session_cert(
+            &f.laptop,
+            &owner,
+            Some(&f.daemon.genesis()),
+            Some(&subject),
+            T0,
+            T0 + 3600,
+        );
         let msg = signed_message(&session, self_rooted(cert), AUD, T0 + 60);
-        assert_eq!(trusted(&msg, &owner, &devices, LIVE).unwrap_err(), Error::ChainMismatch("session.mode"));
+        assert_eq!(
+            trusted(&msg, &owner, &devices, LIVE).unwrap_err(),
+            Error::ChainMismatch("session.mode")
+        );
     }
 
     #[test]
@@ -1928,7 +2649,13 @@ mod tests {
         f.daemon_grant = true;
         let owner = f.owner.genesis();
         let devices = [f.laptop.public()];
-        let (session, chain) = hosted_chain(&f.daemon, &Principal::new(), &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
+        let (session, chain) = hosted_chain(
+            &f.daemon,
+            &Principal::new(),
+            &subject_on(&f.daemon, "i5"),
+            T0,
+            T0 + 3600,
+        );
         let msg = signed_message(&session, chain, AUD, T0 + 60);
         assert_eq!(
             trusted(&msg, &owner, &devices, LIVE).unwrap_err(),
@@ -1942,10 +2669,16 @@ mod tests {
         let owner = f.owner.genesis();
         let devices = [f.laptop.public()];
         let (_, late) = minted(&f, T0, T0 + 3600, T0 + 60 + 31, None);
-        assert_eq!(trusted(&late, &owner, &devices, LIVE).unwrap_err(), Error::Skew);
+        assert_eq!(
+            trusted(&late, &owner, &devices, LIVE).unwrap_err(),
+            Error::Skew
+        );
         assert!(trusted(&late, &owner, &devices, accepted(T0 + 60)).is_ok());
         let (_, edge) = minted(&f, T0, T0 + 3600, T0 + 60 + 30, None);
-        assert!(trusted(&edge, &owner, &devices, LIVE).is_ok(), "exactly 30 s is inside the window");
+        assert!(
+            trusted(&edge, &owner, &devices, LIVE).is_ok(),
+            "exactly 30 s is inside the window"
+        );
     }
 
     #[test]
@@ -1975,7 +2708,10 @@ mod tests {
         assert_eq!(v.author(), &agent.id());
         assert_eq!(v.body(), &[1, 2]);
         assert_eq!(v.session_key(), &s.public());
-        assert_eq!((v.nonce(), v.issued_at(), v.body_type()), (&[7u8; 16][..], T0 + 60, "type.googleapis.com/test.v1.Body"));
+        assert_eq!(
+            (v.nonce(), v.issued_at(), v.body_type()),
+            (&[7u8; 16][..], T0 + 60, "type.googleapis.com/test.v1.Body")
+        );
     }
 
     #[test]
@@ -1983,16 +2719,28 @@ mod tests {
         let agent = Principal::new();
         let (s, c) = daemon_chain(&agent, T0, T0 + DAY, T0, T0 + 3600);
         let m = signed_message(&s, c, AUD, T0 + 10 * DAY);
-        assert_eq!(verify_carried_message(&m, AUD).unwrap().author(), &agent.id());
+        assert_eq!(
+            verify_carried_message(&m, AUD).unwrap().author(),
+            &agent.id()
+        );
     }
 
     #[test]
     fn carried_daemon_hosted_message_verifies() {
         let f = Fleet::new();
         let agent = Principal::new();
-        let (s, c) = hosted_chain(&f.daemon, &agent, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
+        let (s, c) = hosted_chain(
+            &f.daemon,
+            &agent,
+            &subject_on(&f.daemon, "i5"),
+            T0,
+            T0 + 3600,
+        );
         let m = signed_message(&s, c, AUD, T0 + 60);
-        assert_eq!(verify_carried_message(&m, AUD).unwrap().author(), &agent.id());
+        assert_eq!(
+            verify_carried_message(&m, AUD).unwrap().author(),
+            &agent.id()
+        );
     }
 
     #[test]
@@ -2000,14 +2748,20 @@ mod tests {
         let f = Fleet::new();
         let (s, c) = agent_chain(&f, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
         let m = signed_message(&s, c, AUD, T0 + 60);
-        assert_eq!(verify_carried_message(&m, AUD).unwrap().author(), &f.agent_id());
+        assert_eq!(
+            verify_carried_message(&m, AUD).unwrap().author(),
+            &f.agent_id()
+        );
     }
 
     #[test]
     fn root_device_delegation_rules() {
         let mut p = Principal::new();
         let (device, d) = p.delegate_device(T0, T0 + DAY);
-        assert_eq!(verify_root_device_delegation(&d, &p.id(), T0 + 60).unwrap(), device.public());
+        assert_eq!(
+            verify_root_device_delegation(&d, &p.id(), T0 + 60).unwrap(),
+            device.public()
+        );
         let other = Principal::new();
         assert_eq!(
             verify_root_device_delegation(&d, &other.id(), T0 + 60).unwrap_err(),
@@ -2024,7 +2778,10 @@ mod tests {
         );
         let mut tampered = d.clone();
         tampered.not_after_unix_seconds -= 5;
-        assert_eq!(verify_root_device_delegation(&tampered, &p.id(), T0 + 60).unwrap_err(), Error::BadSignature);
+        assert_eq!(
+            verify_root_device_delegation(&tampered, &p.id(), T0 + 60).unwrap_err(),
+            Error::BadSignature
+        );
         p.rotate(T0);
         let (_, rotated) = p.delegate_device(T0, T0 + DAY);
         assert_eq!(
@@ -2038,34 +2795,64 @@ mod tests {
         let agent = Principal::new();
         let (s, c) = daemon_chain(&agent, T0, T0 + DAY, T0, T0 + 3600);
         let good = signed_message(&s, c, AUD, T0 + 60);
-        assert_eq!(verify_carried_message(&good, "other").unwrap_err(), Error::WrongAudience);
+        assert_eq!(
+            verify_carried_message(&good, "other").unwrap_err(),
+            Error::WrongAudience
+        );
         let mut m = good.clone();
         m.body = vec![9];
-        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::BadSignature);
+        assert_eq!(
+            verify_carried_message(&m, AUD).unwrap_err(),
+            Error::BadSignature
+        );
         let mut m = good.clone();
         m.signature.clear();
-        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::EmptySignature);
+        assert_eq!(
+            verify_carried_message(&m, AUD).unwrap_err(),
+            Error::EmptySignature
+        );
         let mut m = good.clone();
         self_rooted_mut(&mut m).device = None;
-        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::MissingField("self_rooted.device"));
+        assert_eq!(
+            verify_carried_message(&m, AUD).unwrap_err(),
+            Error::MissingField("self_rooted.device")
+        );
         let mut m = good.clone();
         let d = self_rooted_mut(&mut m).device.as_mut().unwrap();
         d.principal_genesis = pk(&Principal::new().genesis());
-        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::ChainMismatch("device.principal_genesis"));
+        assert_eq!(
+            verify_carried_message(&m, AUD).unwrap_err(),
+            Error::ChainMismatch("device.principal_genesis")
+        );
         // every signature valid, but the cert is signed by a device the delegation does not name
         let (_, deleg) = agent.delegate_device(T0, T0 + DAY);
         let stray = TestKey::new();
         let (s2, cert) = session_cert(&stray, &agent.genesis(), None, None, T0, T0 + 3600);
         let c = pb::SignerChain {
-            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted { device: Some(deleg), session: Some(cert) })),
+            chain: Some(pb::signer_chain::Chain::SelfRooted(pb::SelfRooted {
+                device: Some(deleg),
+                session: Some(cert),
+            })),
         };
         let m = signed_message(&s2, c, AUD, T0 + 60);
-        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::ChainMismatch("session.device"));
+        assert_eq!(
+            verify_carried_message(&m, AUD).unwrap_err(),
+            Error::ChainMismatch("session.device")
+        );
         let f = Fleet::new();
-        let (s3, c3) = hosted_chain(&f.daemon, &agent, &subject_on(&f.daemon, "i5"), T0, T0 + 3600);
+        let (s3, c3) = hosted_chain(
+            &f.daemon,
+            &agent,
+            &subject_on(&f.daemon, "i5"),
+            T0,
+            T0 + 3600,
+        );
         let mut m = signed_message(&s3, c3, AUD, T0 + 60);
         assert!(verify_carried_message(&m, AUD).is_ok());
         carried_hosted_mut(&mut m).agent_signature = TestKey::new().sign(b"x");
-        assert_eq!(verify_carried_message(&m, AUD).unwrap_err(), Error::BadSignature);
+        assert_eq!(
+            verify_carried_message(&m, AUD).unwrap_err(),
+            Error::BadSignature
+        );
     }
 }

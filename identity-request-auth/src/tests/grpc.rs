@@ -967,7 +967,11 @@ async fn layer_refuses_request_after_mid_second_revocation() {
         .expect("infallible");
     assert_eq!(grpc_status(&resp).as_deref(), Some("16"), "UNAUTHENTICATED");
     assert_eq!(
-        resp.headers().get("x-error-code").expect("coded").to_str().unwrap(),
+        resp.headers()
+            .get("x-error-code")
+            .expect("coded")
+            .to_str()
+            .unwrap(),
         "identity.request_auth.unknown_author"
     );
     assert_eq!(*reached.lock().expect("lock"), 0);
@@ -1012,7 +1016,10 @@ fn signed_request(s: &Server, message: &[u8]) -> Request<Body> {
     req
 }
 
-fn layer_over(s: &Server, verifier: Arc<Verifier<Arc<StaticDevices>>>) -> RequestAuthLayer<Arc<StaticDevices>> {
+fn layer_over(
+    s: &Server,
+    verifier: Arc<Verifier<Arc<StaticDevices>>>,
+) -> RequestAuthLayer<Arc<StaticDevices>> {
     let clock: Arc<dyn Clock> = s.clock.clone();
     RequestAuthLayer::new(
         verifier,
@@ -1075,7 +1082,11 @@ async fn caller_extension_inserted() {
         .await
         .expect("infallible");
     assert_eq!(grpc_status(&resp), None, "accepted");
-    let (tag, principal) = seen.lock().unwrap().clone().expect("tag and caller inserted");
+    let (tag, principal) = seen
+        .lock()
+        .unwrap()
+        .clone()
+        .expect("tag and caller inserted");
     assert_eq!(tag, Tag(principal.to_string()));
     assert_eq!(principal, PrincipalId::from_genesis(s.genesis.clone()));
 }
@@ -1086,7 +1097,12 @@ fn caller_without_layer_is_no_caller() {
     let status = crate::grpc::caller(&request).expect_err("no caller");
     assert_eq!(status.code(), tonic::Code::Unauthenticated);
     assert_eq!(
-        status.metadata().get("x-error-code").expect("coded").to_str().unwrap(),
+        status
+            .metadata()
+            .get("x-error-code")
+            .expect("coded")
+            .to_str()
+            .unwrap(),
         "identity.request_auth.no_caller"
     );
 }
@@ -1109,7 +1125,11 @@ async fn issued_before_start_does_not_consume_nonce() {
         .oneshot(signed_request(&s, MESSAGE))
         .await
         .expect("infallible");
-    assert_eq!(grpc_status(&resp).as_deref(), Some("16"), "IssuedBeforeStart");
+    assert_eq!(
+        grpc_status(&resp).as_deref(),
+        Some("16"),
+        "IssuedBeforeStart"
+    );
     assert_eq!(s.handler_calls(), 0);
 
     let open = layer_over(&s, verifier)
@@ -1119,7 +1139,11 @@ async fn issued_before_start_does_not_consume_nonce() {
         .oneshot(signed_request(&s, MESSAGE))
         .await
         .expect("infallible");
-    assert_eq!(grpc_status(&resp), None, "no Busy: the refused request took no slot");
+    assert_eq!(
+        grpc_status(&resp),
+        None,
+        "no Busy: the refused request took no slot"
+    );
     assert_eq!(s.handler_calls(), 1);
 }
 
