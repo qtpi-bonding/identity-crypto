@@ -3,7 +3,7 @@ name = "identity-crypto"
 version = "0.11.0"
 edition.workspace = true
 rust-version.workspace = true
-description = "P-256 key types, principal ids, canonical transcripts and the signature check for the concordium/structmux identity design"
+description = "P-256 key types, principal ids, canonical transcripts and the signature check"
 
 [workspace]
 members = [".", "identity-keyfile", "identity-request-auth"]
@@ -22,7 +22,7 @@ coded-error = { git = "https://github.com/qtpi-bonding/coded-error.git", rev = "
 testkit = []
 
 [dependencies]
-rust_jwk_duo = { git = "https://github.com/qtpi-bonding-org/rust_jwk_duo.git", rev = "489985d719539a6d8f841561728eb33cda82601e" }
+rust_jwk_duo = { git = "https://github.com/qtpi-bonding-org/rust_jwk_duo.git", rev = "58d11e887afeff427084dab9007665ceef6fa507" }
 sha2 = "0.11"
 hex = "0.4"
 thiserror = "2"

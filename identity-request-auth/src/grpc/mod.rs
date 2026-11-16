@@ -345,8 +345,10 @@ impl<K> Clone for RequestAuthLayer<K> {
 
 /// The verified caller of a request that passed the layer; a coded
 /// `no_caller` refusal otherwise.
-// `Status` is the error type of every tonic handler; the signature is part of the API.
-#[allow(clippy::result_large_err)]
+#[allow(
+    clippy::result_large_err,
+    reason = "Status is the error type of every tonic handler; the signature is part of the API"
+)]
 pub fn caller<T>(request: &tonic::Request<T>) -> Result<&VerifiedCaller, Status> {
     request
         .extensions()

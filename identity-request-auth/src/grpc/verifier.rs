@@ -32,7 +32,10 @@ impl<K: TrustedDevices> Verifier<K> {
     /// claimed principal. The cheap checks (size, audience, body type,
     /// signature present, nonce length, body equality) run before the lookup,
     /// so a malformed request never costs one.
-    #[allow(clippy::too_many_arguments)]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "the plan fixes this signature: each argument is one verified input"
+    )]
     pub async fn open_signed_request(
         &self,
         signed: &pb::SignedMessage,

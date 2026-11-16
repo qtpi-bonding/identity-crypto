@@ -1,7 +1,11 @@
 //! Test fixtures: real P-256 keys and real signatures. Nothing here builds
 //! a verified type by hand; tests reach those only through the public
 //! verify functions.
-#![allow(dead_code, clippy::items_after_test_module)]
+#![allow(
+    dead_code,
+    clippy::items_after_test_module,
+    reason = "fixtures are shared across test builds, so some are unused in each; helpers follow their tests"
+)]
 
 use crate::jwk_duo::{GenerationService, SigningKeyPair};
 use crate::keys;
@@ -24,7 +28,10 @@ pub fn enc_key() -> PublicKey {
 pub struct TestKey(SigningKeyPair);
 
 impl TestKey {
-    #[allow(clippy::new_without_default)]
+    #[allow(
+        clippy::new_without_default,
+        reason = "a test fixture constructor; a Default impl would add API nobody needs"
+    )]
     pub fn new() -> Self {
         Self(SigningKeyPair::generate())
     }
@@ -50,7 +57,10 @@ pub struct Principal {
 }
 
 impl Principal {
-    #[allow(clippy::new_without_default)]
+    #[allow(
+        clippy::new_without_default,
+        reason = "a test fixture constructor; a Default impl would add API nobody needs"
+    )]
     pub fn new() -> Self {
         Self {
             roots: vec![TestKey::new()],
@@ -250,7 +260,10 @@ pub struct Fleet {
 }
 
 impl Fleet {
-    #[allow(clippy::new_without_default)]
+    #[allow(
+        clippy::new_without_default,
+        reason = "a test fixture constructor; a Default impl would add API nobody needs"
+    )]
     pub fn new() -> Self {
         let owner = Principal::new();
         let (laptop, laptop_deleg) = owner.delegate_device(T0, i64::MAX);

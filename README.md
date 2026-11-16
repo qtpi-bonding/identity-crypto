@@ -4,9 +4,7 @@ Versions: identity-crypto **0.11.0**, identity-keyfile **0.11.0**,
 identity-request-auth **0.2.0**. See `CHANGELOG.md` for every break.
 
 P-256 key types, principal ids, canonical transcripts, the principal
-registry and verification for the concordium/structmux identity design
-(structmux `docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md`;
-verification: `2026-10-12-fleet-phase1b-identity-verification-design.md`).
+registry and verification for a signed-identity design.
 
 Purity: this crate does no I/O (no filesystem, no tokio, no key storage).
 The only wall-clock read in the crate is `src/clock.rs` (`now_timestamp` and

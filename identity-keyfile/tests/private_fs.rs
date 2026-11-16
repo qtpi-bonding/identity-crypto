@@ -246,3 +246,25 @@ impl Mode0600 for fs::OpenOptions {
         std::os::unix::fs::OpenOptionsExt::mode(self, 0o600)
     }
 }
+
+#[test]
+fn open_private_lock_file_creates_0600_and_refuses_loose_and_symlink() {
+    use identity_keyfile::private_fs::open_private_lock_file;
+    let d = tempfile::tempdir().unwrap();
+    let p = d.path().join(".lock");
+    open_private_lock_file(&p).unwrap();
+    assert_eq!(mode(&p), 0o600);
+    open_private_lock_file(&p).unwrap();
+    fs::set_permissions(&p, fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(matches!(
+        open_private_lock_file(&p),
+        Err(KeyfileError::InsecureFile(_))
+    ));
+    let link = d.path().join("link.lock");
+    symlink(d.path().join("target"), &link).unwrap();
+    assert!(matches!(
+        open_private_lock_file(&link),
+        Err(KeyfileError::InsecureFile(_))
+    ));
+    assert!(!d.path().join("target").exists());
+}

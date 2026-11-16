@@ -87,8 +87,10 @@ impl SignedClient<Channel> {
     /// Loads the device keys from `dir` (a device-only directory is fine), connects
     /// `endpoint`, resolves the server id from `audience` (discovery runs on the
     /// unsigned channel), then wraps the channel in `layer(signer, server_id)`.
-    // `ChannelError::Audience(Status)` is part of the specified API.
-    #[allow(clippy::result_large_err)]
+    #[allow(
+        clippy::result_large_err,
+        reason = "ChannelError::Audience(Status) is part of the specified API"
+    )]
     pub async fn from_identity_dir(
         dir: &Path,
         endpoint: Endpoint,

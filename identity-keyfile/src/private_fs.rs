@@ -120,8 +120,7 @@ pub fn create_private_dir(path: &Path) -> Result<(), KeyfileError> {
 /// Requires an existing private directory: not a symlink, `mode & 0o077 == 0`,
 /// owned by the effective user. Writes nothing.
 pub fn check_private_dir(path: &Path) -> Result<(), KeyfileError> {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    let uid = unsafe { libc::geteuid() };
+    let uid = effective_uid();
     check_private_dir_with_uid(path, uid)
 }
 
@@ -183,8 +182,7 @@ fn read_capped(
 /// group or other access, a file owned by another user, and one over `cap`
 /// bytes. The returned bytes are zeroized on drop.
 pub fn read_private_file(path: &Path, cap: usize) -> Result<Zeroizing<Vec<u8>>, KeyfileError> {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    let uid = unsafe { libc::geteuid() };
+    let uid = effective_uid();
     let mut file = open_no_follow(path)?;
     let meta = file.metadata().map_err(|error| io(path, error))?;
     if !meta.is_file() {
@@ -222,6 +220,31 @@ pub fn check_private_file_handle(file: &File, path: &Path) -> Result<(), Keyfile
     Ok(())
 }
 
+/// Opens (creating it with mode 0600 when missing) the lock file at `path`
+/// without following a symlink (O_NOFOLLOW, so a dangling link's target is never
+/// created), then checks the opened handle with [`check_private_file_handle`].
+/// Errors: `Missing` (parent absent), `InsecureFile` (symlink, non-regular or
+/// loose mode), `WrongOwner`, `Io`. The caller takes the advisory lock.
+pub fn open_private_lock_file(path: &Path) -> Result<File, KeyfileError> {
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| match e.kind() {
+            ErrorKind::NotFound => KeyfileError::Missing(path.to_path_buf()),
+            _ if e.raw_os_error() == Some(libc::ELOOP) => {
+                KeyfileError::InsecureFile(path.to_path_buf())
+            }
+            _ => io(path, e),
+        })?;
+    check_private_file_handle(&file, path)?;
+    Ok(file)
+}
+
 /// Reads a public file inside an already-checked directory: no mode or owner
 /// check, but still no symlink, no non-regular file and no more than `cap` bytes.
 pub fn read_regular_file(path: &Path, cap: usize) -> Result<Vec<u8>, KeyfileError> {
@@ -243,8 +266,7 @@ mod tests {
     fn check_private_dir_refuses_other_owner() {
         let dir = tempfile::tempdir().unwrap();
         fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
-        // SAFETY: geteuid has no preconditions and cannot fail.
-        let me = unsafe { libc::geteuid() };
+        let me = effective_uid();
         check_private_dir_with_uid(dir.path(), me).unwrap();
         let err = check_private_dir_with_uid(dir.path(), me + 1).unwrap_err();
         assert!(

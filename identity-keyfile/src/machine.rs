@@ -5,6 +5,7 @@
 use crate::error::{EnrolmentCheck, KeyfileError};
 use crate::files;
 use crate::private_fs;
+use crate::private_fs::effective_uid;
 use identity_crypto::{pb, PrincipalId, PublicKey};
 use std::collections::BTreeMap;
 use std::ffi::OsString;
@@ -342,12 +343,6 @@ pub(crate) fn check_entry_with_uid(
     Ok(())
 }
 
-/// The effective uid of this process.
-fn effective_uid() -> u32 {
-    // SAFETY: geteuid has no preconditions and cannot fail.
-    unsafe { libc::geteuid() }
-}
-
 /// Whether a directory owned by `uid` is owned by `owner`. Crate seam for the
 /// DirOwner check, so tests can exercise it without changing real owners.
 pub(crate) fn owned_by(dir_uid: u32, owner: u32) -> bool {
@@ -393,8 +388,7 @@ mod tests {
 
     #[test]
     fn dir_owner_seam_refuses_other_uid() {
-        // SAFETY: geteuid has no preconditions and cannot fail.
-        let uid = unsafe { libc::geteuid() };
+        let uid = effective_uid();
         assert!(owned_by(uid, uid));
         assert!(!owned_by(uid, uid.wrapping_add(1)));
     }

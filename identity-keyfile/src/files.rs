@@ -2,9 +2,8 @@ use crate::error::{io, KeyfileError};
 use crate::layout::IdentityLayout;
 use identity_crypto::jwk_duo::{KeyDuo, KeyDuoSerializer};
 use identity_crypto::{pb, PrincipalId};
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::ErrorKind;
-use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use crate::private_fs::{self, MAX_KEY_FILE_BYTES, MAX_PUBLIC_FILE_BYTES};
@@ -197,24 +196,7 @@ pub(crate) fn ensure_dir(dir: &Path) -> Result<(), KeyfileError> {
 }
 
 fn open_lock_file(dir: &Path) -> Result<File, KeyfileError> {
-    let p = dir.join(LOCK_FILE);
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        // Refuses a symlinked `.lock` without following it, so a dangling
-        // link's target is never created either.
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(&p)
-        .map_err(|e| match e.kind() {
-            ErrorKind::NotFound => KeyfileError::Missing(p.clone()),
-            _ if e.raw_os_error() == Some(libc::ELOOP) => KeyfileError::InsecureFile(p.clone()),
-            _ => io(&p, e),
-        })?;
-    private_fs::check_private_file_handle(&file, &p)?;
-    Ok(file)
+    private_fs::open_private_lock_file(&dir.join(LOCK_FILE))
 }
 
 /// The exclusive advisory lock for a mutation. It is held until the returned

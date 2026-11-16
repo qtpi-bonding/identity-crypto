@@ -1,7 +1,5 @@
 //! P-256 key types, principal ids, canonical transcripts, the principal
-//! registry and verification for the concordium/structmux identity design
-//! (structmux `docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md`;
-//! verification: `2026-10-12-fleet-phase1b-identity-verification-design.md`).
+//! registry and verification for a signed-identity design.
 //! Pure: no I/O, no key storage; the only clock read is `now_unix`/`now_timestamp` in `clock.rs`. Every primitive comes from
 //! `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
 //! validation and verification.
