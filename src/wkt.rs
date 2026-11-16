@@ -22,6 +22,18 @@ pub struct Timestamp {
     pub nanos: i32,
 }
 
+impl PartialOrd for Timestamp {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Timestamp {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (self.seconds, self.nanos).cmp(&(other.seconds, other.nanos))
+    }
+}
+
 impl Serialize for Timestamp {
     fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         let nanos = u32::try_from(self.nanos)
@@ -49,6 +61,23 @@ impl<'de> Deserialize<'de> for Timestamp {
         if nanos >= 1_000_000_000 {
             return Err(D::Error::custom("leap seconds are not representable"));
         }
-        Ok(Timestamp { seconds: at.timestamp(), nanos: nanos as i32 })
+        Ok(Timestamp {
+            seconds: at.timestamp(),
+            nanos: nanos as i32,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn timestamp_orders_by_seconds_then_nanos() {
+        let t = |s, n| Timestamp {
+            seconds: s,
+            nanos: n,
+        };
+        assert!(t(5, 500_000_000) < t(5, 700_000_000) && t(5, 999_999_999) < t(6, 0));
     }
 }

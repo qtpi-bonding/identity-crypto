@@ -1,7 +1,6 @@
 use identity_crypto::jwk_duo::KeyDuoSerializer;
 use identity_crypto::{
-    encryption_public, pb, signing_public, transcripts, verify_p256,
-    MAX_UNLISTED_DELEGATION_SECONDS,
+    encryption_public, pb, signing_public, transcripts, verify_p256, MAX_DELEGATION_SECONDS,
 };
 use identity_keyfile::*;
 use std::fs;
@@ -16,7 +15,7 @@ const STANDARD_ALPHABET: &[u8; 64] =
 const URL_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
 /// The verifier's cap on an unlisted device window, in seconds.
-const MAX_TTL: i64 = MAX_UNLISTED_DELEGATION_SECONDS;
+const MAX_TTL: i64 = MAX_DELEGATION_SECONDS;
 
 /// Decodes unpadded or padded base64 in the given alphabet. Panics on a foreign character.
 fn decode_base64(input: &str, alphabet: &[u8; 64]) -> Vec<u8> {

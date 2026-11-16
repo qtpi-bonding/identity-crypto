@@ -2,7 +2,7 @@
 //! registry and verification for the concordium/structmux identity design
 //! (structmux `docs/superpowers/specs/2026-10-11-daemon-mesh-schema-design.md`;
 //! verification: `2026-10-12-fleet-phase1b-identity-verification-design.md`).
-//! Pure: no I/O, no clock, no key storage. Every primitive comes from
+//! Pure: no I/O, no key storage; the only clock read is `now_unix`/`now_timestamp` in `clock.rs`. Every primitive comes from
 //! `rust_jwk_duo` (re-exported as [`jwk_duo`]); this crate owns byte layouts,
 //! validation and verification.
 //!
@@ -29,6 +29,7 @@
 //! ```
 
 mod authority;
+mod clock;
 mod keys;
 mod accepted;
 mod error;
@@ -61,8 +62,9 @@ pub use verify::{
     verify_signed_message,
     verify_signed_message_trusted_devices, AcceptedAt, AuthorDevices, CarriedMessage, Host, VerifiedApproval,
     VerifiedChain, VerifiedMessage, VerifiedTrustedMessage, When,
-    MAX_SESSION_SECONDS, MAX_UNLISTED_DELEGATION_SECONDS, SKEW_SECONDS,
+    DEFAULT_DELEGATION_SECONDS, DEFAULT_RENEW_MARGIN_SECONDS, MAX_DELEGATION_SECONDS, MAX_SESSION_SECONDS, SKEW_SECONDS,
 };
+pub use clock::{now_timestamp, now_unix};
 pub use keys::{
     challenge_proof, delegate_device, device_delegation, encryption_public, principal_id,
     rename_proof, renewal_due, revocation, rotation, sign_key_delegation, signing_public,

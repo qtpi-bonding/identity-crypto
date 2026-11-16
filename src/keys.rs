@@ -64,7 +64,7 @@ pub fn sign_key_delegation<S: Signer + ?Sized>(root: &S, d: &mut pb::KeyDelegati
 
 /// A root-signed DEVICE delegation of `device` for `[issued_at, not_after]`
 /// (unix seconds). For Agent, Daemon, and Service devices, the span must be positive
-/// and at most 31 days, the cap the verifier applies to unlisted devices.
+/// and at most `MAX_DELEGATION_SECONDS` (31 days), the cap the verifier applies to unlisted devices.
 /// Humans may hold longer windows: build those with [`device_delegation`]
 /// and [`sign_key_delegation`].
 pub fn delegate_device<S: Signer + ?Sized>(
@@ -183,6 +183,26 @@ mod tests {
 
     fn verifies(key: &PublicKey, transcript: &[u8], signature: &[u8]) -> bool {
         verify_p256(key, transcript, signature).is_ok()
+    }
+
+    #[test]
+    fn lifetime_constants() {
+        use crate::verify::{
+            DEFAULT_DELEGATION_SECONDS, DEFAULT_RENEW_MARGIN_SECONDS, MAX_DELEGATION_SECONDS,
+        };
+        assert_eq!(
+            (
+                DEFAULT_DELEGATION_SECONDS,
+                MAX_DELEGATION_SECONDS,
+                DEFAULT_RENEW_MARGIN_SECONDS
+            ),
+            (2_592_000, 2_678_400, 604_800)
+        );
+        let (root, id) = genesis();
+        let d = PublicKeyDuo::from(&duo());
+        assert!(delegate_device(&root, &id, &d, T, T + DEFAULT_DELEGATION_SECONDS).is_ok());
+        assert!(delegate_device(&root, &id, &d, T, T + MAX_DELEGATION_SECONDS).is_ok());
+        assert!(delegate_device(&root, &id, &d, T, T + MAX_DELEGATION_SECONDS + 1).is_err());
     }
 
     #[test]

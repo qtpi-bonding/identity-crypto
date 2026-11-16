@@ -11,8 +11,12 @@ use crate::{pb, verify_p256, Error, PrincipalId, PrincipalKind, PublicKey, Resol
 
 pub const SKEW_SECONDS: i64 = 30;
 pub const MAX_SESSION_SECONDS: i64 = 86_400;
-/// A device delegation listed nowhere (daemons, self-rooted agents).
-pub const MAX_UNLISTED_DELEGATION_SECONDS: i64 = 31 * 86_400;
+/// The lifetime a new device delegation gets unless the caller says otherwise (30 days).
+pub const DEFAULT_DELEGATION_SECONDS: i64 = 30 * 86_400;
+/// The longest device delegation any verifier or signer accepts (31 days).
+pub const MAX_DELEGATION_SECONDS: i64 = 31 * 86_400;
+/// A delegation is renewed when less than this remains (7 days).
+pub const DEFAULT_RENEW_MARGIN_SECONDS: i64 = 7 * 86_400;
 
 /// A receiver's own recorded acceptance time; never a signer's timestamp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,12 +205,12 @@ pub(crate) fn check_session_span(not_before: i64, not_after: i64) -> Result<()> 
 }
 
 /// The unlisted device-delegation rule (daemons, services, and self-rooted agents): the
-/// span must be in `(0, MAX_UNLISTED_DELEGATION_SECONDS]`. Shared by the
+/// span must be in `(0, MAX_DELEGATION_SECONDS]`. Shared by the
 /// verifier and `keys::delegate_device`, so the signer and the verifier
 /// enforce one cap. Computed in i128 so no pair of i64 bounds can overflow.
 pub(crate) fn check_unlisted_span(field: &'static str, issued: i64, not_after: i64) -> Result<()> {
     let span = i128::from(not_after) - i128::from(issued);
-    if span <= 0 || span > i128::from(MAX_UNLISTED_DELEGATION_SECONDS) {
+    if span <= 0 || span > i128::from(MAX_DELEGATION_SECONDS) {
         return Err(Error::InvalidField { field, reason: "must be within 31 days after issued_at" });
     }
     Ok(())
