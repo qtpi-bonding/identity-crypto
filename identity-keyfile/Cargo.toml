@@ -17,9 +17,11 @@ thiserror = "2"
 libc = "0.2"
 zeroize = "1"
 tempfile = { version = "3", optional = true }
+prost = "0.13"
 
 [dev-dependencies]
 tempfile = "3"
+identity-crypto = { workspace = true, features = ["testkit"] }
 
 # The testkit suite only exists with the feature; without it the target is skipped.
 [[test]]

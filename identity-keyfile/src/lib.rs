@@ -7,8 +7,12 @@ mod keys;
 mod layout;
 mod machine;
 pub mod private_fs;
+pub mod document_loader;
 
 pub use error::{EnrolmentCheck, KeyfileError, VerifyCheck};
+pub use document_loader::{
+    Accepted, DocumentError, DocumentLoader, LoaderConfig, Reload, StateWrite, MAX_DOCUMENT_BYTES,
+};
 pub use files::{
     read_delegation, read_duo, read_duo_file, read_history, read_principal_id, read_rotations,
     write_delegation, write_duo, write_history, write_principal_id, write_rotations, AGENT_ID_FILE,
