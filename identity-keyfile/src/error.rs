@@ -56,6 +56,8 @@ pub enum KeyfileError {
     MachineDirMissing(PathBuf),
     #[error("the machine identity directory cannot be resolved (no MACHINE_IDENTITY_DIR, XDG_DATA_HOME or HOME)")]
     MachineDirUnresolved,
+    #[error("the keys home cannot be resolved (no XDG_CONFIG_HOME or HOME)")]
+    KeysHomeUnresolved,
     #[error("enrolments.json version {0} is not supported")]
     IndexVersion(u64),
     #[error("invalid enrolment key {0:?}")]

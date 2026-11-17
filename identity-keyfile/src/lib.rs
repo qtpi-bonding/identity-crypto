@@ -6,6 +6,7 @@ pub mod enrol_cli;
 mod error;
 mod files;
 mod keys;
+mod keys_home;
 mod layout;
 mod machine;
 pub mod private_fs;
@@ -21,6 +22,7 @@ pub use files::{
 };
 pub use keys::is_device_only;
 pub use keys::{device_keys_at, read_principal, DeviceKeys, DevicePublic, IdentityKeys};
+pub use keys_home::KeysHome;
 pub use layout::IdentityLayout;
 pub use machine::{
     enrolment_for, service_identity_dir, DirSource, Enrolment, EnrolmentIndex, MachineDir,

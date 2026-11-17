@@ -36,3 +36,7 @@ path = "src/bin/identity-enrol.rs"
 [[test]]
 name = "enrol_cli"
 required-features = ["testkit"]
+
+[[test]]
+name = "keys_home_testkit"
+required-features = ["testkit"]
