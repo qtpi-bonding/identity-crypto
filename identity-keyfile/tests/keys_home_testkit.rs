@@ -30,10 +30,7 @@ fn jwk_private_values_finds_nested_private_members() {
     for public in ["PX", "PY", "PX2", "N", "E"] {
         assert!(!values.iter().any(|v| v == public), "{public} is public");
     }
-    assert_eq!(
-        values,
-        vec!["D1", "D2", "P", "Q", "DP", "DQ", "QI", "K"]
-    );
+    assert_eq!(values, vec!["D1", "D2", "P", "Q", "DP", "DQ", "QI", "K"]);
 }
 
 #[test]
@@ -71,7 +68,10 @@ fn assert_no_secret_panics_without_echoing_the_secret() {
         .cloned()
         .or_else(|| payload.downcast_ref::<&str>().map(|s| s.to_string()))
         .expect("string panic message");
-    assert!(!message.contains(secret), "message echoed the secret: {message}");
+    assert!(
+        !message.contains(secret),
+        "message echoed the secret: {message}"
+    );
     assert!(message.contains('1'), "message names the index: {message}");
 }
 
@@ -82,7 +82,10 @@ fn device_only_home_cleans_up() {
         let parent = fixture.path();
         let home = fixture.home();
         assert_eq!(home.path(), parent.join("keys"));
-        let mode = std::fs::metadata(home.root_dir()).unwrap().permissions().mode();
+        let mode = std::fs::metadata(home.root_dir())
+            .unwrap()
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0);
         assert_eq!(home.devices().unwrap(), vec!["laptop"]);
         assert!(fixture.device_dir().join("agent_id").is_file());
