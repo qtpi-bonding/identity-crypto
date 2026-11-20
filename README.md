@@ -71,9 +71,9 @@ use these; they keep no TTL, margin or clock helpers of their own.
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
-| `DEFAULT_DELEGATION_SECONDS` | 30 d (2 592 000 s) | Lifetime of a new device delegation unless the caller says otherwise. |
-| `MAX_DELEGATION_SECONDS` | 31 d (2 678 400 s) | Longest device delegation any signer or verifier accepts. |
-| `DEFAULT_RENEW_MARGIN_SECONDS` | 7 d (604 800 s) | A delegation is renewed when less than this remains. |
+| `DEFAULT_DELEGATION_SECONDS` | 90 d (7 776 000 s) | Lifetime of a new device delegation unless the caller says otherwise. |
+| `MAX_DELEGATION_SECONDS` | 91 d (7 862 400 s) | Longest device delegation any signer or verifier accepts. |
+| `DEFAULT_RENEW_MARGIN_SECONDS` | 21 d (1 814 400 s) | A delegation is renewed when less than this remains. |
 | `MAX_SESSION_SECONDS` | 24 h | Longest span `mint_session` accepts. |
 | `SKEW_SECONDS` | 30 s | Tolerance on `issued_at` for `When::Live`. |
 
@@ -116,7 +116,7 @@ versions, persistence and policy are the caller's.
   own `signing_root`, so on its own a fabricated chain passes.
 
 A hosted agent with no registry entry cannot be revoked one device at a time:
-each device delegation lasts at most 31 days, but whoever holds the agent's
+each device delegation lasts at most 91 days, but whoever holds the agent's
 root can keep issuing new ones. Registering it with `frozen` status blocks it.
 Revoking the hosting daemon, or removing its `hosts_held_agents` grant, cuts
 off all unregistered ones at once.
@@ -182,7 +182,7 @@ passes `now`), no key generation or storage.
   duo, and the principal id a genesis duo starts.
 - `delegate_device(root, genesis, &PublicKeyDuo, issued, not_after)`: a
   root-signed DEVICE delegation for an Agent, Daemon, or Service device. The span
-  must be positive and at most `MAX_DELEGATION_SECONDS` (31 days), the cap the
+  must be positive and at most `MAX_DELEGATION_SECONDS` (91 days), the cap the
   verifier applies to unlisted devices.
 - `device_delegation` (unsigned) and `sign_key_delegation`: no cap. For a
   Human's device or an approval key, whose window may be longer.

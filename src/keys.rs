@@ -64,7 +64,7 @@ pub fn sign_key_delegation<S: Signer + ?Sized>(root: &S, d: &mut pb::KeyDelegati
 
 /// A root-signed DEVICE delegation of `device` for `[issued_at, not_after]`
 /// (unix seconds). For Agent, Daemon, and Service devices, the span must be positive
-/// and at most `MAX_DELEGATION_SECONDS` (31 days), the cap the verifier applies to unlisted devices.
+/// and at most `MAX_DELEGATION_SECONDS` (91 days), the cap the verifier applies to unlisted devices.
 /// Humans may hold longer windows: build those with [`device_delegation`]
 /// and [`sign_key_delegation`].
 pub fn delegate_device<S: Signer + ?Sized>(
@@ -161,7 +161,7 @@ mod tests {
 
     const DAY: i64 = 86_400;
     const T: i64 = 1_700_000_000;
-    const MARGIN_ERR: &str = "must be within 31 days after issued_at";
+    const MARGIN_ERR: &str = "must be within 91 days after issued_at";
 
     fn duo() -> KeyDuo {
         GenerationService::generate_key_duo()
@@ -196,10 +196,13 @@ mod tests {
                 MAX_DELEGATION_SECONDS,
                 DEFAULT_RENEW_MARGIN_SECONDS
             ),
-            (2_592_000, 2_678_400, 604_800)
+            (7_776_000, 7_862_400, 1_814_400)
         );
         let (root, id) = genesis();
         let d = PublicKeyDuo::from(&duo());
+        assert!(delegate_device(&root, &id, &d, T, T + 90 * DAY).is_ok());
+        assert!(delegate_device(&root, &id, &d, T, T + 91 * DAY).is_ok());
+        assert!(delegate_device(&root, &id, &d, T, T + 91 * DAY + 1).is_err());
         assert!(delegate_device(&root, &id, &d, T, T + DEFAULT_DELEGATION_SECONDS).is_ok());
         assert!(delegate_device(&root, &id, &d, T, T + MAX_DELEGATION_SECONDS).is_ok());
         assert!(delegate_device(&root, &id, &d, T, T + MAX_DELEGATION_SECONDS + 1).is_err());
@@ -229,14 +232,14 @@ mod tests {
     }
 
     #[test]
-    fn delegation_window_is_capped_at_31_days() {
+    fn delegation_window_is_capped_at_91_days() {
         let (root, id) = genesis();
         let device = duo();
-        // Exactly 31 days is accepted.
-        assert!(delegate_device(&root, &id, &PublicKeyDuo::from(&device), 0, 31 * DAY).is_ok());
+        // Exactly 91 days is accepted.
+        assert!(delegate_device(&root, &id, &PublicKeyDuo::from(&device), 0, 91 * DAY).is_ok());
         // One second more is rejected with the verifier's own field and text.
         assert_eq!(
-            delegate_device(&root, &id, &PublicKeyDuo::from(&device), 0, 31 * DAY + 1).unwrap_err(),
+            delegate_device(&root, &id, &PublicKeyDuo::from(&device), 0, 91 * DAY + 1).unwrap_err(),
             Error::InvalidField {
                 field: "device.not_after_unix_seconds",
                 reason: MARGIN_ERR

@@ -14,12 +14,12 @@ use crate::{pb, verify_p256, Error, PrincipalId, PrincipalKind, PublicKey, Resol
 
 pub const SKEW_SECONDS: i64 = 30;
 pub const MAX_SESSION_SECONDS: i64 = 86_400;
-/// The lifetime a new device delegation gets unless the caller says otherwise (30 days).
-pub const DEFAULT_DELEGATION_SECONDS: i64 = 30 * 86_400;
-/// The longest device delegation any verifier or signer accepts (31 days).
-pub const MAX_DELEGATION_SECONDS: i64 = 31 * 86_400;
-/// A delegation is renewed when less than this remains (7 days).
-pub const DEFAULT_RENEW_MARGIN_SECONDS: i64 = 7 * 86_400;
+/// The lifetime a new device delegation gets unless the caller says otherwise (90 days).
+pub const DEFAULT_DELEGATION_SECONDS: i64 = 90 * 86_400;
+/// The longest device delegation any verifier or signer accepts (91 days).
+pub const MAX_DELEGATION_SECONDS: i64 = 91 * 86_400;
+/// A delegation is renewed when less than this remains (21 days, the same 7/30 of the default lifetime as before).
+pub const DEFAULT_RENEW_MARGIN_SECONDS: i64 = 21 * 86_400;
 
 /// A receiver's own recorded acceptance time; never a signer's timestamp.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -272,7 +272,7 @@ pub(crate) fn check_unlisted_span(field: &'static str, issued: i64, not_after: i
     if span <= 0 || span > i128::from(MAX_DELEGATION_SECONDS) {
         return Err(Error::InvalidField {
             field,
-            reason: "must be within 31 days after issued_at",
+            reason: "must be within 91 days after issued_at",
         });
     }
     Ok(())
@@ -1374,10 +1374,12 @@ mod tests {
         );
         let (_, c) = daemon_chain(&f.daemon, now + 10, now + 10 + DAY, now, now + 3600);
         assert!(verify_chain(&c, &r, LIVE).is_ok());
-        // 31 days passes, 31 days + 1 s fails
-        let (_, c) = daemon_chain(&f.daemon, T0, T0 + 31 * DAY, T0, T0 + 3600);
+        // 90 and 91 days pass, 91 days + 1 s fails
+        let (_, c) = daemon_chain(&f.daemon, T0, T0 + 90 * DAY, T0, T0 + 3600);
         assert!(verify_chain(&c, &r, LIVE).is_ok());
-        let (_, c) = daemon_chain(&f.daemon, T0, T0 + 31 * DAY + 1, T0, T0 + 3600);
+        let (_, c) = daemon_chain(&f.daemon, T0, T0 + 91 * DAY, T0, T0 + 3600);
+        assert!(verify_chain(&c, &r, LIVE).is_ok());
+        let (_, c) = daemon_chain(&f.daemon, T0, T0 + 91 * DAY + 1, T0, T0 + 3600);
         assert!(matches!(
             verify_chain(&c, &r, LIVE),
             Err(Error::InvalidField {
@@ -1698,10 +1700,10 @@ mod tests {
             verify_chain(&c, &g.resolver(), LIVE).unwrap_err(),
             Error::Frozen
         );
-        // expired agent device delegation (the host device is also 30 days)
+        // expired agent device delegation (the host device is also 90 days)
         let c = hosted(&f, &agent);
         assert_eq!(
-            verify_chain(&c, &r, accepted(T0 + 31 * DAY)).unwrap_err(),
+            verify_chain(&c, &r, accepted(T0 + 91 * DAY)).unwrap_err(),
             Error::Expired("agent device delegation")
         );
         let mut g = Fleet::new();
@@ -1709,7 +1711,7 @@ mod tests {
         with_agent(&mut g, &agent, vec![]);
         let c = hosted(&g, &agent);
         assert_eq!(
-            verify_chain(&c, &g.resolver(), accepted(T0 + 31 * DAY)).unwrap_err(),
+            verify_chain(&c, &g.resolver(), accepted(T0 + 91 * DAY)).unwrap_err(),
             Error::Expired("device delegation")
         );
     }

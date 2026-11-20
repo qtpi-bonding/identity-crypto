@@ -476,7 +476,7 @@ impl IdentityKeys {
     /// delegation of the device over `[now, now + ttl_seconds]`, an empty history
     /// and an empty rotation chain.
     ///
-    /// `ttl_seconds` must be in `(0, 31 days]`; anything else is `Crypto` and
+    /// `ttl_seconds` must be in `(0, 91 days]`; anything else is `Crypto` and
     /// nothing is written. Refuses (`AlreadyInitialised`) when any agent file
     /// exists, and refuses a loose existing `dir` (`InsecureDir`) without writing.
     ///
@@ -517,7 +517,7 @@ impl IdentityKeys {
     /// records the old device's public keys in the history as retired at `now`.
     ///
     /// The new device and the delegation are built in memory before any file is
-    /// written. A `ttl_seconds` outside `(0, 31 days]` returns `Crypto` with no
+    /// written. A `ttl_seconds` outside `(0, 91 days]` returns `Crypto` with no
     /// file touched. Otherwise the writes are, in order: the history (when
     /// `new_device`), then `device.jwk.json` (when `new_device`), then
     /// `delegation.json`. A crash between two writes can leave a history entry for

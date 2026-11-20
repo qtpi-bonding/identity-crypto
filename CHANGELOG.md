@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- identity-crypto 0.12.0, identity-keyfile 0.12.0, identity-request-auth 0.2.0 (unchanged API): device keys now last 90 days in general (decision of 2026-11-20). `DEFAULT_DELEGATION_SECONDS` is 90 days (7 776 000 s, was 30 days), `MAX_DELEGATION_SECONDS` is 91 days (7 862 400 s, was 31 days) and `DEFAULT_RENEW_MARGIN_SECONDS` is 21 days (1 814 400 s, was 7 days; the same 7/30 of the lifetime). **Every verifier must be on this version before anyone issues a delegation longer than 31 days:** older verifiers refuse such delegations (`device.not_after_unix_seconds` must be within 31 days after issued_at). Re-pin all consumers first, then raise TTLs.
+
 - identity-request-auth: `SignedClient::principal()` returns the principal of the identity directory a client was built from (`from_identity_dir`); `None` for a client built from the plain `SignRequests` layer.
 - identity-keyfile: new `identity-enrol` binary (`identity-enrol enrol --machine-dir D --key K --dir X`, library module `enrol_cli`), idempotent, coded errors, uses `EnrolmentIndex::enrol` only.
 - identity-keyfile: `renew_if_due` confirmed to write `delegation.json` atomically under the identity lock; a concurrent-renewal test was added.

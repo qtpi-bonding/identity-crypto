@@ -403,12 +403,12 @@ fn device_only_dirs_are_never_written() {
 }
 
 #[test]
-fn create_or_load_loads_expired_31_day_dir_unmodified() {
+fn create_or_load_loads_expired_91_day_dir_unmodified() {
     let p = parent();
     let dir = p.path().join("a");
     let first = IdentityKeys::init(&dir, NOW, MAX_DELEGATION_SECONDS).unwrap();
     let before = snapshot(&dir);
-    let later = NOW + 40 * DAY;
+    let later = NOW + 100 * DAY;
     let mut loaded = IdentityKeys::create_or_load(&dir, later, DEFAULT_DELEGATION_SECONDS).unwrap();
     assert_eq!(snapshot(&dir), before);
     assert_eq!(loaded.principal_id, first.principal_id);

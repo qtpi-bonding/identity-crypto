@@ -42,9 +42,9 @@ facts:
   - src/signature.rs
   - vectors/signatures.json
   - tests/vectors.rs
-- id: keys-delegate-device-31-day-cap
+- id: keys-delegate-device-91-day-cap
   assertion: delegate_device in src/keys.rs signs a DEVICE delegation with the root key only when its
-    window is positive and at most 31 days, while device_delegation and sign_key_delegation apply no
+    window is positive and at most 91 days, while device_delegation and sign_key_delegation apply no
     window cap.
   evidence:
   - src/keys.rs

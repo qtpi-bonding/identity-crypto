@@ -248,7 +248,7 @@ starting together must never produce a second root:
   `device.jwk.json`, `delegation.json` or `agent_id`), or the directory itself.
 - `DelegationMismatch`: `device.jwk.json` is not the device the delegation names.
 - `VerifyFailed(check)`: a `load_verified` or `read_principal` check failed.
-- `Crypto`: a `ttl_seconds` that is not in `(0, 31 days]`. The cap is the
+- `Crypto`: a `ttl_seconds` that is not in `(0, 91 days]`. The cap is the
   verifier's cap for unlisted devices, applied by `delegate_device`. Nothing
   is written.
 
