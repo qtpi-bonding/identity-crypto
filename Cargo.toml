@@ -6,7 +6,7 @@ rust-version.workspace = true
 description = "P-256 key types, principal ids, canonical transcripts and the signature check"
 
 [workspace]
-members = [".", "identity-keyfile", "identity-request-auth"]
+members = [".", "identity-keyfile", "identity-request-auth", "identity-request-signer"]
 
 [workspace.package]
 edition = "2021"

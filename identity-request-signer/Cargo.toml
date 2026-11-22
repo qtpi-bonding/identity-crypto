@@ -1,0 +1,32 @@
+[package]
+name = "identity-request-signer"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "A local signing helper: holds a device key and signs gRPC requests over a unix socket"
+
+[lib]
+name = "identity_request_signer"
+path = "src/lib.rs"
+
+[[bin]]
+name = "identity-request-signer"
+path = "src/main.rs"
+
+[dependencies]
+identity-crypto.workspace = true
+identity-keyfile.workspace = true
+identity-request-auth = { path = "../identity-request-auth", version = "0.2.0" }
+coded-error.workspace = true
+base64 = "0.22"
+prost = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+toml = "0.8"
+
+[dev-dependencies]
+identity-crypto = { workspace = true, features = ["testkit"] }
+identity-keyfile = { workspace = true, features = ["testkit"] }
+identity-request-auth = { path = "../identity-request-auth", features = ["testkit"] }
+tempfile = "3"
