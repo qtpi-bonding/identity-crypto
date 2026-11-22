@@ -72,7 +72,7 @@ fn start_up_refusals_and_no_secrets_in_any_text() {
     assert!(matches!(result, Err(SignerError::PrincipalMismatch)));
 
     // Refused principal.
-    let result = device(dir.path(), &[principal.clone()]);
+    let result = device(dir.path(), std::slice::from_ref(&principal));
     assert!(matches!(result, Err(SignerError::PrincipalRefused)));
 
     // Empty server_id: Config::validate.
@@ -110,14 +110,14 @@ fn start_up_refusals_and_no_secrets_in_any_text() {
         clock,
         sink.sink(),
     );
-    texts.extend(sink.lines().into_iter());
-    texts.push(format!(
-        "{}",
+    texts.extend(sink.lines());
+    texts.push(
         identity_request_signer::Config::parse("socket = \"/x\"")
             .err()
             .map(|e| e.to_string())
             .unwrap_or_default()
-    ));
+            .to_string(),
+    );
     for text in &texts {
         for sample in &samples {
             assert!(

@@ -7,7 +7,6 @@
 #![allow(dead_code)]
 
 use identity_crypto::Timestamp;
-use identity_request_auth::testkit::FakeClock;
 use identity_request_auth::Clock;
 use std::sync::{Arc, Mutex};
 

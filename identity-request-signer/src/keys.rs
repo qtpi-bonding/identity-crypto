@@ -83,7 +83,7 @@ impl DeviceState {
         if principal != expected_principal {
             return Err(SignerError::PrincipalMismatch);
         }
-        if refuse_principals.iter().any(|p| *p == principal) {
+        if refuse_principals.contains(&principal) {
             return Err(SignerError::PrincipalRefused);
         }
         let credentials = DeviceCredentials::new(keys.device, genesis);

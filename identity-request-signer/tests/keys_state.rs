@@ -163,7 +163,7 @@ fn no_key_file_text_in_any_error_or_log_line() {
         DeviceState::load(
             dir.path(),
             "p256:other",
-            &[principal.clone()],
+            std::slice::from_ref(&principal),
             TestClock::new(T0),
             LogSink::new().sink(),
         )

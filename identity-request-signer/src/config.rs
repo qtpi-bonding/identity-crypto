@@ -3,7 +3,7 @@
 use crate::error::SignerError;
 use serde::Deserialize;
 use std::io::Read;
-use std::os::unix::fs::{MetadataExt, PermissionsExt};
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;

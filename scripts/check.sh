@@ -68,4 +68,13 @@ if [ "$count" -gt 1 ]; then
 fi
 echo "coded-error duplicates OK"
 
+echo "== step 11: identity-request-signer tests and no service names"
+$SLOT cargo test -p identity-request-signer
+w1="gr""org"; w2="multi""matrix"; w3="access""-control"
+if grep -rniE "$w1|$w2|$w3" identity-request-signer/src identity-request-signer/Cargo.toml; then
+  echo "FAIL: a service name or access-control appears in identity-request-signer" >&2
+  exit 1
+fi
+echo "signer clean OK"
+
 echo "== all checks passed"

@@ -4,7 +4,6 @@
 mod common;
 
 use common::*;
-use identity_crypto::signing_public;
 use identity_request_auth::{NonceCache, NonceCaps, TrustedDeviceSet};
 use identity_request_signer::{Config, DeviceState, SignParams, Signing};
 use std::sync::Arc;

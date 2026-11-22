@@ -125,7 +125,7 @@ impl Op for SignRequestOp2 {
 fn the_socket_dir_is_private() {
     let dir = DeviceOnlyDir::new(T0, 3600);
     let socket = dir.path().join("perm.sock");
-    let mut server = bound_server(dir.path());
+    let server = bound_server(dir.path());
     let bound = server.bind().expect("bind");
     let parent = bound.socket_path().parent().unwrap_or(dir.path());
     let mode = std::fs::metadata(parent)

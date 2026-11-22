@@ -361,7 +361,7 @@ fn serve_connection(
     stream
         .set_read_timeout(Some(Duration::from_secs(read_timeout_secs)))
         .ok();
-    let mut reader = BufReader::new(match stream.try_clone() {
+    let reader = BufReader::new(match stream.try_clone() {
         Ok(clone) => clone,
         Err(_) => return,
     });

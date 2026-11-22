@@ -7,7 +7,7 @@ use common::*;
 use identity_request_auth::Clock;
 use identity_request_signer::{check_not_root, prepare_socket_dir, SignerError};
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
-use std::os::unix::net::{UnixListener, UnixStream};
+use std::os::unix::net::UnixListener;
 use std::sync::Arc;
 
 fn server(dir: &std::path::Path, socket: &std::path::Path) -> identity_request_signer::Server {
