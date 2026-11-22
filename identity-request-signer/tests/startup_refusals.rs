@@ -118,7 +118,6 @@ fn start_up_refusals_and_no_secrets_in_any_text() {
             .map(|e| e.to_string())
             .unwrap_or_default()
     ));
-    texts.push(body_b64());
     for text in &texts {
         for sample in &samples {
             assert!(

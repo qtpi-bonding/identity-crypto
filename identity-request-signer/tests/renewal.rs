@@ -10,20 +10,38 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+/// A full identity directory plus the device-only view the signer reads. The
+/// full copy exists only so the test can renew the SAME identity's delegation
+/// with the keyfile renew API (renewing needs the root); the signer never
+/// reads the full dir.
 struct Dir {
-    _temp: tempfile::TempDir,
+    full: tempfile::TempDir,
     path: PathBuf,
+    _keep: tempfile::TempDir,
 }
 
 fn setup(now: i64, ttl: i64) -> (Dir, DeviceState, Arc<LogSink>, Arc<TestClock>) {
-    let temp = tempfile::TempDir::new().expect("temp dir");
-    std::fs::set_permissions(temp.path(), std::fs::Permissions::from_mode(0o700))
+    let full = tempfile::TempDir::new().expect("full temp dir");
+    std::fs::set_permissions(full.path(), std::fs::Permissions::from_mode(0o700))
+        .expect("make full dir private");
+    identity_keyfile::IdentityKeys::init(full.path(), now, ttl).expect("init identity");
+    let device_only = tempfile::TempDir::new().expect("device-only temp dir");
+    std::fs::set_permissions(device_only.path(), std::fs::Permissions::from_mode(0o700))
         .expect("make temp dir private");
-    identity_keyfile::IdentityKeys::init(temp.path(), now, ttl).expect("init identity");
-    std::fs::remove_file(temp.path().join(identity_keyfile::ROOT_FILE)).expect("make device-only");
+    for name in [
+        identity_keyfile::DEVICE_FILE,
+        identity_keyfile::DELEGATION_FILE,
+        identity_keyfile::AGENT_ID_FILE,
+        identity_keyfile::HISTORY_FILE,
+        identity_keyfile::ROTATIONS_FILE,
+    ] {
+        std::fs::copy(full.path().join(name), device_only.path().join(name))
+            .expect("copy device file");
+    }
     let dir = Dir {
-        path: temp.path().to_path_buf(),
-        _temp: temp,
+        path: device_only.path().to_path_buf(),
+        full,
+        _keep: device_only,
     };
     let sink = LogSink::new();
     let clock = TestClock::new(now);
@@ -55,7 +73,7 @@ fn renewal_status_tracks_the_delegation_file() {
 
     // The delegation file changed on disk: refresh picks it up without restart.
     let ttl2 = 10 * 86400;
-    renew_delegation(&dir.path, T0, ttl2);
+    renew_delegation(&dir, T0, ttl2);
     let status = device.status();
     assert_eq!(status.not_after, T0 + ttl2, "the changed file is picked up");
     assert_eq!(status.days_left, 10);
@@ -82,22 +100,14 @@ fn renewal_status_tracks_the_delegation_file() {
     assert!(matches!(result, Err(SignerError::Expired)));
 }
 
-/// Re-adds a root key file so the keyfile renew API can re-sign the delegation.
-/// The signer itself never reads the root file; this is the test renewing the
-/// delegation the way the real keyfile tool does.
-fn renew_delegation(dir: &Path, now: i64, ttl: i64) {
-    // The root file was removed to make the dir device-only. The keyfile renew
-    // API needs a full layout, so rebuild the identity directory from scratch
-    // with the same principal: we instead keep a full dir for renewal and copy
-    // only the delegation into the device-only dir the signer reads.
-    let full = tempfile::TempDir::new().expect("full temp dir");
-    std::fs::set_permissions(full.path(), std::fs::Permissions::from_mode(0o700))
-        .expect("make full dir private");
-    identity_keyfile::IdentityKeys::init(full.path(), now, ttl).expect("full init");
-    identity_keyfile::IdentityKeys::renew(full.path(), now, ttl, false).expect("renew");
+/// Re-signs the SAME identity's delegation in the full copy and copies the
+/// renewed `delegation.json` into the device-only dir the signer reads, the
+/// way the real keyfile tool syncs a renewed file.
+fn renew_delegation(dir: &Dir, now: i64, ttl: i64) {
+    identity_keyfile::IdentityKeys::renew(dir.full.path(), now, ttl, false).expect("renew");
     std::fs::copy(
-        full.path().join(identity_keyfile::DELEGATION_FILE),
-        dir.join(identity_keyfile::DELEGATION_FILE),
+        dir.full.path().join(identity_keyfile::DELEGATION_FILE),
+        dir.path.join(identity_keyfile::DELEGATION_FILE),
     )
     .expect("copy renewed delegation");
 }
