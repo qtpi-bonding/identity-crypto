@@ -10,6 +10,17 @@ use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+/// Kill-on-drop guard: a panic in any assertion or the socket wait still
+/// kills the child binary.
+struct ChildGuard(std::process::Child);
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
 #[test]
 fn the_binary_starts_and_serves_info_and_sign_request() {
     let dir = DeviceOnlyDir::new(T0, 91 * 86400);
@@ -25,13 +36,14 @@ fn the_binary_starts_and_serves_info_and_sign_request() {
     std::fs::set_permissions(&config_path, std::fs::Permissions::from_mode(0o600))
         .expect("make the config 0600");
 
-    let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_identity-request-signer"))
+    let child = std::process::Command::new(env!("CARGO_BIN_EXE_identity-request-signer"))
         .arg("--config")
         .arg(&config_path)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
         .expect("spawn the binary");
+    let mut child = ChildGuard(child);
 
     // Wait up to 5 s for the socket to appear.
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -43,7 +55,7 @@ fn the_binary_starts_and_serves_info_and_sign_request() {
                 break;
             }
             Err(_) => {
-                if matches!(child.try_wait(), Ok(Some(_))) {
+                if matches!(child.0.try_wait(), Ok(Some(_))) {
                     panic!("the binary exited before its socket appeared");
                 }
                 std::thread::sleep(Duration::from_millis(50));
@@ -78,7 +90,6 @@ fn the_binary_starts_and_serves_info_and_sign_request() {
     assert_eq!(sign["ok"], true, "sign_request reply: {sign}");
     assert!(sign["header_b64"].is_string());
 
-    // Never leave the child running.
-    child.kill().expect("kill the child");
-    let _ = child.wait();
+    // Never leave the child running: the guard kills it on drop.
+    drop(child);
 }

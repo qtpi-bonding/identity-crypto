@@ -49,7 +49,7 @@ echo "== step 8: the environment is read only in machine.rs and keys_home.rs"
 hits="$(grep -rln 'env::var' identity-keyfile/src | grep -v -e 'machine.rs' -e 'keys_home.rs' || true)"
 if [ -n "$hits" ]; then
   echo "$hits" >&2
-  echo "FAIL: the environment is read outside machine.rs" >&2
+  echo "FAIL: the environment is read outside machine.rs and keys_home.rs" >&2
   exit 1
 fi
 echo "machine dir OK"

@@ -143,47 +143,89 @@ fn server_for(
 
 #[test]
 fn a_slow_drip_client_hits_the_total_deadline() {
+    use std::sync::mpsc;
+
     let dir = DeviceOnlyDir::new(T0, 3600);
-    // read_timeout_secs = 1: a total deadline of 1 s, so a client sending one
-    // byte every 300 ms must get read_timeout (or a close) within about 2 s.
+    // read_timeout_secs = 1: a total deadline of 1 s over the whole read. The
+    // client drips one byte every 200 ms — well inside the 1 s per-read
+    // timeout — so only a *total* deadline can stop it. This test must fail
+    // if the timeout is (re)set per read instead of tracking the deadline.
     let (server, _sink) = server_for(dir.path(), 5_800_000, 1);
     let bound = server.bind().expect("bind");
     let path = bound.socket_path().to_path_buf();
     let running = bound.spawn();
     let mut stream = UnixStream::connect(&path).expect("connect");
     let started = Instant::now();
-    // Drip past the deadline: one byte every 300 ms, checking for a reply.
-    for _ in 0..20 {
-        if started.elapsed() > Duration::from_secs(3) {
+
+    // The drip writes the first byte now, so the 1 s deadline starts here.
+    stream.write_all(b"{").expect("drip first byte");
+    let _ = stream.flush();
+
+    // A second thread does all the reading (with a short read timeout on the
+    // cloned stream) so the drip keeps going on the original stream; the clone
+    // shares the socket. It records what arrived: "reply" or "eof".
+    let mut reader = stream.try_clone().expect("clone stream for reading");
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = vec![0u8; 4096];
+        loop {
+            if started.elapsed() > Duration::from_millis(3500) {
+                return;
+            }
+            reader
+                .set_read_timeout(Some(Duration::from_millis(100)))
+                .expect("set reader timeout");
+            match reader.read(&mut buf) {
+                Ok(0) => {
+                    let _ = tx.send((Instant::now(), "eof".to_string()));
+                    return;
+                }
+                Ok(n) => {
+                    let reply = String::from_utf8_lossy(&buf[..n]).to_string();
+                    assert!(
+                        reply.contains("read_timeout"),
+                        "the reply must be read_timeout: {reply}"
+                    );
+                    let _ = tx.send((Instant::now(), "reply".to_string()));
+                    return;
+                }
+                // Timed out with nothing yet: keep waiting.
+                Err(_) => continue,
+            }
+        }
+    });
+
+    // Drip one byte every 200 ms for up to 3 s, stopping once a reply or EOF
+    // arrived (a write error after the server closed counts as the close).
+    let mut event: Option<(Instant, String)> = None;
+    for _ in 0..15 {
+        if let Ok(seen) = rx.try_recv() {
+            event = Some(seen);
             break;
         }
-        stream.write_all(b"{").expect("drip one byte");
-        let _ = stream.flush();
-        std::thread::sleep(Duration::from_millis(300));
-        stream
-            .set_read_timeout(Some(Duration::from_millis(1)))
-            .expect("set timeout");
-        let mut buf = vec![0u8; 4096];
-        match stream.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                let reply = String::from_utf8_lossy(&buf[..n]).to_string();
-                assert!(
-                    reply.contains("read_timeout"),
-                    "the reply must be read_timeout: {reply}"
-                );
-                break;
-            }
-            Err(_) => continue,
+        std::thread::sleep(Duration::from_millis(200));
+        if stream.write_all(b"{").is_err() || stream.flush().is_err() {
+            // The server closed the connection: that is the EOF/close outcome.
+            event = Some((Instant::now(), "eof".to_string()));
+            break;
+        }
+        if let Ok(seen) = rx.try_recv() {
+            event = Some(seen);
+            break;
         }
     }
-    let elapsed = started.elapsed();
+    let (when, _kind) = event.expect("neither a reply nor EOF arrived within 3 s of slow-dripping");
+    let arrived_after = when.duration_since(started);
     assert!(
-        elapsed < Duration::from_secs(4),
-        "the server let a slow-drip client hold a thread for {elapsed:?}"
+        arrived_after >= Duration::from_millis(800) && arrived_when_valid(arrived_after),
+        "the reply/EOF arrived at {arrived_after:?}, expected near the 1 s total deadline"
     );
     drop(stream);
     running.stop();
+}
+
+fn arrived_when_valid(elapsed: Duration) -> bool {
+    elapsed <= Duration::from_millis(2000)
 }
 
 #[test]
