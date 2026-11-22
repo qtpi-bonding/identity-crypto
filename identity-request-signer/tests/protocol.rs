@@ -81,15 +81,15 @@ fn protocol_over_a_real_unix_socket() {
         "{{\"op\":\"sign_request\",\"method_path\":{PATH:?},\"body_type\":{BODY_TYPE:?},\"body_b64\":{body:?},\"audience\":null}}",
         body = encode_b64(BODY)
     );
-    let reply = exchange(&path, &request);
-    assert_eq!(reply["ok"], true);
-    assert!(reply["header_b64"].is_string());
-    assert!(reply["days_left"].is_i64());
+    let sign_reply = exchange(&path, &request);
+    assert_eq!(sign_reply["ok"], true);
+    assert!(sign_reply["header_b64"].is_string());
+    assert!(sign_reply["days_left"].is_i64());
 
     // Unknown op.
     let reply = exchange(&path, "{\"op\":\"nope\"}");
     assert_eq!(reply["ok"], false);
-    assert_eq!(reply["code"], "unknown_op");
+    assert_eq!(reply["code"], "identity.request_signer.unknown_op");
 
     // A registered extra op works.
     let reply = exchange(&path, "{\"op\":\"echo\",\"hello\":\"world\"}");
@@ -97,7 +97,7 @@ fn protocol_over_a_real_unix_socket() {
     assert_eq!(reply["echoed"]["hello"], "world");
 
     // The header is decodable.
-    let header = reply["header_b64"].as_str().expect("header");
+    let header = sign_reply["header_b64"].as_str().expect("header");
     let signed: identity_crypto::pb::SignedMessage =
         prost::Message::decode(decode_b64(header).as_slice()).expect("decode header");
 

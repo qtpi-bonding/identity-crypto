@@ -26,15 +26,19 @@ fn device(dir: &std::path::Path) -> DeviceState {
 
 fn signing_with(dir: &std::path::Path, server_id: Option<&str>, overrides: &str) -> Signing {
     let socket = dir.join("test.sock");
-    let text = format!(
-        "{}{}\nmax_body = 4194304\nmax_line_bytes = 5800000\nread_timeout_secs = 5\n",
+    let mut text = format!(
+        "{}{}\n",
         config_text(dir, &socket),
         match server_id {
             Some(s) => format!("server_id = {s:?}\n"),
             None => String::new(),
         }
     );
-    let mut text = text;
+    // The defaults are omitted when the overrides supply their own limits,
+    // so the TOML never carries a duplicate key.
+    if !overrides.contains("max_body") {
+        text.push_str("max_body = 4194304\nmax_line_bytes = 5800000\nread_timeout_secs = 5\n");
+    }
     text.push_str(overrides);
     let config = identity_request_signer::Config::parse(&text).expect("parse config");
     Signing::new(&config, Arc::new(device(dir))).expect("signing")

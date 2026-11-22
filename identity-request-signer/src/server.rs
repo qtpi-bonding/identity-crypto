@@ -6,8 +6,35 @@ use crate::keys::DeviceState;
 use crate::signing::{Info, SignParams, Signing};
 use identity_request_auth::Clock;
 use serde_json::json;
+use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::RwLock;
+use std::sync::{
+    atomic::{AtomicBool, AtomicUsize, Ordering},
+    Arc,
+};
+use std::time::Duration;
+
+/// How many connections may be live at once; over this the extra connections
+/// are closed at once.
+const MAX_CONNECTIONS: usize = 32;
+/// The accept-loop poll interval for the nonblocking accept.
+const ACCEPT_POLL_MS: u64 = 20;
+
+/// A coded refusal, logged with its code only (no message text, no values).
+fn log_refusal(log: &dyn Fn(&str), err: &SignerError) {
+    log(&format!("refused: {}", coded_error::CodedError::code(err)));
+}
+
+/// The JSON error line for a coded error.
+fn error_json(err: &SignerError) -> String {
+    json!({
+        "ok": false,
+        "code": coded_error::CodedError::code(err),
+        "message": err.to_string(),
+    })
+    .to_string()
+}
 
 /// What an op needs to run.
 pub struct OpContext<'a> {
@@ -51,28 +78,119 @@ impl Op for SignRequestOp {
         ctx: &OpContext,
         request: &serde_json::Value,
     ) -> Result<serde_json::Value, SignerError> {
-        let _ = (ctx, request);
-        unimplemented!()
+        // One fixed message for every malformed request: values are never echoed.
+        const MALFORMED: &str = "the request must carry method_path, body_type and body_b64 strings, and an optional audience";
+        let method_path = request
+            .get("method_path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(SignerError::BadRequest(String::from(MALFORMED)))?;
+        let body_type = request
+            .get("body_type")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(SignerError::BadRequest(String::from(MALFORMED)))?;
+        let body_b64 = request
+            .get("body_b64")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(SignerError::BadRequest(String::from(MALFORMED)))?;
+        let audience = match request.get("audience") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => Some(
+                value
+                    .as_str()
+                    .ok_or(SignerError::BadRequest(String::from(MALFORMED)))?,
+            ),
+        };
+        use base64::Engine;
+        let body = base64::engine::general_purpose::STANDARD
+            .decode(body_b64)
+            .map_err(|_| SignerError::BadRequest(String::from(MALFORMED)))?;
+        let outcome = ctx.signing.sign_request(&SignParams {
+            method_path,
+            body_type,
+            body: &body,
+            audience,
+        })?;
+        Ok(json!({
+            "header_b64": outcome.header_b64,
+            "days_left": outcome.days_left,
+        }))
+    }
+}
+
+/// The shared request-handling core, usable from the owner and from
+/// connection threads.
+struct Core {
+    max_line_bytes: usize,
+    ops: Arc<RwLock<Vec<Box<dyn Op>>>>,
+    signing: Arc<Signing>,
+    device: Arc<DeviceState>,
+    log: Arc<dyn Fn(&str) + Send + Sync>,
+}
+
+impl Core {
+    /// One line in, one JSON line out. Any refusal is logged with its code.
+    fn handle_line(&self, line: &[u8]) -> String {
+        match self.handle_line_result(line) {
+            Ok(reply) => reply,
+            Err(err) => {
+                log_refusal(self.log.as_ref(), &err);
+                error_json(&err)
+            }
+        }
+    }
+
+    fn handle_line_result(&self, line: &[u8]) -> Result<String, SignerError> {
+        // The line cap is enforced before any parsing.
+        if line.len() > self.max_line_bytes {
+            return Err(SignerError::LineTooLong);
+        }
+        let text = std::str::from_utf8(line)
+            .map_err(|_| SignerError::BadRequest(String::from("malformed json")))?;
+        let text = text.strip_suffix('\n').unwrap_or(text);
+        let text = text.strip_suffix('\r').unwrap_or(text);
+        let value: serde_json::Value = serde_json::from_str(text)
+            .map_err(|_| SignerError::BadRequest(String::from("malformed json")))?;
+        let op = value
+            .get("op")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| SignerError::BadRequest(String::from("missing op")))?;
+        if op == "info" {
+            return Ok(info_json(&self.signing.info()).to_string());
+        }
+        let guard = self.ops.read().unwrap_or_else(|p| p.into_inner());
+        let op_impl = guard
+            .iter()
+            .find(|candidate| candidate.name() == op)
+            .ok_or(SignerError::UnknownOp)?;
+        let ctx = OpContext {
+            signing: &self.signing,
+            device: &self.device,
+        };
+        let mut out = op_impl.run(&ctx, &value)?;
+        if let serde_json::Value::Object(map) = &mut out {
+            map.insert(String::from("ok"), serde_json::Value::Bool(true));
+        }
+        Ok(out.to_string())
     }
 }
 
 pub struct Server {
     config: Config,
-    _device: Arc<DeviceState>,
-    _signing: Signing,
-    ops: Vec<Box<dyn Op>>,
+    core: Core,
 }
 
 pub struct BoundServer {
-    _listener: std::os::unix::net::UnixListener,
-    _socket_path: PathBuf,
-    _max_line_bytes: usize,
-    _read_timeout_secs: u64,
-    _log: Arc<dyn Fn(&str) + Send + Sync>,
+    listener: std::os::unix::net::UnixListener,
+    socket_path: PathBuf,
+    max_line_bytes: usize,
+    read_timeout_secs: u64,
+    core: Arc<Core>,
 }
 
 pub struct Running {
-    _handle: std::thread::JoinHandle<()>,
+    handle: Option<std::thread::JoinHandle<()>>,
+    socket_path: PathBuf,
+    stop: Arc<AtomicBool>,
 }
 
 impl Server {
@@ -82,32 +200,69 @@ impl Server {
         log: Arc<dyn Fn(&str) + Send + Sync>,
     ) -> Result<Server, SignerError> {
         config.validate()?;
-        let _ = (clock, log);
+        let device = Arc::new(DeviceState::load(
+            &config.identity_dir,
+            &config.expected_principal,
+            &config.refuse_principals,
+            clock,
+            log.clone(),
+        )?);
+        let signing = Signing::new(&config, Arc::clone(&device))?;
+        let max_line_bytes = config.max_line_bytes();
         Ok(Server {
             config,
-            _device: unimplemented!(),
-            _signing: unimplemented!(),
-            ops: vec![Box::new(SignRequestOp::new())],
+            core: Core {
+                max_line_bytes,
+                ops: Arc::new(RwLock::new(vec![Box::new(SignRequestOp::new())])),
+                signing: Arc::new(signing),
+                device,
+                log,
+            },
         })
     }
 
     pub fn register_op(&mut self, op: Box<dyn Op>) -> Result<(), SignerError> {
-        if op.name() == "info" || self.ops.iter().any(|existing| existing.name() == op.name()) {
+        let mut ops = self.core.ops.write().unwrap_or_else(|p| p.into_inner());
+        if op.name() == "info" || ops.iter().any(|existing| existing.name() == op.name()) {
             return Err(SignerError::ConfigInvalid(String::from(
                 "an op with this name is already registered",
             )));
         }
-        self.ops.push(op);
+        ops.push(op);
         Ok(())
     }
 
     pub fn handle_line(&self, line: &[u8]) -> String {
-        let _ = line;
-        unimplemented!()
+        self.core.handle_line(line)
     }
 
     pub fn bind(self) -> Result<BoundServer, SignerError> {
-        unimplemented!()
+        let uid = identity_keyfile::private_fs::effective_uid();
+        check_not_root(uid)?;
+        prepare_socket_dir(&self.config.socket, uid)?;
+        let listener = std::os::unix::net::UnixListener::bind(&self.config.socket)
+            .map_err(|_| SignerError::SocketDir(String::from("the socket could not be bound")))?;
+        // The socket is made owner-only right after bind; the 0700 parent
+        // directory owned by the running uid is the guard.
+        std::fs::set_permissions(&self.config.socket, std::fs::Permissions::from_mode(0o600))
+            .map_err(|_| {
+                SignerError::SocketDir(String::from("the socket could not be made private"))
+            })?;
+        let meta = std::fs::metadata(&self.config.socket).map_err(|_| {
+            SignerError::SocketDir(String::from("the socket could not be inspected"))
+        })?;
+        if std::os::unix::fs::MetadataExt::mode(&meta) & 0o777 != 0o600 {
+            return Err(SignerError::SocketDir(String::from(
+                "the socket is not 0600",
+            )));
+        }
+        Ok(BoundServer {
+            listener,
+            socket_path: self.config.socket.clone(),
+            max_line_bytes: self.config.max_line_bytes(),
+            read_timeout_secs: self.config.read_timeout_secs(),
+            core: Arc::new(self.core),
+        })
     }
 }
 
@@ -120,25 +275,137 @@ pub fn check_not_root(uid: u32) -> Result<(), SignerError> {
 }
 
 pub fn prepare_socket_dir(socket: &Path, uid: u32) -> Result<(), SignerError> {
-    let _ = (socket, uid);
-    unimplemented!()
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    let refuse = || {
+        SignerError::SocketDir(String::from(
+            "the socket parent directory must exist, be a real directory, be owned by the running uid and be private (0700)",
+        ))
+    };
+    let parent = socket.parent().ok_or_else(refuse)?;
+    let meta = std::fs::symlink_metadata(parent).map_err(|_| {
+        SignerError::SocketDir(String::from("the socket parent directory does not exist"))
+    })?;
+    if !meta.is_dir() || meta.uid() != uid || meta.permissions().mode() & 0o077 != 0 {
+        return Err(refuse());
+    }
+    // A stale file at the socket path: a socket is removed, anything else refused.
+    if let Ok(meta) = std::fs::symlink_metadata(socket) {
+        if meta.file_type().is_socket() {
+            std::fs::remove_file(socket).map_err(|_| {
+                SignerError::SocketDir(String::from("the stale socket could not be removed"))
+            })?;
+        } else {
+            return Err(refuse());
+        }
+    }
+    Ok(())
 }
 
 impl BoundServer {
     pub fn socket_path(&self) -> &Path {
-        &self._socket_path
+        &self.socket_path
     }
 
     pub fn spawn(self) -> Running {
+        let stop = Arc::new(AtomicBool::new(false));
+        let listener = self.listener;
+        listener
+            .set_nonblocking(true)
+            .expect("set the listener nonblocking");
+        let socket_path = self.socket_path.clone();
+        let flag = Arc::clone(&stop);
+        let core = Arc::clone(&self.core);
+        let max_line_bytes = self.max_line_bytes;
+        let read_timeout_secs = self.read_timeout_secs;
+        let handle = std::thread::spawn(move || {
+            let live = Arc::new(AtomicUsize::new(0));
+            while !flag.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((stream, _addr)) => {
+                        if live.load(Ordering::SeqCst) >= MAX_CONNECTIONS {
+                            drop(stream);
+                            continue;
+                        }
+                        live.fetch_add(1, Ordering::SeqCst);
+                        let live = Arc::clone(&live);
+                        let core = Arc::clone(&core);
+                        std::thread::spawn(move || {
+                            serve_connection(stream, max_line_bytes, read_timeout_secs, &core);
+                            live.fetch_sub(1, Ordering::SeqCst);
+                        });
+                    }
+                    Err(_) => {
+                        std::thread::sleep(Duration::from_millis(ACCEPT_POLL_MS));
+                    }
+                }
+            }
+        });
         Running {
-            _handle: unimplemented!(),
+            handle: Some(handle),
+            socket_path,
+            stop,
         }
     }
 }
 
+/// One line in, one line out, then close. Reads at most
+/// `max_line_bytes + 1` bytes so an over-long line is detected without
+/// buffering an unbounded line.
+fn serve_connection(
+    mut stream: std::os::unix::net::UnixStream,
+    max_line_bytes: usize,
+    read_timeout_secs: u64,
+    core: &Core,
+) {
+    use std::io::{BufRead, BufReader, Read, Write};
+    stream
+        .set_read_timeout(Some(Duration::from_secs(read_timeout_secs)))
+        .ok();
+    let mut reader = BufReader::new(match stream.try_clone() {
+        Ok(clone) => clone,
+        Err(_) => return,
+    });
+    let mut line = Vec::new();
+    let outcome = match reader
+        .take((max_line_bytes + 1) as u64)
+        .read_until(b'\n', &mut line)
+    {
+        Ok(_) => {
+            if line.len() > max_line_bytes {
+                Err(SignerError::LineTooLong)
+            } else {
+                Ok(core.handle_line(&line))
+            }
+        }
+        Err(ref e)
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
+            Err(SignerError::ReadTimeout)
+        }
+        Err(_) => return,
+    };
+    let reply = match outcome {
+        Ok(reply) => reply,
+        Err(err) => {
+            log_refusal(core.log.as_ref(), &err);
+            error_json(&err)
+        }
+    };
+    let _ = stream.write_all(reply.as_bytes());
+    let _ = stream.write_all(b"\n");
+    let _ = stream.flush();
+}
+
 impl Running {
     pub fn stop(self) {
-        unimplemented!()
+        self.stop.store(true, Ordering::SeqCst);
+        // The accept loop polls with a 20 ms sleep, so it notices the flag
+        // without a self-connect. Join the accept thread and clean up.
+        if let Some(handle) = self.handle {
+            let _ = handle.join();
+        }
+        let _ = std::fs::remove_file(&self.socket_path);
     }
 }
 
