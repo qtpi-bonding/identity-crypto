@@ -2,7 +2,6 @@
 
 use crate::error::SignerError;
 use serde::Deserialize;
-use std::io::Read;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
@@ -10,6 +9,42 @@ const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 const DEFAULT_MAX_BODY: usize = 4_194_304;
 const DEFAULT_MAX_LINE_BYTES: usize = 5_800_000;
 const DEFAULT_READ_TIMEOUT_SECS: u64 = 5;
+
+/// Reads a private TOML file: refuses a symlink, any group/other permission
+/// bit, a file over 1 MiB, non-UTF-8 content and a TOML syntax error, always
+/// with a fixed message that never echoes file content. Returns the parsed
+/// table with any sections it contains.
+pub fn read_private_toml(path: &Path) -> Result<toml::Table, SignerError> {
+    if std::fs::symlink_metadata(path)
+        .map_err(|_| SignerError::ConfigInvalid(String::from("cannot read config")))?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(SignerError::ConfigInvalid(String::from(
+            "config must not be a symlink",
+        )));
+    }
+    let file = std::fs::File::open(path)
+        .map_err(|_| SignerError::ConfigInvalid(String::from("cannot read config")))?;
+    let meta = file
+        .metadata()
+        .map_err(|_| SignerError::ConfigInvalid(String::from("cannot read config")))?;
+    if meta.len() > MAX_CONFIG_BYTES {
+        return Err(SignerError::ConfigInvalid(String::from(
+            "config file is too large",
+        )));
+    }
+    if meta.permissions().mode() & 0o077 != 0 {
+        return Err(SignerError::ConfigInvalid(String::from(
+            "config file must be readable only by its owner",
+        )));
+    }
+    let bytes = std::fs::read(path)
+        .map_err(|_| SignerError::ConfigInvalid(String::from("cannot read config")))?;
+    let text = String::from_utf8(bytes)
+        .map_err(|_| SignerError::ConfigInvalid(String::from("config is not valid UTF-8")))?;
+    toml::from_str(&text).map_err(|_| SignerError::ConfigInvalid(String::from("invalid config")))
+}
 
 fn default_max_body() -> usize {
     DEFAULT_MAX_BODY
@@ -43,38 +78,22 @@ pub struct Config {
 
 impl Config {
     pub fn parse(text: &str) -> Result<Config, SignerError> {
-        toml::from_str(text).map_err(|_| SignerError::ConfigInvalid(String::from("invalid config")))
+        let table: toml::Table = toml::from_str(text)
+            .map_err(|_| SignerError::ConfigInvalid(String::from("invalid config")))?;
+        Self::from_table(table)
     }
 
     pub fn load(path: &Path) -> Result<Config, SignerError> {
-        if std::fs::symlink_metadata(path)
-            .map_err(|_| SignerError::ConfigInvalid(String::from("cannot read config")))?
-            .file_type()
-            .is_symlink()
-        {
-            return Err(SignerError::ConfigInvalid(String::from(
-                "config must not be a symlink",
-            )));
-        }
-        let mut file = std::fs::File::open(path)
-            .map_err(|_| SignerError::ConfigInvalid(String::from("cannot read config")))?;
-        let meta = file
-            .metadata()
-            .map_err(|_| SignerError::ConfigInvalid(String::from("cannot read config")))?;
-        if meta.len() > MAX_CONFIG_BYTES {
-            return Err(SignerError::ConfigInvalid(String::from(
-                "config file is too large",
-            )));
-        }
-        if meta.permissions().mode() & 0o077 != 0 {
-            return Err(SignerError::ConfigInvalid(String::from(
-                "config file must be readable only by its owner",
-            )));
-        }
-        let mut text = String::new();
-        file.read_to_string(&mut text)
-            .map_err(|_| SignerError::ConfigInvalid(String::from("config is not valid UTF-8")))?;
-        Self::parse(&text)
+        let table = read_private_toml(path)?;
+        Self::from_table(table)
+    }
+
+    /// Builds a config from a parsed table, refusing unknown keys exactly as
+    /// the direct deserializer did. Fixed message only: never echoes the table.
+    pub fn from_table(table: toml::Table) -> Result<Config, SignerError> {
+        toml::Value::Table(table)
+            .try_into::<Config>()
+            .map_err(|_| SignerError::ConfigInvalid(String::from("invalid config")))
     }
 
     pub fn validate(&self) -> Result<(), SignerError> {

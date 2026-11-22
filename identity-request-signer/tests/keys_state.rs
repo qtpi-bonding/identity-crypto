@@ -196,6 +196,80 @@ fn ensure_valid_is_expired_after_not_after() {
 }
 
 #[test]
+fn delegation_returns_the_loaded_delegation_initially() {
+    let dir = device_only_dir(T0, 86_400);
+    let state = load_at(dir.path(), TestClock::new(T0)).expect("load");
+    let loaded = identity_keyfile::read_delegation(dir.path()).expect("read delegation");
+    assert_eq!(state.delegation(), loaded);
+}
+
+#[test]
+fn delegation_returns_a_renewed_delegation_without_restart() {
+    let ttl = 91 * 86_400;
+    let renewable = RenewableDir::new(T0, ttl);
+    let dir = &renewable.device_only;
+    let state = load_at(dir.path(), TestClock::new(T0)).expect("load");
+
+    let ttl2 = 10 * 86_400;
+    renewable.renew(T0, ttl2);
+
+    let delegation = state.delegation();
+    let expected = identity_keyfile::read_delegation(dir.path()).expect("read delegation");
+    assert_eq!(delegation, expected, "the renewed delegation is picked up");
+    assert_eq!(delegation.not_after_unix_seconds, T0 + ttl2);
+}
+
+#[test]
+fn a_delegation_for_a_different_device_is_ignored() {
+    let dir = device_only_dir(T0, 86_400);
+    let sink = LogSink::new();
+    let state = DeviceState::load(
+        dir.path(),
+        &principal_string(dir.path()),
+        &[],
+        TestClock::new(T0),
+        sink.sink(),
+    )
+    .expect("load");
+    let before = state.delegation();
+
+    // Overwrite the delegation file with one naming a different device.
+    let other = device_only_dir(T0, 86_400);
+    let other_delegation =
+        std::fs::read_to_string(other.path().join(identity_keyfile::DELEGATION_FILE))
+            .expect("other delegation text");
+    std::fs::write(
+        dir.path().join(identity_keyfile::DELEGATION_FILE),
+        other_delegation,
+    )
+    .expect("write foreign delegation");
+
+    assert_eq!(
+        state.delegation(),
+        before,
+        "the foreign delegation must not replace the loaded one"
+    );
+    assert_eq!(
+        sink.lines().len(),
+        1,
+        "exactly one coded log line: {:?}",
+        sink.lines()
+    );
+}
+
+#[test]
+fn an_unreadable_delegation_file_keeps_the_old_one() {
+    let dir = device_only_dir(T0, 86_400);
+    let state = load_at(dir.path(), TestClock::new(T0)).expect("load");
+    let before = state.delegation();
+    let path = dir.path().join(identity_keyfile::DELEGATION_FILE);
+    std::fs::write(&path, "not toml at all [[[").expect("write garbage");
+    assert_eq!(state.delegation(), before);
+    std::fs::remove_file(&path).expect("remove delegation file");
+    assert_eq!(state.delegation(), before);
+}
+
+#[test]
 fn no_key_file_text_in_any_error_or_log_line() {
     let dir = device_only_dir(T0, 86_400);
     let principal = principal_string(dir.path());

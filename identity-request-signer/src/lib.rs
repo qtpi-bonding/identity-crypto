@@ -7,6 +7,7 @@ pub mod keys;
 pub mod server;
 pub mod signing;
 
+pub use config::read_private_toml;
 pub use config::Config;
 pub use error::SignerError;
 pub use keys::{DelegationStatus, DeviceState, RENEWAL_MARGIN_DAYS};

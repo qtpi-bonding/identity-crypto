@@ -40,6 +40,7 @@ struct DeviceStateInner {
 /// `refresh` re-reads only when the file changed.
 struct DelegationState {
     not_after: i64,
+    delegation: identity_crypto::pb::KeyDelegation,
     fingerprint: Option<u64>,
 }
 
@@ -102,6 +103,7 @@ impl DeviceState {
                 log,
                 delegation: RwLock::new(DelegationState {
                     not_after: keys.delegation.not_after_unix_seconds,
+                    delegation: keys.delegation.clone(),
                     fingerprint,
                 }),
                 logged_renewal: RwLock::new(None),
@@ -163,7 +165,20 @@ impl DeviceState {
             .write()
             .unwrap_or_else(|p| p.into_inner());
         state.not_after = delegation.not_after_unix_seconds;
+        state.delegation = delegation.clone();
         state.fingerprint = Some(fingerprint);
+    }
+
+    /// The current delegation, re-reading the file first so a renewed
+    /// delegation is returned without a restart.
+    pub fn delegation(&self) -> identity_crypto::pb::KeyDelegation {
+        self.refresh();
+        self.inner
+            .delegation
+            .read()
+            .unwrap_or_else(|p| p.into_inner())
+            .delegation
+            .clone()
     }
 
     pub fn status(&self) -> DelegationStatus {
