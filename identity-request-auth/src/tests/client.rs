@@ -275,3 +275,86 @@ async fn a_client_from_the_plain_layer_has_no_principal() {
     let client = sign_layer(signer, SERVER.into()).layer(());
     assert!(client.principal().is_none());
 }
+
+#[tokio::test]
+async fn fixed_empty_server_id_is_rejected() {
+    let clock: Arc<dyn Clock> = FakeClock::new(T0);
+    let dir = TempIdentityDir::new(T0, 3600);
+    let result = SignedClient::<Channel>::from_identity_dir(
+        dir.path(),
+        endpoint("127.0.0.1:1".parse().expect("addr")),
+        AudienceSource::Fixed(String::new()),
+        clock,
+        sign_layer,
+    )
+    .await;
+    assert!(matches!(result, Err(ChannelError::EmptyServerId)));
+}
+
+#[tokio::test]
+async fn discover_empty_server_id_is_rejected() {
+    let clock = FakeClock::new(T0);
+    let dir = TempIdentityDir::new(T0, 3600);
+    let keys = identity_keyfile::DeviceKeys::load(dir.path()).expect("device keys");
+    let devices = Arc::new(StaticDevices::new());
+    devices.trust(keys.principal_id.genesis(), &signing_public(&keys.device));
+    let dyn_clock: Arc<dyn Clock> = clock.clone();
+    let (addr, _seen) = serve(devices, dyn_clock.clone()).await;
+    let discover: crate::grpc::DiscoverAudience =
+        Arc::new(|_| Box::pin(async { Ok(String::new()) }));
+    let result = SignedClient::<Channel>::from_identity_dir(
+        dir.path(),
+        endpoint(addr),
+        AudienceSource::Discover(discover),
+        dyn_clock,
+        sign_layer,
+    )
+    .await;
+    assert!(matches!(result, Err(ChannelError::EmptyServerId)));
+}
+
+#[test]
+fn empty_server_id_error_code() {
+    assert_eq!(
+        coded_error::CodedError::code(&ChannelError::EmptyServerId),
+        "identity.request_auth.channel.empty_server_id"
+    );
+}
+
+#[tokio::test]
+async fn from_device_keys_builds_a_working_channel() {
+    let clock = FakeClock::new(T0);
+    let dir = TempIdentityDir::new(T0, 3600);
+    let keys = identity_keyfile::DeviceKeys::load(dir.path()).expect("device keys");
+    let principal = keys.principal_id.clone();
+    let devices = Arc::new(StaticDevices::new());
+    devices.trust(principal.genesis(), &signing_public(&keys.device));
+    let dyn_clock: Arc<dyn Clock> = clock.clone();
+    let (addr, seen) = serve(devices, dyn_clock.clone()).await;
+
+    let mut channel = SignedClient::<Channel>::from_device_keys(
+        keys,
+        endpoint(addr),
+        AudienceSource::Fixed(SERVER.into()),
+        dyn_clock.clone(),
+        sign_layer,
+    )
+    .await
+    .unwrap_or_else(|e| panic!("from_device_keys: {e}"));
+    call(&mut channel, LIST).await.expect("signed call");
+    assert_eq!(
+        seen.recv_timeout(Duration::from_secs(5)).expect("handler"),
+        principal
+    );
+    assert_eq!(channel.principal(), Some(&principal));
+
+    let result = SignedClient::<Channel>::from_device_keys(
+        identity_keyfile::DeviceKeys::load(dir.path()).expect("device keys"),
+        endpoint(addr),
+        AudienceSource::Fixed(String::new()),
+        dyn_clock,
+        sign_layer,
+    )
+    .await;
+    assert!(matches!(result, Err(ChannelError::EmptyServerId)));
+}

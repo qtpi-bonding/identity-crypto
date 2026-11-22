@@ -80,13 +80,15 @@ pub enum ChannelError {
     #[error("audience discovery: {0}")]
     #[coded(code = "audience", class = Transient, grpc = Unavailable)]
     Audience(Status),
+    #[error("the server id is empty")]
+    #[coded(code = "empty_server_id", class = Logical, grpc = InvalidArgument)]
+    EmptyServerId,
 }
 
 #[cfg(feature = "client")]
 impl SignedClient<Channel> {
-    /// Loads the device keys from `dir` (a device-only directory is fine), connects
-    /// `endpoint`, resolves the server id from `audience` (discovery runs on the
-    /// unsigned channel), then wraps the channel in `layer(signer, server_id)`.
+    /// Loads the device keys from `dir` (a device-only directory is fine) and
+    /// delegates to `from_device_keys`.
     #[allow(
         clippy::result_large_err,
         reason = "ChannelError::Audience(Status) is part of the specified API"
@@ -99,6 +101,29 @@ impl SignedClient<Channel> {
         layer: impl FnOnce(Arc<RequestSigner>, String) -> SignRequests,
     ) -> Result<SignedChannel, ChannelError> {
         let keys = DeviceKeys::load(dir).map_err(ChannelError::Identity)?;
+        Self::from_device_keys(keys, endpoint, audience, clock, layer).await
+    }
+
+    /// Builds a signed channel from already-loaded device keys: connects
+    /// `endpoint`, resolves the server id from `audience` (discovery runs on the
+    /// unsigned channel), then wraps the channel in `layer(signer, server_id)`.
+    /// A known-empty server id is rejected before connecting.
+    #[allow(
+        clippy::result_large_err,
+        reason = "ChannelError::Audience(Status) is part of the specified API"
+    )]
+    pub async fn from_device_keys(
+        keys: DeviceKeys,
+        endpoint: Endpoint,
+        audience: AudienceSource,
+        clock: Arc<dyn Clock>,
+        layer: impl FnOnce(Arc<RequestSigner>, String) -> SignRequests,
+    ) -> Result<SignedChannel, ChannelError> {
+        if let AudienceSource::Fixed(server_id) = &audience {
+            if server_id.is_empty() {
+                return Err(ChannelError::EmptyServerId);
+            }
+        }
         let principal = keys.principal_id.clone();
         let genesis = keys.principal_id.genesis().clone();
         let credentials = DeviceCredentials::new(keys.device, genesis);
@@ -111,6 +136,9 @@ impl SignedClient<Channel> {
                 .await
                 .map_err(ChannelError::Audience)?,
         };
+        if server_id.is_empty() {
+            return Err(ChannelError::EmptyServerId);
+        }
         Ok(layer(signer, server_id)
             .layer(channel)
             .with_principal(principal))

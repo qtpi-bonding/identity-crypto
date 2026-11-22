@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- identity-request-auth: `SignedClient::from_device_keys` is implemented (it now builds the signed channel itself, sharing one code path with `from_identity_dir`), and both reject an empty server id (`ChannelError::EmptyServerId`) — a `Fixed` empty id before connecting, an empty discovery result after discovery.
+
 - identity-crypto 0.12.0, identity-keyfile 0.12.0, identity-request-auth 0.2.0 (unchanged API): device keys now last 90 days in general (decision of 2026-11-20). `DEFAULT_DELEGATION_SECONDS` is 90 days (7 776 000 s, was 30 days), `MAX_DELEGATION_SECONDS` is 91 days (7 862 400 s, was 31 days) and `DEFAULT_RENEW_MARGIN_SECONDS` is 21 days (1 814 400 s, was 7 days; the same 7/30 of the lifetime). **Every verifier must be on this version before anyone issues a delegation longer than 31 days:** older verifiers refuse such delegations (`device.not_after_unix_seconds` must be within 31 days after issued_at). Re-pin all consumers first, then raise TTLs.
 
 - identity-request-auth: `SignedClient::principal()` returns the principal of the identity directory a client was built from (`from_identity_dir`); `None` for a client built from the plain `SignRequests` layer.
