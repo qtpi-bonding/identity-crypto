@@ -11,6 +11,18 @@ const DEFAULT_MAX_BODY: usize = 4_194_304;
 const DEFAULT_MAX_LINE_BYTES: usize = 5_800_000;
 const DEFAULT_READ_TIMEOUT_SECS: u64 = 5;
 
+fn default_max_body() -> usize {
+    DEFAULT_MAX_BODY
+}
+
+fn default_max_line_bytes() -> usize {
+    DEFAULT_MAX_LINE_BYTES
+}
+
+fn default_read_timeout_secs() -> u64 {
+    DEFAULT_READ_TIMEOUT_SECS
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
@@ -21,24 +33,12 @@ pub struct Config {
     pub socket: PathBuf,
     #[serde(default)]
     pub server_id: Option<String>,
+    #[serde(default = "default_max_body")]
     max_body: usize,
+    #[serde(default = "default_max_line_bytes")]
     max_line_bytes: usize,
+    #[serde(default = "default_read_timeout_secs")]
     read_timeout_secs: u64,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            identity_dir: PathBuf::new(),
-            expected_principal: String::new(),
-            refuse_principals: Vec::new(),
-            socket: PathBuf::new(),
-            server_id: None,
-            max_body: DEFAULT_MAX_BODY,
-            max_line_bytes: DEFAULT_MAX_LINE_BYTES,
-            read_timeout_secs: DEFAULT_READ_TIMEOUT_SECS,
-        }
-    }
 }
 
 impl Config {
@@ -80,6 +80,21 @@ impl Config {
     pub fn validate(&self) -> Result<(), SignerError> {
         if self.server_id.as_deref() == Some("") {
             return Err(SignerError::EmptyServerId);
+        }
+        if self.expected_principal.is_empty() {
+            return Err(SignerError::ConfigInvalid(String::from(
+                "the expected principal must not be empty",
+            )));
+        }
+        if self.identity_dir.as_os_str().is_empty() {
+            return Err(SignerError::ConfigInvalid(String::from(
+                "the identity directory must not be empty",
+            )));
+        }
+        if self.socket.as_os_str().is_empty() {
+            return Err(SignerError::ConfigInvalid(String::from(
+                "the socket path must not be empty",
+            )));
         }
         if self.max_body == 0 || self.max_line_bytes == 0 || self.read_timeout_secs == 0 {
             return Err(SignerError::ConfigInvalid(String::from(

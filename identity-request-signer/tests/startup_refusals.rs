@@ -36,8 +36,7 @@ fn start_up_refusals_and_no_secrets_in_any_text() {
     ));
     DeviceState::refuse_root_key(&device_key, &device_key).expect_err("same key is refused");
     // A different key is fine.
-    DeviceState::refuse_root_key(&device_key, &device_of(dir.path()))
-        .expect("a device key is not the root");
+    DeviceState::refuse_root_key(&device_key, &genesis).expect("a device key is not the root");
 
     // Root key refused through DeviceState::load when the device key equals the
     // genesis: build a directory whose device file was replaced by a copy of the
