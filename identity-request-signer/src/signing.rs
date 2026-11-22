@@ -58,6 +58,10 @@ impl Signing {
         if params.body.len() > self.config.max_body() {
             return Err(SignerError::BodyTooLarge);
         }
+        // The path is validated always, not only when it is used to build an
+        // audience: the header records it verbatim.
+        identity_request_auth::split_path(params.method_path)
+            .ok_or_else(|| SignerError::BadRequest(String::from("the method path is malformed")))?;
         self.device.ensure_valid()?;
         let audience = match params.audience {
             Some(audience) => audience.to_string(),

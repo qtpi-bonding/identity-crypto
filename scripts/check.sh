@@ -41,9 +41,12 @@ if [ -n "$hits" ]; then
 fi
 echo "purity OK"
 
-echo "== step 8: the environment is read only in machine.rs"
+echo "== step 8: the environment is read only in machine.rs and keys_home.rs"
 # The error texts and the lib.rs re-export may name the variable; nothing but machine.rs may read it.
-hits="$(grep -rln 'env::var' identity-keyfile/src | grep -v 'machine.rs' || true)"
+# keys_home.rs is the second sanctioned place: KeysHome::locate is the one wrapper that
+# reads XDG_CONFIG_HOME/HOME for the keys home, exactly like machine.rs does for the
+# machine dir; both delegate to a locate_with that takes an injected lookup.
+hits="$(grep -rln 'env::var' identity-keyfile/src | grep -v -e 'machine.rs' -e 'keys_home.rs' || true)"
 if [ -n "$hits" ]; then
   echo "$hits" >&2
   echo "FAIL: the environment is read outside machine.rs" >&2

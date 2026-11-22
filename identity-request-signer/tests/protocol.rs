@@ -4,7 +4,7 @@ mod common;
 
 use common::*;
 use identity_request_auth::Clock;
-use identity_request_signer::{Op, OpContext, Server, SignerError};
+use identity_request_signer::{Op, OpContext, Server, SignRequestOp, SignerError};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixStream;
@@ -57,6 +57,11 @@ impl Op for Echo {
 fn protocol_over_a_real_unix_socket() {
     let dir = DeviceOnlyDir::new(T0, 3600);
     let mut server = bound_server(dir.path());
+
+    // Per spec the binary registers sign_request; the library does not.
+    server
+        .register_op(Box::new(SignRequestOp::new()))
+        .expect("register sign_request as the binary does");
 
     // A duplicate op name is refused before we ever bind.
     let result = server.register_op(Box::new(SignRequestOp2));

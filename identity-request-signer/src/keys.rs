@@ -31,6 +31,9 @@ struct DeviceStateInner {
     clock: Arc<dyn Clock>,
     log: Arc<dyn Fn(&str) + Send + Sync>,
     delegation: RwLock<DelegationState>,
+    /// The last (renewal_due, days_left) pair logged, so status() logs the
+    /// warning again only when it changes.
+    logged_renewal: RwLock<Option<(bool, i64)>>,
 }
 
 /// The tracked delegation and a fingerprint of the file it came from, so
@@ -101,6 +104,7 @@ impl DeviceState {
                     not_after: keys.delegation.not_after_unix_seconds,
                     fingerprint,
                 }),
+                logged_renewal: RwLock::new(None),
             },
         })
     }
@@ -173,8 +177,14 @@ impl DeviceState {
             .not_after;
         let days_left = (not_after - now).div_euclid(86400);
         let renewal_due = not_after - now <= RENEWAL_MARGIN_DAYS * 86400;
-        if renewal_due {
+        let mut logged = self
+            .inner
+            .logged_renewal
+            .write()
+            .unwrap_or_else(|p| p.into_inner());
+        if renewal_due && *logged != Some((renewal_due, days_left)) {
             (self.inner.log)(&format!("{KEYS_CODE}: renewal_due, days_left={days_left}"));
+            *logged = Some((renewal_due, days_left));
         }
         DelegationStatus {
             not_after,

@@ -133,8 +133,72 @@ fn server_for(
     let config = identity_request_signer::Config::parse(&text).expect("parse config");
     let sink = LogSink::new();
     let clock: Arc<dyn Clock> = TestClock::new(T0);
-    let server = identity_request_signer::Server::new(config, clock, sink.sink()).expect("server");
+    let mut server =
+        identity_request_signer::Server::new(config, clock, sink.sink()).expect("server");
+    server
+        .register_op(Box::new(identity_request_signer::SignRequestOp::new()))
+        .expect("register sign_request as the binary does");
     (server, sink)
+}
+
+#[test]
+fn a_slow_drip_client_hits_the_total_deadline() {
+    let dir = DeviceOnlyDir::new(T0, 3600);
+    // read_timeout_secs = 1: a total deadline of 1 s, so a client sending one
+    // byte every 300 ms must get read_timeout (or a close) within about 2 s.
+    let (server, _sink) = server_for(dir.path(), 5_800_000, 1);
+    let bound = server.bind().expect("bind");
+    let path = bound.socket_path().to_path_buf();
+    let running = bound.spawn();
+    let mut stream = UnixStream::connect(&path).expect("connect");
+    let started = Instant::now();
+    // Drip past the deadline: one byte every 300 ms, checking for a reply.
+    for _ in 0..20 {
+        if started.elapsed() > Duration::from_secs(3) {
+            break;
+        }
+        stream.write_all(b"{").expect("drip one byte");
+        let _ = stream.flush();
+        std::thread::sleep(Duration::from_millis(300));
+        stream
+            .set_read_timeout(Some(Duration::from_millis(1)))
+            .expect("set timeout");
+        let mut buf = vec![0u8; 4096];
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                let reply = String::from_utf8_lossy(&buf[..n]).to_string();
+                assert!(
+                    reply.contains("read_timeout"),
+                    "the reply must be read_timeout: {reply}"
+                );
+                break;
+            }
+            Err(_) => continue,
+        }
+    }
+    let elapsed = started.elapsed();
+    assert!(
+        elapsed < Duration::from_secs(4),
+        "the server let a slow-drip client hold a thread for {elapsed:?}"
+    );
+    drop(stream);
+    running.stop();
+}
+
+#[test]
+fn malformed_method_path_is_refused_even_with_an_audience() {
+    let dir = DeviceOnlyDir::new(T0, 3600);
+    let signing = signing_with(dir.path(), Some(SERVER), "");
+    assert_coded(
+        signing.sign_request(&SignParams {
+            method_path: "Inventory/AddItem",
+            body_type: BODY_TYPE,
+            body: BODY,
+            audience: Some("custom-audience"),
+        }),
+        "identity.request_signer.bad_request",
+    );
 }
 
 #[test]

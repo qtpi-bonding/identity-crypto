@@ -199,6 +199,23 @@ impl Server {
         clock: Arc<dyn Clock>,
         log: Arc<dyn Fn(&str) + Send + Sync>,
     ) -> Result<Server, SignerError> {
+        Self::new_as(
+            identity_keyfile::private_fs::effective_uid(),
+            config,
+            clock,
+            log,
+        )
+    }
+
+    /// [`Server::new`] with an explicit uid seam, so tests can prove the root
+    /// check happens before any key is read.
+    pub fn new_as(
+        uid: u32,
+        config: Config,
+        clock: Arc<dyn Clock>,
+        log: Arc<dyn Fn(&str) + Send + Sync>,
+    ) -> Result<Server, SignerError> {
+        check_not_root(uid)?;
         config.validate()?;
         let device = Arc::new(DeviceState::load(
             &config.identity_dir,
@@ -213,7 +230,8 @@ impl Server {
             config,
             core: Core {
                 max_line_bytes,
-                ops: Arc::new(RwLock::new(vec![Box::new(SignRequestOp::new())])),
+                // The binary registers `sign_request`; the library starts empty.
+                ops: Arc::new(RwLock::new(Vec::new())),
                 signing: Arc::new(signing),
                 device,
                 log,
@@ -240,7 +258,14 @@ impl Server {
         let uid = identity_keyfile::private_fs::effective_uid();
         check_not_root(uid)?;
         prepare_socket_dir(&self.config.socket, uid)?;
-        let listener = std::os::unix::net::UnixListener::bind(&self.config.socket)
+        // The socket is created 0600 from the start via a restrictive umask,
+        // so there is no window where it is readable by others.
+        let old_mask = unsafe { libc::umask(0o177) };
+        let bind_result = std::os::unix::net::UnixListener::bind(&self.config.socket);
+        unsafe {
+            libc::umask(old_mask);
+        }
+        let listener = bind_result
             .map_err(|_| SignerError::SocketDir(String::from("the socket could not be bound")))?;
         // The socket is made owner-only right after bind; the 0700 parent
         // directory owned by the running uid is the guard.
@@ -330,8 +355,11 @@ impl BoundServer {
                         let live = Arc::clone(&live);
                         let core = Arc::clone(&core);
                         std::thread::spawn(move || {
+                            let _guard = LiveGuard(&live);
+                            // macOS accepts a nonblocking listener into a
+                            // nonblocking stream; make it blocking again.
+                            let _ = stream.set_nonblocking(false);
                             serve_connection(stream, max_line_bytes, read_timeout_secs, &core);
-                            live.fetch_sub(1, Ordering::SeqCst);
                         });
                     }
                     Err(_) => {
@@ -348,9 +376,20 @@ impl BoundServer {
     }
 }
 
+/// Decrements the live-connection counter on drop, even if the connection
+/// thread panics.
+struct LiveGuard<'a>(&'a AtomicUsize);
+
+impl Drop for LiveGuard<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 /// One line in, one line out, then close. Reads at most
 /// `max_line_bytes + 1` bytes so an over-long line is detected without
-/// buffering an unbounded line.
+/// buffering an unbounded line. One total deadline covers the whole read: a
+/// slow-drip client gets the read_timeout refusal, not an open thread.
 fn serve_connection(
     mut stream: std::os::unix::net::UnixStream,
     max_line_bytes: usize,
@@ -358,32 +397,55 @@ fn serve_connection(
     core: &Core,
 ) {
     use std::io::{BufRead, BufReader, Read, Write};
-    stream
-        .set_read_timeout(Some(Duration::from_secs(read_timeout_secs)))
-        .ok();
+    let deadline = std::time::Instant::now() + Duration::from_secs(read_timeout_secs);
+    let remaining = || {
+        deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .max(Duration::from_millis(1))
+    };
+    if stream.set_read_timeout(Some(remaining())).is_err() {
+        return;
+    }
+    let mut line = Vec::new();
     let reader = BufReader::new(match stream.try_clone() {
         Ok(clone) => clone,
         Err(_) => return,
     });
-    let mut line = Vec::new();
-    let outcome = match reader
-        .take((max_line_bytes + 1) as u64)
-        .read_until(b'\n', &mut line)
-    {
-        Ok(_) => {
-            if line.len() > max_line_bytes {
-                Err(SignerError::LineTooLong)
-            } else {
-                Ok(core.handle_line(&line))
+    let mut capped = reader.take((max_line_bytes + 1) as u64);
+    let mut timed_out = false;
+    loop {
+        if let Err(err) = stream.set_read_timeout(Some(remaining())) {
+            let _ = err;
+            return;
+        }
+        match capped.fill_buf() {
+            Ok([]) => break,
+            Ok(available) => {
+                if let Some(newline) = available.iter().position(|b| *b == b'\n') {
+                    line.extend_from_slice(&available[..=newline]);
+                    capped.consume(newline + 1);
+                    break;
+                }
+                line.extend_from_slice(available);
+                let len = available.len();
+                capped.consume(len);
             }
+            Err(ref e)
+                if e.kind() == std::io::ErrorKind::WouldBlock
+                    || e.kind() == std::io::ErrorKind::TimedOut =>
+            {
+                timed_out = true;
+                break;
+            }
+            Err(_) => return,
         }
-        Err(ref e)
-            if e.kind() == std::io::ErrorKind::WouldBlock
-                || e.kind() == std::io::ErrorKind::TimedOut =>
-        {
-            Err(SignerError::ReadTimeout)
-        }
-        Err(_) => return,
+    }
+    let outcome = if timed_out {
+        Err(SignerError::ReadTimeout)
+    } else if line.len() > max_line_bytes {
+        Err(SignerError::LineTooLong)
+    } else {
+        Ok(core.handle_line(&line))
     };
     let reply = match outcome {
         Ok(reply) => reply,

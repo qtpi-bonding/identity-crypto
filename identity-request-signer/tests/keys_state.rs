@@ -141,6 +141,50 @@ fn status_days_left_and_renewal_due_follow_the_delegation() {
 }
 
 #[test]
+fn many_signs_log_the_renewal_warning_once_and_days_left_change_logs_again() {
+    let ttl = 10 * 86_400;
+    let renewable = RenewableDir::new(T0, ttl);
+    let dir = &renewable.device_only;
+    let clock = TestClock::new(T0);
+    let sink = LogSink::new();
+    let principal = principal_string(dir.path());
+    let state =
+        DeviceState::load(dir.path(), &principal, &[], clock.clone(), sink.sink()).expect("load");
+
+    // The first status in the renewal window logs once.
+    let status = state.status();
+    assert!(status.renewal_due);
+    assert_eq!(status.days_left, 10);
+
+    // Many further calls (as signing.rs makes on every sign) log nothing.
+    for _ in 0..5 {
+        let _ = state.status();
+    }
+    let count = |sink: &LogSink| -> usize {
+        sink.lines()
+            .iter()
+            .filter(|l| l.contains("renewal_due"))
+            .count()
+    };
+    assert_eq!(
+        count(&sink),
+        1,
+        "the warning is logged once, not per call: {:?}",
+        sink.lines()
+    );
+
+    // A changed days_left logs again.
+    renewable.renew(T0, 5 * 86_400);
+    let status = state.status();
+    assert_eq!(status.days_left, 5);
+    assert_eq!(count(&sink), 2, "a changed pair logs again");
+
+    // The same pair again: no more lines.
+    let _ = state.status();
+    assert_eq!(count(&sink), 2, "the same pair is not logged again");
+}
+
+#[test]
 fn ensure_valid_is_expired_after_not_after() {
     let ttl = 100;
     let dir = device_only_dir(T0, ttl);
