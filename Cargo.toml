@@ -22,7 +22,7 @@ coded-error = { git = "https://github.com/qtpi-bonding/coded-error.git", rev = "
 testkit = []
 
 [dependencies]
-rust_jwk_duo = { git = "https://github.com/qtpi-bonding-org/rust_jwk_duo.git", rev = "58d11e887afeff427084dab9007665ceef6fa507" }
+rust_jwk_duo = { git = "https://github.com/qtpi-bonding-org/rust_jwk_duo.git", rev = "28521fab1bbc68ec051269ff0ea09b2b3766c4e3" }
 sha2 = "0.11"
 hex = "0.4"
 thiserror = "2"
